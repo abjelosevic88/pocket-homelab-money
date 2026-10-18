@@ -70,6 +70,7 @@ type accountIn struct {
 	Icon            *string `json:"icon"`
 	CreditLimit     *int64  `json:"credit_limit"`
 	IncludeNetWorth *bool   `json:"include_net_worth"`
+	Everyday        *bool   `json:"everyday"`
 	Archived        *bool   `json:"archived"`
 	Notes           *string `json:"notes"`
 }
@@ -108,6 +109,9 @@ func (in *accountIn) apply(a *store.Account) string {
 	if in.IncludeNetWorth != nil {
 		a.IncludeNetWorth = *in.IncludeNetWorth
 	}
+	if in.Everyday != nil {
+		a.Everyday = *in.Everyday
+	}
 	if in.Archived != nil {
 		a.Archived = *in.Archived
 	}
@@ -138,6 +142,9 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	if msg := in.apply(a); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
+	}
+	if in.Everyday == nil {
+		a.Everyday = a.Kind != "savings" && a.Kind != "investment" && a.Kind != "loan"
 	}
 	if a.Kind == "cash" && a.Icon == "" {
 		a.Icon = "💵"

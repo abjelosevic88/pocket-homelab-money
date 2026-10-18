@@ -305,6 +305,13 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 		}
 	}
 
+	if opt.All && res.Accounts > 0 {
+		s.guessEveryday(ctx, acctByFF)
+	}
+	if opt.All && res.Templates > 0 {
+		s.seedTemplateUse(ctx)
+	}
+
 	// ---- opening balances: make every balance equal Firefly's ----
 	bal, _ := s.store.Balances(ctx, "")
 	for _, a := range acctByFF {
@@ -830,4 +837,38 @@ func (s *Server) handleImportStatus(w http.ResponseWriter, r *http.Request) {
 	lastImportMu.Lock()
 	defer lastImportMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"running": s.importing.Load(), "last": lastImport})
+}
+
+// guessEveryday marks as "everyday money" only the accounts that carry a real
+// share of the spending; savings, business or foreign-currency accounts that
+// are rarely paid from stay out of safe-to-spend.
+func (s *Server) guessEveryday(ctx context.Context, acctByFF map[string]*store.Account) {
+	counts := map[int64]int{}
+	total := 0
+	from := addDays(store.Today(), -120)
+	for _, a := range acctByFF {
+		var n int
+		_ = s.store.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM transactions WHERE account_id = ? AND kind = 'expense' AND date >= ?`, a.ID, from).Scan(&n)
+		counts[a.ID] = n
+		total += n
+	}
+	if total == 0 {
+		return
+	}
+	for _, a := range acctByFF {
+		every := a.Kind != "savings" && a.Kind != "investment" && a.Kind != "loan" && float64(counts[a.ID]) >= 0.2*float64(total)
+		if a.Everyday != every {
+			a.Everyday = every
+			_ = s.store.UpdateAccount(ctx, a)
+		}
+	}
+}
+
+// seedTemplateUse gives imported templates a use count from the transactions
+// they would have produced, so the ones used most come first.
+func (s *Server) seedTemplateUse(ctx context.Context) {
+	_, _ = s.store.DB.ExecContext(ctx, `UPDATE templates SET use_count = (
+		SELECT COUNT(1) FROM transactions t WHERE t.date >= date('now', '-180 days')
+		AND lower(t.description) = lower(CASE WHEN templates.description != '' THEN templates.description ELSE templates.name END))
+		WHERE use_count = 0`)
 }

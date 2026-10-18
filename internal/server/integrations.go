@@ -388,7 +388,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		if a.IncludeNetWorth {
 			net += a.BalanceHome
 		}
-		if a.Kind == "checking" || a.Kind == "cash" || a.Kind == "credit" {
+		if a.Everyday {
 			liquid += a.BalanceHome
 		}
 	}

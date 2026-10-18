@@ -72,6 +72,7 @@ type Account struct {
 	Icon            string `json:"icon"`
 	CreditLimit     int64  `json:"credit_limit"`
 	IncludeNetWorth bool   `json:"include_net_worth"`
+	Everyday        bool   `json:"everyday"`
 	Archived        bool   `json:"archived"`
 	SortOrder       int    `json:"sort_order"`
 	Notes           string `json:"notes"`

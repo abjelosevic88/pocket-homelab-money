@@ -16,7 +16,7 @@ export type AccountKind = 'checking' | 'savings' | 'cash' | 'credit' | 'investme
 export interface AccountMember { user_id: number; name: string; email: string; role: 'editor' | 'viewer' }
 export interface Account {
   id: number; owner_id: number; name: string; kind: AccountKind; currency: string; opening_balance: number; opening_date: string
-  institution: string; number: string; color: string; icon: string; credit_limit: number; include_net_worth: boolean; archived: boolean
+  institution: string; number: string; color: string; icon: string; credit_limit: number; include_net_worth: boolean; everyday: boolean; archived: boolean
   sort_order: number; notes: string; external_id: string; created_at: string; updated_at: string
   role?: 'owner' | 'editor' | 'viewer'; members?: AccountMember[]; balance: number; balance_home: number; tx_count: number; last_tx_date: string
 }

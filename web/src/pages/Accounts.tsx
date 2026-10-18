@@ -19,7 +19,7 @@ export function AccountForm({ account, onClose, onSaved }: { account?: Account; 
   const [f, setF] = useState({
     name: account?.name || '', kind: (account?.kind || 'checking') as AccountKind, currency: account?.currency || settings?.home_currency || 'EUR',
     opening_balance: account?.opening_balance ?? 0, opening_date: account?.opening_date || '', institution: account?.institution || '', number: account?.number || '',
-    color: account?.color || '', icon: account?.icon || '', credit_limit: account?.credit_limit ?? 0, include_net_worth: account?.include_net_worth ?? true,
+    color: account?.color || '', icon: account?.icon || '', credit_limit: account?.credit_limit ?? 0, include_net_worth: account?.include_net_worth ?? true, everyday: account?.everyday ?? true,
     archived: account?.archived ?? false, notes: account?.notes || '',
   })
   const [balance, setBalance] = useState<number | null>(null)
@@ -62,6 +62,7 @@ export function AccountForm({ account, onClose, onSaved }: { account?: Account; 
           <Field label="Colour" group><div className="row wrap">{COLORS.map(c => <button type="button" key={c} className={`color-dot ${f.color === c ? 'active' : ''}`} style={{ background: c }} onClick={() => set('color', c)} aria-label={c} />)}</div></Field>
         </div>
         <label className="row"><input type="checkbox" checked={f.include_net_worth} onChange={e => set('include_net_worth', e.target.checked)} style={{ width: 'auto' }} /> Count in net worth</label>
+        <label className="row"><input type="checkbox" checked={f.everyday} onChange={e => set('everyday', e.target.checked)} style={{ width: 'auto' }} /> Everyday money — counts in “safe to spend” and the forecast (untick savings, business or foreign-currency accounts)</label>
         {account && <label className="row"><input type="checkbox" checked={f.archived} onChange={e => set('archived', e.target.checked)} style={{ width: 'auto' }} /> Archived (closed account — hidden from pickers)</label>}
         <Field label="Notes"><textarea value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} /></Field>
         <div className="form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary">{account ? 'Save' : 'Create'}</button></div>

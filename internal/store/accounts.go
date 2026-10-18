@@ -7,17 +7,17 @@ import (
 )
 
 const accountCols = `a.id, a.owner_id, a.name, a.kind, a.currency, a.opening_balance, a.opening_date, a.institution, a.number, a.color, a.icon,
-	a.credit_limit, a.include_net_worth, a.archived, a.sort_order, a.notes, a.external_id, a.created_at, a.updated_at`
+	a.credit_limit, a.include_net_worth, a.everyday, a.archived, a.sort_order, a.notes, a.external_id, a.created_at, a.updated_at`
 
 func scanAccount(row interface{ Scan(...any) error }, extra ...any) (*Account, error) {
 	var a Account
-	var nw, arch int
+	var nw, ev, arch int
 	dst := []any{&a.ID, &a.OwnerID, &a.Name, &a.Kind, &a.Currency, &a.OpeningBalance, &a.OpeningDate, &a.Institution, &a.Number, &a.Color, &a.Icon,
-		&a.CreditLimit, &nw, &arch, &a.SortOrder, &a.Notes, &a.ExternalID, &a.CreatedAt, &a.UpdatedAt}
+		&a.CreditLimit, &nw, &ev, &arch, &a.SortOrder, &a.Notes, &a.ExternalID, &a.CreatedAt, &a.UpdatedAt}
 	if err := row.Scan(append(dst, extra...)...); err != nil {
 		return nil, notFound(err)
 	}
-	a.IncludeNetWorth, a.Archived = nw == 1, arch == 1
+	a.IncludeNetWorth, a.Everyday, a.Archived = nw == 1, ev == 1, arch == 1
 	return &a, nil
 }
 
@@ -137,9 +137,9 @@ func (s *Store) CreateAccount(ctx context.Context, a *Account) error {
 		_ = s.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order), 0) + 1 FROM accounts`).Scan(&a.SortOrder)
 	}
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO accounts (owner_id, name, kind, currency, opening_balance, opening_date, institution, number, color, icon,
-		credit_limit, include_net_worth, archived, sort_order, notes, external_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		credit_limit, include_net_worth, everyday, archived, sort_order, notes, external_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.OwnerID, a.Name, a.Kind, a.Currency, a.OpeningBalance, a.OpeningDate, a.Institution, a.Number, a.Color, a.Icon,
-		a.CreditLimit, boolInt(a.IncludeNetWorth), boolInt(a.Archived), a.SortOrder, a.Notes, a.ExternalID)
+		a.CreditLimit, boolInt(a.IncludeNetWorth), boolInt(a.Everyday), boolInt(a.Archived), a.SortOrder, a.Notes, a.ExternalID)
 	if err != nil {
 		return err
 	}
@@ -150,9 +150,9 @@ func (s *Store) CreateAccount(ctx context.Context, a *Account) error {
 // UpdateAccount saves an account.
 func (s *Store) UpdateAccount(ctx context.Context, a *Account) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE accounts SET name = ?, kind = ?, currency = ?, opening_balance = ?, opening_date = ?, institution = ?, number = ?,
-		color = ?, icon = ?, credit_limit = ?, include_net_worth = ?, archived = ?, sort_order = ?, notes = ?, external_id = ?, updated_at = ? WHERE id = ?`,
+		color = ?, icon = ?, credit_limit = ?, include_net_worth = ?, everyday = ?, archived = ?, sort_order = ?, notes = ?, external_id = ?, updated_at = ? WHERE id = ?`,
 		a.Name, a.Kind, a.Currency, a.OpeningBalance, a.OpeningDate, a.Institution, a.Number, a.Color, a.Icon, a.CreditLimit,
-		boolInt(a.IncludeNetWorth), boolInt(a.Archived), a.SortOrder, a.Notes, a.ExternalID, Now(), a.ID)
+		boolInt(a.IncludeNetWorth), boolInt(a.Everyday), boolInt(a.Archived), a.SortOrder, a.Notes, a.ExternalID, Now(), a.ID)
 	return err
 }
 

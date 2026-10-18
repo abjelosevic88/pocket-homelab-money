@@ -30,7 +30,7 @@ func (s *Server) seedDemo(ctx context.Context) error {
 	d := func(t time.Time) string { return t.Format("2006-01-02") }
 
 	acct := func(name, kind, cur, icon string, opening int64) int64 {
-		a := &store.Account{OwnerID: owner.ID, Name: name, Kind: kind, Currency: cur, Icon: icon, OpeningBalance: opening, OpeningDate: d(start), IncludeNetWorth: true}
+		a := &store.Account{OwnerID: owner.ID, Name: name, Kind: kind, Currency: cur, Icon: icon, OpeningBalance: opening, OpeningDate: d(start), IncludeNetWorth: true, Everyday: kind != "savings"}
 		_ = s.store.CreateAccount(ctx, a)
 		return a.ID
 	}

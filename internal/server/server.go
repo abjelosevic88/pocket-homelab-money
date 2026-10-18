@@ -147,6 +147,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 			}
 		}
 	}
+	s.maintenance(ctx)
 	_ = s.store.PurgeSessions(ctx)
 	go s.janitor(ctx)
 	return nil
@@ -651,4 +652,22 @@ func (s *Server) readUpload(r *http.Request, field string) ([]byte, string, stri
 	}
 	b, err := io.ReadAll(r.Body)
 	return b, r.URL.Query().Get("name"), ct, err
+}
+
+// maintenance runs one-time data fixes for databases made by older versions.
+func (s *Server) maintenance(ctx context.Context) {
+	if _, _, done := s.store.CacheGet(ctx, "maint:everyday-v1"); !done {
+		all, _ := s.store.AllAccounts(ctx)
+		ff := map[string]*store.Account{}
+		for i := range all {
+			if strings.HasPrefix(all[i].ExternalID, "firefly:") {
+				ff[all[i].ExternalID] = &all[i]
+			}
+		}
+		if len(ff) > 0 {
+			s.guessEveryday(ctx, ff)
+			s.seedTemplateUse(ctx)
+		}
+		_ = s.store.CachePut(ctx, "maint:everyday-v1", store.Now())
+	}
 }

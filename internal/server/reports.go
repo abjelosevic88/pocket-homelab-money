@@ -380,10 +380,12 @@ func (s *Server) forecast(ctx context.Context) Forecast {
 	fc := Forecast{From: from, To: to, Currency: st.HomeCurrency, DaysLeft: store.DaysBetween(today, to), Upcoming: []map[string]any{}}
 	accts, _, _ := s.accountsWithHome(ctx, false)
 	ids := s.visibleIDs(ctx)
+	everyday := map[int64]bool{}
 	for _, a := range accts {
 		// everyday money: what can be spent without touching savings
-		if (a.Kind == "checking" || a.Kind == "cash" || a.Kind == "credit" || a.Kind == "other") && a.IncludeNetWorth {
+		if a.Everyday {
 			fc.Balance += a.BalanceHome
+			everyday[a.ID] = true
 		}
 	}
 	days, _ := s.store.DailySums(ctx, ids, from, today)
@@ -403,10 +405,13 @@ func (s *Server) forecast(ctx context.Context) Forecast {
 		}
 	}
 	// typical variable spending: last 90 days, subscriptions left out
+	// (only from everyday accounts — business or savings spending is not "a day")
 	rows, _ := s.store.PatternRows(ctx, ids, addDays(today, -90))
+	perDay := map[string]int64{}
 	var variable int64
 	for _, r := range rows {
-		if r.Kind == "expense" && r.SubID == nil && r.Date < today {
+		if r.Kind == "expense" && r.SubID == nil && r.Date < today && everyday[r.AccountID] {
+			perDay[r.Date] += r.AmountHome
 			variable += r.AmountHome
 		}
 	}
@@ -414,14 +419,20 @@ func (s *Server) forecast(ctx context.Context) Forecast {
 	if first := s.store.FirstTransactionDate(ctx, ids); first != "" && first > addDays(today, -90) {
 		span = max(1, store.DaysBetween(first, today))
 	}
-	// one-off big purchases skew a daily average; cap any day at 3× the median-ish mean
+	// one-off big purchases skew a daily average: cap any day at 3× the mean
+	if mean := variable / int64(span); mean > 0 {
+		variable = 0
+		for _, v := range perDay {
+			variable += min(v, 3*mean)
+		}
+	}
 	fc.VariableDaily = variable / int64(span)
 	subs, _ := s.store.ListSubscriptions(ctx, actorID(ctx))
 	until := addDays(today, 30)
 	byDay := map[string]int64{}
 	for i := range subs {
 		x := &subs[i]
-		if !x.Active || x.Kind == "transfer" {
+		if !x.Active || x.Kind == "transfer" || (x.AccountID != nil && !everyday[*x.AccountID]) {
 			continue
 		}
 		r, _ := s.rate(ctx, x.Currency, st.HomeCurrency, today)
