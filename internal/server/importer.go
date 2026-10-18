@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -355,7 +356,17 @@ func txChanged(a, b *store.Transaction) bool {
 	if !eq(a.ToAccountID, b.ToAccountID) || !eq(a.CategoryID, b.CategoryID) || !eq(a.SubscriptionID, b.SubscriptionID) {
 		return true
 	}
-	return strings.Join(a.Tags, "|") != strings.Join(cleanTags(b.Tags), "|")
+	return tagKey(a.Tags) != tagKey(cleanTags(b.Tags))
+}
+
+// tagKey compares tag sets regardless of order and case.
+func tagKey(tags []string) string {
+	l := make([]string, len(tags))
+	for i, t := range tags {
+		l[i] = strings.ToLower(t)
+	}
+	sort.Strings(l)
+	return strings.Join(l, "|")
 }
 
 // ffSplitToTx maps one Firefly split onto a transaction (nil + reason when it cannot).
