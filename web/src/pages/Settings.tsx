@@ -174,7 +174,8 @@ function Users() {
         </tbody>
       </table>
       {status?.auth_mode !== 'local' && <p className="muted small mt">Auth mode is <code>{status?.auth_mode}</code>: users are created automatically on first visit.</p>}
-      {edit && <UserModal user={edit} local={status?.auth_mode === 'local'} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); reloadMeta() }} />}
+      {status?.oidc && <p className="muted small mt">People sign in with {status.oidc_name} using the email address set here{status.password_login === false ? ' — passwords are switched off' : ''}.</p>}
+      {edit && <UserModal user={edit} local={status?.auth_mode === 'local' && status?.password_login !== false} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); reloadMeta() }} />}
       {del && <Confirm title={`Remove ${del.name || del.email}?`} message="Their account and the money accounts they own (with all transactions) are deleted." onCancel={() => setDel(null)} onConfirm={() => { const d = del; setDel(null); run(() => api.del(`${V1}/users/${d.id}`), 'User removed') }} />}
     </Card>
   )
@@ -276,6 +277,7 @@ function Data() {
 }
 
 function About() {
+  const { status } = useApp()
   const { data } = useAsync(() => api.get<Record<string, unknown>>(`${V1}/settings/system`), [])
   const counts = (data?.counts || {}) as Record<string, number>
   return (
@@ -288,6 +290,7 @@ function About() {
             <tr><th>Version</th><td className="mono">{String(data.version)}</td></tr>
             <tr><th>Runtime</th><td className="mono">{String(data.go)} · {String(data.os)}/{String(data.arch)}</td></tr>
             <tr><th>Auth mode</th><td className="mono">{String(data.auth_mode)}</td></tr>
+            <tr><th>Sign-in</th><td>{[status?.password_login !== false && 'password', status?.oidc && status.oidc_name].filter(Boolean).join(' + ')}{' · API tokens'}</td></tr>
             <tr><th>Database</th><td className="mono">{String(data.db_path)} · {fmtBytes(Number(data.db_bytes))} · receipts {fmtBytes(Number(data.files_bytes))}</td></tr>
             <tr><th>Timezone</th><td className="mono">{String(data.timezone)}</td></tr>
             <tr><th>Uptime</th><td className="mono">{String(data.uptime)}</td></tr>

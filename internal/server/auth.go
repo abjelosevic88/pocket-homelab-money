@@ -108,12 +108,15 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	st, _ := s.store.GetSettings(r.Context())
 	u, _ := s.resolveUser(r)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"needs_setup":   n == 0 && s.cfg.AuthMode == "local",
-		"auth_mode":     s.cfg.AuthMode,
-		"authenticated": u != nil,
-		"user":          u,
-		"version":       Version,
-		"title":         st.Title,
+		"needs_setup":    n == 0 && s.cfg.AuthMode == "local",
+		"auth_mode":      s.cfg.AuthMode,
+		"authenticated":  u != nil,
+		"user":           u,
+		"version":        Version,
+		"title":          st.Title,
+		"oidc":           s.oidcEnabled() && s.cfg.AuthMode == "local",
+		"oidc_name":      s.cfg.OIDCName,
+		"password_login": s.cfg.PasswordLogin || s.cfg.AuthMode != "local",
 	})
 }
 
@@ -168,6 +171,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !s.cfg.PasswordLogin {
+		writeErr(w, http.StatusForbidden, "password sign-in is switched off — use "+s.cfg.OIDCName)
 		return
 	}
 	u, err := s.store.GetUserByEmail(r.Context(), strings.TrimSpace(strings.ToLower(in.Email)))
@@ -276,7 +283,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "email is required")
 		return
 	}
-	if s.cfg.AuthMode == "local" && len(in.Password) < 8 {
+	if s.cfg.AuthMode == "local" && s.cfg.PasswordLogin && len(in.Password) < 8 {
 		writeErr(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}

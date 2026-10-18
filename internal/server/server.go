@@ -50,6 +50,8 @@ type Server struct {
 	notifyDay string
 	digestDay string
 
+	oidc *oidcProvider
+
 	tripMu  sync.Mutex
 	trips   []pocket.Trip
 	tripsAt time.Time
@@ -57,7 +59,7 @@ type Server struct {
 
 // New creates a server.
 func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Server {
-	return &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(), fx: fx.New(cfg.FXProvider, cfg.UserAgent, 8*time.Second)}
+	return &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(), fx: fx.New(cfg.FXProvider, cfg.UserAgent, 8*time.Second), oidc: &oidcProvider{issuerURL: cfg.OIDCIssuer}}
 }
 
 // Bootstrap seeds the first admin (if configured), integration defaults,
@@ -290,6 +292,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/auth/login", s.handleLogin)
 		r.Post("/auth/setup", s.handleSetup)
 		r.Get("/auth/status", s.handleAuthStatus)
+		r.Get("/auth/oidc/start", s.handleOIDCStart)
+		r.Get("/auth/oidc/callback", s.handleOIDCCallback)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)

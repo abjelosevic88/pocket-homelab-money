@@ -31,10 +31,18 @@ type Config struct {
 	AuthProxyHeader      string
 	AuthProxyEmailHeader string
 	SessionTTL           time.Duration
-	SecureCookies        bool
-	AdminEmail           string
-	AdminPassword        string
-	AdminName            string
+
+	// Sign-in with an OpenID Connect provider (PocketID, Authelia, Keycloak…) next to or instead of passwords.
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCName         string // button label
+	OIDCAutoCreate   bool   // unknown emails get a member account
+	PasswordLogin    bool   // false = only the provider (tokens keep working)
+	SecureCookies    bool
+	AdminEmail       string
+	AdminPassword    string
+	AdminName        string
 
 	DefaultCurrency string
 	FXProvider      string // auto | frankfurter | erapi | none
@@ -126,6 +134,12 @@ func Load() (*Config, error) {
 		AuthProxyHeader:      env("AUTH_PROXY_HEADER", "Remote-User"),
 		AuthProxyEmailHeader: env("AUTH_PROXY_EMAIL_HEADER", "Remote-Email"),
 		SessionTTL:           envDuration("SESSION_TTL", 720*time.Hour),
+		OIDCIssuer:           strings.TrimRight(env("OIDC_ISSUER", ""), "/"),
+		OIDCClientID:         env("OIDC_CLIENT_ID", ""),
+		OIDCClientSecret:     env("OIDC_CLIENT_SECRET", ""),
+		OIDCName:             env("OIDC_NAME", "single sign-on"),
+		OIDCAutoCreate:       envBool("OIDC_AUTO_CREATE", false),
+		PasswordLogin:        envBool("PASSWORD_LOGIN", true),
 		SecureCookies:        envBool("SECURE_COOKIES", false),
 		AdminEmail:           strings.ToLower(env("ADMIN_EMAIL", "")),
 		AdminPassword:        env("ADMIN_PASSWORD", ""),
@@ -157,6 +171,12 @@ func Load() (*Config, error) {
 	case "local", "proxy", "none":
 	default:
 		return nil, fmt.Errorf("AUTH_MODE must be one of local, proxy, none (got %q)", c.AuthMode)
+	}
+	if c.OIDCIssuer != "" && (c.OIDCClientID == "" || c.BaseURL == "") {
+		return nil, fmt.Errorf("OIDC_ISSUER needs OIDC_CLIENT_ID and BASE_URL (the callback is BASE_URL/api/v1/auth/oidc/callback)")
+	}
+	if !c.PasswordLogin && c.OIDCIssuer == "" {
+		c.PasswordLogin = true // never lock everyone out
 	}
 	switch c.FXProvider {
 	case "auto", "frankfurter", "erapi", "none":

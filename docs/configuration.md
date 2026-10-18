@@ -16,6 +16,10 @@ Everything is read from environment variables; every value has a default so a ba
 | `AUTH_MODE` | `local` | `local` (built-in accounts), `proxy` (trust `AUTH_PROXY_HEADER`), `none` (single user, LAN only) |
 | `AUTH_PROXY_HEADER` / `AUTH_PROXY_EMAIL_HEADER` | `Remote-User` / `Remote-Email` | Headers for proxy mode |
 | `SESSION_TTL` | `720h` | Cookie lifetime |
+| `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | – | Sign in with an OpenID Connect provider (PocketID, Authelia, Authentik, Keycloak…). Needs `BASE_URL`; the callback is `BASE_URL/api/v1/auth/oidc/callback` |
+| `OIDC_NAME` | `single sign-on` | Button label: “Sign in with …” |
+| `OIDC_AUTO_CREATE` | `false` | Give an unknown (verified) email a member account instead of refusing it |
+| `PASSWORD_LOGIN` | `true` | `false` = only the provider. Ignored (stays on) without `OIDC_ISSUER`, so nobody gets locked out |
 | `SECURE_COOKIES` | `false` | Set `true` behind HTTPS |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | – | Create the first admin on an empty database (otherwise the UI asks) |
 | `DEFAULT_CURRENCY` | `EUR` | Home currency: reports, budgets, net worth |
@@ -35,6 +39,14 @@ Everything is read from environment variables; every value has a default so a ba
 - **local** — accounts with email + password. The first account created becomes admin.
 - **proxy** — trust a forward-auth proxy (Authelia, Authentik, Tinyauth…). Users are created on first visit. Keep `/firefly/api/*` and `/cal/*` outside the forward-auth rule — their clients send a bearer token.
 - **none** — no login at all; one implicit admin. Only for a trusted LAN.
+
+### Single sign-on (OIDC)
+
+In **local** mode, setting `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` adds a “Sign in with …” button to the login page. Pocket Money uses the authorization-code flow with PKCE and the client secret. It checks the ID token's RS256 signature against the provider's published keys, along with its issuer, audience, expiry and nonce, then matches the person to an existing user by **verified** email. A passkey-only provider such as PocketID gives you phishing-resistant sign-in without Pocket Money storing a second factor.
+
+Steps for PocketID: *OIDC Clients → Add* with the callback URL above and PKCE on, and untick the group restriction (or add yourself to an allowed group). Then set the three variables and restart. Once the button works, set `PASSWORD_LOGIN=false`.
+
+Unlike a forward-auth proxy, this leaves the API alone: apps and scripts keep using bearer tokens. If the provider is down, set `PASSWORD_LOGIN=true` again and restart (`pocket-money reset-password` works if the password is forgotten).
 
 Bearer tokens (Settings → API & apps) work in every mode, for the native API and the Firefly-compatible one.
 
