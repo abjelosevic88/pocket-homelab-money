@@ -1,0 +1,26 @@
+# Pocket Money — self-hosted personal finance (Go + SQLite). One container, one volume.
+services:
+  pocket-money:
+    image: ghcr.io/abjelosevic88/pocket-homelab-money:latest
+    container_name: pocket-money
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      BASE_URL: ${BASE_URL:-http://localhost:8080}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-EUR}
+      # First admin (only used while the database has no users):
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # Integrations can also be set in the UI under Settings.
+      NOTIFY_URL: ${NOTIFY_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Import everything from Firefly III (and Firefly Pico templates) once, on the first start:
+      FIREFLY_URL: ${FIREFLY_URL:-}
+      FIREFLY_TOKEN: ${FIREFLY_TOKEN:-}
+      PICO_URL: ${PICO_URL:-}
+    volumes:
+      - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

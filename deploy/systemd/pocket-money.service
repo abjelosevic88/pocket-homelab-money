@@ -1,0 +1,23 @@
+[Unit]
+Description=Pocket Money — self-hosted personal finance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pocket-money
+Group=pocket-money
+ExecStart=/usr/local/bin/pocket-money
+Environment=DATA_DIR=/var/lib/pocket-money
+Environment=PORT=8080
+Environment=BASE_URL=https://money.example.com
+Environment=SECURE_COOKIES=true
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pocket-money
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

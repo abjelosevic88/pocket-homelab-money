@@ -1,0 +1,6 @@
+# Pocket Money behind Caddy. /firefly/api/* (Firefly-compatible API) and
+# /cal/*.ics must stay reachable without a forward-auth proxy in front — apps
+# and calendar clients send their own token.
+money.example.com {
+	reverse_proxy pocket-money:8080
+}

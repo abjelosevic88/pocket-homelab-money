@@ -1,0 +1,49 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - name: Build web UI
+        run: cd web && npm ci --no-audit --no-fund && npm run build
+      - name: Vet & test
+        run: |
+          test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+          go vet ./...
+          go test ./...
+      - name: Build binary
+        run: CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o pocket-money ./cmd/pocket-money
+      - name: Smoke test
+        run: |
+          DATA_DIR=/tmp/pm DEMO_DATA=true AUTH_MODE=none FX_PROVIDER=none ./pocket-money &
+          sleep 3
+          curl -fsS http://localhost:8080/healthz
+          curl -fsS http://localhost:8080/api/v1/dashboard | grep -q net_worth
+          curl -fsS http://localhost:8080/api/v1/home | grep -q '"forecast"'
+          curl -fsS http://localhost:8080/api/v1/subscriptions | grep -q '"upcoming"'
+          curl -fsS -X POST http://localhost:8080/api/v1/quick -H 'Content-Type: application/json' -d '{"text":"coffee 3,5"}' | grep -q '"description":"Coffee"'
+          TOKEN=$(curl -fsS -X POST http://localhost:8080/api/v1/tokens -H 'Content-Type: application/json' -d '{"name":"ci"}' | sed -E 's/.*"token":"([^"]+)".*/\1/')
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/firefly/api/v1/accounts | grep -q current_balance
+          curl -fsS -H "Authorization: Bearer $TOKEN" "http://localhost:8080/firefly/api/v1/transactions?type=withdrawal" | grep -q transaction_journal_id
+          curl -fsS http://localhost:8080/ | grep -q '<div id="root">'
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: pocket-money:pr
