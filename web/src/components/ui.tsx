@@ -106,3 +106,17 @@ export function useDebounce<T>(value: T, ms = 300): T {
   useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t) }, [value, ms])
   return v
 }
+
+/** Props that make a non-button element (a table row, a list line) clickable with mouse and keyboard. */
+export function clickRow(onClick: () => void) {
+  return {
+    onClick, tabIndex: 0, role: 'button' as const,
+    onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } },
+  }
+}
+
+/** Spread on a cell holding its own buttons so they don't also trigger the clickable row. */
+export const ownClicks = {
+  onClick: (e: React.MouseEvent) => e.stopPropagation(),
+  onKeyDown: (e: React.KeyboardEvent) => e.stopPropagation(),
+}

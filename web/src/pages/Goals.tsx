@@ -3,7 +3,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
 import type { Goal } from '../lib/types'
-import { Empty, Field, Loading, Modal, PageHeader, useAsync, useToast } from '../components/ui'
+import { Empty, Field, Loading, Modal, PageHeader, clickRow, useAsync, useToast } from '../components/ui'
 import { CurrencySelect, MoneyInput } from '../components/Money'
 import { AccountSelect } from '../components/pickers'
 import { Ring } from '../components/Charts'
@@ -23,7 +23,7 @@ export default function Goals() {
           {active.map(g => {
             const dec = decimalsOf(g.currency, currencies)
             return (
-              <div key={g.id} className={`goal-card ${g.completed_at ? 'done' : ''}`} onClick={() => setOpen(g.id)}>
+              <div key={g.id} className={`goal-card ${g.completed_at ? 'done' : ''}`} {...clickRow(() => setOpen(g.id))}>
                 <Ring pct={g.pct} icon={g.completed_at ? '✅' : g.icon || '🎯'} />
                 <div style={{ minWidth: 0 }}>
                   <b>{g.name}</b>

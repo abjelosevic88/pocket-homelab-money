@@ -4,7 +4,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
 import { FREQ_LABEL, MODE_LABEL, type Detected, type Freq, type Kind, type SubMode, type Subscription, type Transaction, type Upcoming } from '../lib/types'
-import { Card, Empty, Field, Loading, Modal, PageHeader, Segmented, useAsync, useToast } from '../components/ui'
+import { Card, Empty, Field, Loading, Modal, PageHeader, Segmented, clickRow, ownClicks, useAsync, useToast } from '../components/ui'
 import { CurrencySelect, MoneyInput } from '../components/Money'
 import { AccountSelect, CategorySelect, KindTabs, TagInput } from '../components/pickers'
 import { TxList } from '../components/TxList'
@@ -48,7 +48,7 @@ export default function Subscriptions() {
         <div className="grid" style={{ gap: 16 }}>
           <Card title="All" actions={<Segmented size="sm" value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All' }, { value: 'expense', label: 'Bills' }, { value: 'income', label: 'Income' }]} />}>
             {items.length === 0 ? <Empty title="Nothing recurring yet">Add rent, phone, streaming… Pocket Money links the payments automatically, reminds you before they are due and can book them for you.</Empty> : items.map(s => (
-              <div key={s.id} className={`sub-row ${s.active ? '' : 'paused'}`} onClick={() => navigate(`/subscriptions/${s.id}`)}>
+              <div key={s.id} className={`sub-row ${s.active ? '' : 'paused'}`} {...clickRow(() => navigate(`/subscriptions/${s.id}`))}>
                 <span className="cat-ico">{s.icon || s.category_icon || '↻'}</span>
                 <span style={{ minWidth: 0 }}>
                   <div className="t">{s.name}</div>
@@ -57,7 +57,7 @@ export default function Subscriptions() {
                 <span className={`due ${s.status}`}>{dueText(s)}</span>
                 <span style={{ textAlign: 'right' }}>
                   <span className={`amt ${s.kind}`}>{fmtMoney(s.amount, s.currency, decimalsOf(s.currency, currencies))}{s.amount_max > s.amount ? '+' : ''}</span>
-                  {s.active && (s.status === 'overdue' || s.status === 'today' || s.status === 'soon') && s.mode !== 'auto' && <div><button className="btn sm" onClick={e => { e.stopPropagation(); pay(s) }}>{s.kind === 'income' ? 'Received' : 'Pay'}</button></div>}
+                  {s.active && (s.status === 'overdue' || s.status === 'today' || s.status === 'soon') && s.mode !== 'auto' && <div {...ownClicks}><button className="btn sm" onClick={() => pay(s)}>{s.kind === 'income' ? 'Received' : 'Pay'}</button></div>}
                 </span>
               </div>
             ))}

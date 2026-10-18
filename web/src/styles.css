@@ -509,3 +509,29 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 .inline-list .li > .small, .inline-list .li > .muted { white-space: nowrap; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ---- clickable rows: one hover, cursor and focus style everywhere ---- */
+.table th.num, .table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table tr.clickable { cursor: pointer; }
+.table tr.clickable td { transition: background-color .12s; }
+.table tr.clickable:hover td { background: var(--surface-2); }
+.table tr.clickable:focus-visible { outline: none; }
+.table tr.clickable:focus-visible td { background: var(--accent-soft); }
+.table tr.clickable:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.hov { cursor: pointer; border-radius: 8px; transition: background-color .12s; color: inherit; }
+.hov:hover, .hov:focus-visible { background: var(--surface-2); text-decoration: none; outline: none; }
+.inline-list .li.hov { margin: 0 -8px; padding: 6px 8px; border-bottom: 0; background: linear-gradient(var(--border), var(--border)) center bottom / calc(100% - 16px) 1px no-repeat; }
+.inline-list .li.hov:last-child { background-image: none; }
+.inline-list .li.hov:hover, .inline-list .li.hov:focus-visible { background: var(--surface-2); }
+.hbar.hov { margin: 0 -8px; padding: 3px 8px; }
+.list-links { display: grid; gap: 2px; }
+.list-links > .hov { display: block; margin: 0 -8px; padding: 6px 8px; }
+.list-links > .row.hov { display: flex; }
+.tx-row:focus-visible, .sub-row:focus-visible, .timeline .tl:focus-visible { outline: none; background: var(--accent-soft); }
+.tpl:hover, .cat-btn:hover { background: var(--surface-2); }
+.tpl:focus-visible, .cat-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tpl { transition: border-color .12s, background-color .12s, transform .08s; }
+.tpl:active { transform: scale(.98); }
+.budget-card:focus-visible, .goal-card:focus-visible, .acct-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.budget-card, .goal-card { transition: border-color .12s, box-shadow .12s; }
+.budget-card:hover, .goal-card:hover { box-shadow: 0 4px 14px rgba(16, 24, 40, .08); }

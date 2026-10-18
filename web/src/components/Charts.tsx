@@ -98,7 +98,7 @@ export function HBars({ rows, currency, decimals = 2, max: maxRows = 10, onPick 
   return (
     <div className="hbars">
       {sorted.map(r => (
-        <div key={r.key} className="hbar" style={{ cursor: onPick ? 'pointer' : undefined }} onClick={() => onPick?.(r.key)}>
+        <div key={r.key} className={`hbar ${onPick ? 'hov' : ''}`} {...(onPick ? { onClick: () => onPick(r.key), tabIndex: 0, role: 'button', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') onPick(r.key) } } : {})}>
           <span className="lbl">{r.icon} {r.label}</span>
           <span style={{ display: 'grid', gap: 2 }}>
             <span className="track"><span className="fill" style={{ width: `${r.value / max * 100}%`, background: c('expense') }} /></span>

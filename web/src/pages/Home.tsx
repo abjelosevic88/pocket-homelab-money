@@ -111,8 +111,8 @@ export default function Home() {
           </Card>
           {data.budgets.length > 0 && (
             <Card title="Budgets" actions={<Link to="/budgets" className="btn ghost sm">All →</Link>}>
-              <div className="grid" style={{ gap: 10 }}>{data.budgets.slice(0, 5).map(b => b.status && (
-                <Link key={b.id} to="/budgets" style={{ color: 'inherit' }}>
+              <div className="list-links">{data.budgets.slice(0, 5).map(b => b.status && (
+                <Link key={b.id} to="/budgets" className="hov">
                   <div className="row small"><span>{b.icon} {b.name}</span><span className="spacer" /><span className="muted">{m(b.status.spent)} / {m(b.status.available)}</span></div>
                   <div className={`pbar sm ${b.status.state}`}><span className="f" style={{ width: `${Math.min(100, b.status.pct)}%` }} /><span className="pace" style={{ left: `${Math.min(100, b.status.elapsed_pct)}%` }} /></div>
                 </Link>
@@ -120,8 +120,8 @@ export default function Home() {
             </Card>
           )}
           <Card title="Accounts" actions={<Link to="/accounts" className="btn ghost sm">Manage →</Link>}>
-            <div className="grid" style={{ gap: 6 }}>{data.accounts.map(a => (
-              <Link key={a.id} to={`/accounts/${a.id}`} className="row" style={{ color: 'inherit' }}>
+            <div className="list-links">{data.accounts.map(a => (
+              <Link key={a.id} to={`/accounts/${a.id}`} className="row hov">
                 <span>{a.icon || KIND_ICON[a.kind]}</span><span className="grow" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
                 <span className={`amt ${a.balance < 0 ? 'bad' : ''}`}>{fmtMoney(a.balance, a.currency, decimalsOf(a.currency, currencies))}</span>
               </Link>
@@ -129,8 +129,8 @@ export default function Home() {
           </Card>
           {data.goals.length > 0 && (
             <Card title="Goals" actions={<Link to="/goals" className="btn ghost sm">All →</Link>}>
-              <div className="grid" style={{ gap: 10 }}>{data.goals.slice(0, 3).map(g => (
-                <Link key={g.id} to="/goals" style={{ color: 'inherit' }}>
+              <div className="list-links">{data.goals.slice(0, 3).map(g => (
+                <Link key={g.id} to="/goals" className="hov">
                   <div className="row small"><span>{g.icon} {g.name}</span><span className="spacer" /><span className="muted">{fmtMoney(g.saved, g.currency, decimalsOf(g.currency, currencies), { compact: true })} / {fmtMoney(g.target, g.currency, decimalsOf(g.currency, currencies), { compact: true })}</span></div>
                   <div className="pbar sm"><span className="f" style={{ width: `${g.pct}%` }} /></div>
                 </Link>

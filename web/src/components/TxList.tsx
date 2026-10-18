@@ -2,6 +2,7 @@ import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO, addDays, weekday } from '../lib/format'
 import type { Transaction } from '../lib/types'
 import { CatIcon, TxAmount } from './pickers'
+import { clickRow } from './ui'
 
 function dayTitle(d: string) {
   const t = todayISO()
@@ -28,9 +29,9 @@ export function TxList({ items, onOpen, selected, onToggle, showAccount = true, 
         <div key={g.date}>
           {!compact && <div className="tx-day"><span className="d">{dayTitle(g.date)}</span><span>{g.in > 0 && <span className="ok">+{fmtMoney(g.in, home, dec)} </span>}{g.out > 0 && <span>−{fmtMoney(g.out, home, dec)}</span>}</span></div>}
           {g.items.map(t => (
-            <div key={t.id} className={`tx-row ${selected?.has(t.id) ? 'sel' : ''}`} onClick={() => onOpen(t)}>
+            <div key={t.id} className={`tx-row ${selected?.has(t.id) ? 'sel' : ''}`} {...clickRow(() => onOpen(t))}>
               <span className="pick">
-                {onToggle && <input type="checkbox" className="check" checked={selected?.has(t.id) || false} onClick={e => e.stopPropagation()} onChange={() => onToggle(t.id)} aria-label="Select" />}
+                {onToggle && <input type="checkbox" className="check" checked={selected?.has(t.id) || false} onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} onChange={() => onToggle(t.id)} aria-label="Select" />}
                 <CatIcon t={t} />
               </span>
               <span className="tx-main">

@@ -3,7 +3,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
 import type { Budget, DayAmount, Transaction } from '../lib/types'
-import { Card, Empty, Field, Loading, Modal, PageHeader, Segmented, useAsync, useToast } from '../components/ui'
+import { Card, Empty, Field, Loading, Modal, PageHeader, Segmented, clickRow, useAsync, useToast } from '../components/ui'
 import { MoneyInput } from '../components/Money'
 import { Line } from '../components/Charts'
 import { TxList } from '../components/TxList'
@@ -45,7 +45,7 @@ export default function Budgets() {
       ) : (
         <div className="budget-grid">
           {active.map(b => b.status && (
-            <div key={b.id} className="budget-card" onClick={() => setDetail(b.id)}>
+            <div key={b.id} className="budget-card" {...clickRow(() => setDetail(b.id))}>
               <div className="head"><span className="cat-ico">{b.icon || '◔'}</span><span className="nm">{b.name}</span><span className={`state-pill ${b.status.state}`}>{b.status.state === 'ok' ? 'on track' : b.status.state === 'warn' ? 'careful' : 'over'}</span></div>
               <div className={`pbar ${b.status.state}`} title={`${b.status.pct}% used, ${b.status.elapsed_pct}% of the period gone`}><span className="f" style={{ width: `${Math.min(100, b.status.pct)}%` }} /><span className="pace" style={{ left: `${Math.min(100, b.status.elapsed_pct)}%` }} /></div>
               <div className="nums"><span><b>{m(b.status.spent)}</b> of {m(b.status.available)}</span><span>{b.status.left >= 0 ? <><b>{m(b.status.left)}</b> left</> : <b className="bad">{m(-b.status.left)} over</b>}</span></div>

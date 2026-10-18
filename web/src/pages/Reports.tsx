@@ -4,7 +4,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO, weekday } from '../lib/format'
 import type { DayAmount, Forecast, GroupSum } from '../lib/types'
-import { Card, Empty, Loading, PageHeader, Segmented, Tabs, useAsync, useToast } from '../components/ui'
+import { Card, Empty, Loading, PageHeader, Segmented, Tabs, clickRow, useAsync, useToast } from '../components/ui'
 import { DayBars, FlowBars, HBars, Line } from '../components/Charts'
 
 type Tab = 'overview' | 'flow' | 'categories' | 'tags' | 'networth' | 'calendar' | 'ask'
@@ -80,9 +80,9 @@ function MonthReport() {
         </Card>
         <div className="grid" style={{ gap: 16 }}>
           <Card title="Top payees">
-            <div className="inline-list">{data.top.map(t => <div key={t.name} className="li"><span className="grow">{t.name}</span><span className="muted small">{t.count}×</span><span className="money">{m(t.sum)}</span></div>)}</div>
+            <div className="inline-list">{data.top.map(t => <div key={t.name} className="li hov" {...clickRow(() => navigate(`/transactions?q=${encodeURIComponent(t.name)}&kind=expense&from=${data.from}&to=${data.to}`))}><span className="grow">{t.name}</span><span className="muted small">{t.count}×</span><span className="money">{m(t.sum)}</span></div>)}</div>
           </Card>
-          {data.income_categories.length > 0 && <Card title="Money in"><div className="inline-list">{data.income_categories.map(c => <div key={c.id} className="li"><span className="grow">{c.icon} {c.name || 'Uncategorised'}</span><span className="money ok">{m(c.sum)}</span></div>)}</div></Card>}
+          {data.income_categories.length > 0 && <Card title="Money in"><div className="inline-list">{data.income_categories.map(c => <div key={c.id} className="li hov" {...clickRow(() => navigate(`/transactions?category=${c.id || 'none'}&kind=income&from=${data.from}&to=${data.to}`))}><span className="grow">{c.icon} {c.name || 'Uncategorised'}</span><span className="money ok">{m(c.sum)}</span></div>)}</div></Card>}
         </div>
       </div>
     </div>
@@ -113,7 +113,7 @@ function Flow() {
       </div>
       <Card title="Month by month" flush>
         <table className="table"><thead><tr><th>Month</th><th className="num">In</th><th className="num">Out</th><th className="num">Net</th></tr></thead>
-          <tbody>{[...months].reverse().map(x => <tr key={x.from} className="clickable" onClick={() => navigate(`/transactions?from=${x.from}&to=${x.to}`)}><td>{x.label}</td><td className="num ok">{fmtMoney(x.income, home, dec)}</td><td className="num">{fmtMoney(x.expense, home, dec)}</td><td className={`num ${x.net >= 0 ? 'ok' : 'bad'}`}>{fmtMoney(x.net, home, dec, { sign: true })}</td></tr>)}</tbody></table>
+          <tbody>{[...months].reverse().map(x => <tr key={x.from} className="clickable" {...clickRow(() => navigate(`/transactions?from=${x.from}&to=${x.to}`))}><td>{x.label}</td><td className="num ok">{fmtMoney(x.income, home, dec)}</td><td className="num">{fmtMoney(x.expense, home, dec)}</td><td className={`num ${x.net >= 0 ? 'ok' : 'bad'}`}>{fmtMoney(x.net, home, dec, { sign: true })}</td></tr>)}</tbody></table>
       </Card>
     </div>
   )
@@ -138,7 +138,7 @@ function Categories() {
           <tbody>{rows.map(c => {
             const vs = c.average > 0 ? Math.round((c.sum - c.average) / c.average * 100) : null
             return (
-              <tr key={c.id} className="clickable" onClick={() => navigate(`/transactions?category=${c.id || 'none'}&from=${data.from}&to=${data.to}`)}>
+              <tr key={c.id} className="clickable" {...clickRow(() => navigate(`/transactions?category=${c.id || 'none'}&from=${data.from}&to=${data.to}`))}>
                 <td>{c.icon} {c.name || 'Uncategorised'} <span className="muted small">{c.count}×</span></td>
                 <td className="num">{fmtMoney(c.sum, home, dec)}</td>
                 <td className="num">{data.total ? Math.round(c.sum / data.total * 100) : 0}%</td>
@@ -163,7 +163,7 @@ function Tags() {
     <Card title="Spending per tag (all time)" flush>
       {data.tags.length === 0 ? <Empty title="No tags used yet">Tag a trip, a project or a vehicle (#lisbon, #car) and its total shows up here — Pocket Travel and Pocket Garage read the same tags.</Empty> : (
         <table className="table"><thead><tr><th>Tag</th><th className="num">Transactions</th><th className="num">Spent</th></tr></thead>
-          <tbody>{data.tags.map(t => <tr key={t.id} className="clickable" onClick={() => navigate(`/transactions?tag=${encodeURIComponent(t.name)}`)}><td>#{t.name}</td><td className="num">{t.count}</td><td className="num">{fmtMoney(t.sum, home, dec)}</td></tr>)}</tbody></table>
+          <tbody>{data.tags.map(t => <tr key={t.id} className="clickable" {...clickRow(() => navigate(`/transactions?tag=${encodeURIComponent(t.name)}`))}><td>#{t.name}</td><td className="num">{t.count}</td><td className="num">{fmtMoney(t.sum, home, dec)}</td></tr>)}</tbody></table>
       )}
     </Card>
   )
@@ -171,6 +171,7 @@ function Tags() {
 
 function NetWorth() {
   const { home, currencies } = useApp()
+  const navigate = useNavigate()
   const [n, setN] = useState(12)
   const { data } = useAsync(() => api.get<{ points: { date: string; label: string; assets: number; liabilities: number; net: number; by_account: Record<string, number> }[]; accounts: Record<string, string> }>(`${V1}/reports/networth?months=${n}`), [n])
   const dec = decimalsOf(home, currencies)
@@ -185,7 +186,7 @@ function NetWorth() {
       {last && (
         <Card title="By account" flush>
           <table className="table"><thead><tr><th>Account</th>{data.points.slice(-4).map(p => <th key={p.date} className="num">{p.label}</th>)}</tr></thead>
-            <tbody>{Object.entries(data.accounts).filter(([id]) => last.by_account[id] != null).map(([id, name]) => <tr key={id}><td>{name}</td>{data.points.slice(-4).map(p => <td key={p.date} className="num">{p.by_account[id] != null ? fmtMoney(p.by_account[id], home, dec) : '—'}</td>)}</tr>)}</tbody></table>
+            <tbody>{Object.entries(data.accounts).filter(([id]) => last.by_account[id] != null).map(([id, name]) => <tr key={id} className="clickable" {...clickRow(() => navigate(`/accounts/${id}`))}><td>{name}</td>{data.points.slice(-4).map(p => <td key={p.date} className="num">{p.by_account[id] != null ? fmtMoney(p.by_account[id], home, dec) : '—'}</td>)}</tr>)}</tbody></table>
         </Card>
       )}
     </div>
@@ -220,7 +221,7 @@ function Calendar() {
         <div className="legend"><span>less</span>{['', 'l1', 'l2', 'l3', 'l4'].map(l => <span key={l} className={`hc ${l}`} style={{ width: 12, height: 12, borderRadius: 3, display: 'inline-block', background: l ? undefined : 'var(--surface-2)' }} />)}<span>more</span></div>
       </Card>
       <Card title="Biggest days">
-        <div className="inline-list">{top.map(([d, v]) => <div key={d} className="li" style={{ cursor: 'pointer' }} onClick={() => navigate(`/transactions?from=${d}&to=${d}`)}><span className="grow">{weekday(d, true)}, {fmtDate(d)}</span><span className="muted small">{v.count} tx</span><span className="money">{fmtMoney(v.expense || 0, home, dec)}</span></div>)}</div>
+        <div className="inline-list">{top.map(([d, v]) => <div key={d} className="li hov" {...clickRow(() => navigate(`/transactions?from=${d}&to=${d}`))}><span className="grow">{weekday(d, true)}, {fmtDate(d)}</span><span className="muted small">{v.count} tx</span><span className="money">{fmtMoney(v.expense || 0, home, dec)}</span></div>)}</div>
       </Card>
     </div>
   )

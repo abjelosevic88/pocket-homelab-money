@@ -1,9 +1,10 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney } from '../lib/format'
 import type { Category, Condition, Kind, Rule, Tag, Template, Transaction } from '../lib/types'
-import { Card, Empty, Field, Loading, Modal, Segmented, useAsync, useToast } from '../components/ui'
+import { Card, Empty, Field, Loading, Modal, Segmented, clickRow, ownClicks, useAsync, useToast } from '../components/ui'
 import { Select } from '../components/Select'
 import { CurrencySelect, MoneyInput } from '../components/Money'
 import { AccountSelect, CategorySelect, KindTabs, TagInput } from '../components/pickers'
@@ -31,11 +32,11 @@ export function Categories() {
           <thead><tr><th>Category</th><th>Kind</th><th className="num">Transactions</th><th /></tr></thead>
           <tbody>
             {parents.flatMap(p => [p, ...categories.filter(c => c.parent_id === p.id)]).map(c => (
-              <tr key={c.id} className={c.archived ? 'muted' : ''}>
+              <tr key={c.id} className={`clickable ${c.archived ? 'muted' : ''}`} {...clickRow(() => setEdit(c))} title="Edit">
                 <td style={{ paddingLeft: c.parent_id ? 34 : undefined }}>{c.icon || '•'} {c.name}{c.archived && <span className="badge" style={{ marginLeft: 6 }}>archived</span>}</td>
                 <td className="muted">{c.kind}</td>
                 <td className="num">{c.tx_count}</td>
-                <td className="right"><button className="btn ghost sm" onClick={() => setEdit(c)}>Edit</button>{user?.role === 'admin' && <button className="btn ghost sm danger-text" onClick={() => setDel(c)}>Remove</button>}</td>
+                <td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?category=${c.id}`}>Show</Link>{user?.role === 'admin' && <button className="btn ghost sm danger-text" onClick={() => setDel(c)}>Remove</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -102,7 +103,7 @@ export function TagsAdmin() {
       {tags.length === 0 ? <Empty title="No tags yet">Type #tag in quick add or use the tag field.</Empty> : (
         <table className="table compact">
           <thead><tr><th>Tag</th><th className="num">Transactions</th><th>Last used</th><th /></tr></thead>
-          <tbody>{tags.map(t => <tr key={t.id} className={t.archived ? 'muted' : ''}><td>#{t.name}</td><td className="num">{t.tx_count}</td><td className="muted">{t.last_used ? fmtDate(t.last_used) : '—'}</td><td className="right"><a className="btn ghost sm" href={`/transactions?tag=${encodeURIComponent(t.name)}`}>Show</a><button className="btn ghost sm" onClick={() => { setEdit(t); setName(t.name) }}>Edit</button><button className="btn ghost sm danger-text" onClick={async () => { if (confirm(`Remove #${t.name} from ${t.tx_count} transactions?`)) { await api.del(`${V1}/tags/${t.id}`); reloadCatalog() } }}>Remove</button></td></tr>)}</tbody>
+          <tbody>{tags.map(t => <tr key={t.id} className={`clickable ${t.archived ? 'muted' : ''}`} {...clickRow(() => { setEdit(t); setName(t.name) })} title="Edit"><td>#{t.name}</td><td className="num">{t.tx_count}</td><td className="muted">{t.last_used ? fmtDate(t.last_used) : '—'}</td><td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?tag=${encodeURIComponent(t.name)}`}>Show</Link><button className="btn ghost sm danger-text" onClick={async () => { if (confirm(`Remove #${t.name} from ${t.tx_count} transactions?`)) { await api.del(`${V1}/tags/${t.id}`); reloadCatalog() } }}>Remove</button></td></tr>)}</tbody>
         </table>
       )}
       {edit && (
@@ -131,10 +132,10 @@ export function TemplatesAdmin() {
       <p className="muted small">One tap on Home or Add books a template with an amount; without one it opens the form. Quick add matches them by the start of the name or an alias — <code>cg h 20</code> finds “cg hrana”. Most used come first, on every device.</p>
       {data.length === 0 ? <Empty title="No templates yet" /> : (
         <table className="table compact">
-          <thead><tr><th>Name</th><th>Aliases</th><th className="num">Amount</th><th>Category</th><th>Account</th><th className="num">Used</th><th /></tr></thead>
+          <thead><tr><th>Name</th><th>Aliases</th><th className="num">Amount</th><th>Category</th><th>Account</th><th className="num">Used</th></tr></thead>
           <tbody>{data.map(t => {
             const cur = t.currency || acctById(t.account_id)?.currency || ''
-            return <tr key={t.id} className="clickable" onClick={() => setEdit(t)}><td>{t.pinned && '📌 '}{t.category_icon} {t.name}</td><td className="muted">{t.aliases}</td><td className="num">{t.amount != null ? fmtMoney(t.amount, cur, decimalsOf(cur, currencies)) : '—'}{t.currency && <span className="badge" style={{ marginLeft: 4 }}>{t.currency}</span>}</td><td>{t.category_name}</td><td className="muted">{t.account_name}</td><td className="num">{t.use_count}</td><td /></tr>
+            return <tr key={t.id} className="clickable" {...clickRow(() => setEdit(t))} title="Edit"><td>{t.pinned && '📌 '}{t.category_icon} {t.name}</td><td className="muted">{t.aliases}</td><td className="num">{t.amount != null ? fmtMoney(t.amount, cur, decimalsOf(cur, currencies)) : '—'}{t.currency && <span className="badge" style={{ marginLeft: 4 }}>{t.currency}</span>}</td><td>{t.category_name}</td><td className="muted">{t.account_name}</td><td className="num">{t.use_count}</td></tr>
           })}</tbody>
         </table>
       )}
@@ -210,11 +211,11 @@ export function Rules() {
         <table className="table compact">
           <thead><tr><th>Rule</th><th>Then</th><th className="num">Hits</th><th /></tr></thead>
           <tbody>{data.map(r => (
-            <tr key={r.id} className={r.active ? '' : 'muted'}>
+            <tr key={r.id} className={`clickable ${r.active ? '' : 'muted'}`} {...clickRow(() => setEdit(r))} title="Edit">
               <td>{r.name}<div className="muted small">{r.conditions.map(c => `${c.field} ${c.op} ${c.value}`).join(r.match === 'any' ? ' or ' : ' and ')}</div></td>
               <td className="small">{[r.actions.category_id ? `${catById(r.actions.category_id)?.icon || ''} ${catById(r.actions.category_id)?.name || 'category'}` : '', ...(r.actions.add_tags || []).map(t => '#' + t), r.actions.payee ? `payee ${r.actions.payee}` : '', r.actions.description ? `rename “${r.actions.description}”` : ''].filter(Boolean).join(' · ')}</td>
               <td className="num">{r.hits}</td>
-              <td className="right"><button className="btn ghost sm" onClick={() => apply(r)}>Run now</button><button className="btn ghost sm" onClick={() => setEdit(r)}>Edit</button></td>
+              <td className="right" {...ownClicks}><button className="btn ghost sm" onClick={() => apply(r)}>Run now</button></td>
             </tr>
           ))}</tbody>
         </table>
