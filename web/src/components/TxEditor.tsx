@@ -3,6 +3,8 @@ import { api, upload, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { addDays, decimalsOf, fmtBytes, fmtMoney, todayISO } from '../lib/format'
 import type { Attachment, Kind, Subscription, Transaction } from '../lib/types'
+
+interface Part { category_id: number | null; amount: number | null; note: string }
 import { Field, Modal, useDebounce, useToast } from './ui'
 import { CurrencySelect, MoneyInput } from './Money'
 import { AccountSelect, CategoryGrid, CategorySelect, KindTabs, TagInput } from './pickers'
@@ -41,6 +43,8 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
   const [date, setDate] = useState(tx?.date || seed?.date || todayISO())
   const [time, setTime] = useState(tx ? tx.time : seed?.time ?? nowHM())
   const [notes, setNotes] = useState(tx?.notes ?? seed?.notes ?? '')
+  // split parts are in the receipt currency (what the big amount shows)
+  const [parts, setParts] = useState<Part[]>(tx?.splits?.length ? tx.splits.map(p => ({ category_id: p.category_id, amount: tx.foreign_amount > 0 ? p.foreign_amount : p.amount, note: p.note })) : [])
   const [subId, setSubId] = useState<number | null>(tx?.subscription_id ?? null)
   const [subs, setSubs] = useState<Subscription[]>([])
   const [more, setMore] = useState(Boolean(tx && (tx.notes || tx.payee || tx.subscription_id)))
@@ -81,6 +85,20 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
     return Math.round((amount / Math.pow(10, fd)) * rate * Math.pow(10, td))
   }, [foreign, amount, rate, acct, currency, currencies])
 
+  const splitting = parts.length > 0 && kind !== 'transfer'
+  const partsSum = parts.reduce((n, p) => n + (p.amount || 0), 0)
+  const remaining = (amount || 0) - partsSum
+  const empty = parts.findIndex(p => !p.amount)
+  const restAt = empty >= 0 ? empty : parts.length - 1
+  const startSplit = () => setParts([{ category_id: categoryId, amount, note: '' }, { category_id: null, amount: null, note: '' }])
+  const setPart = (i: number, p: Partial<Part>) => setParts(ps => ps.map((x, j) => (j === i ? { ...x, ...p } : x)))
+  const dropPart = (i: number) => setParts(ps => {
+    const rest = ps.filter((_, j) => j !== i)
+    if (rest.length > 1) return rest
+    if (rest[0]?.category_id) setCategoryId(rest[0].category_id)
+    return []
+  })
+
   const pick = (s: Suggestion) => {
     setDescription(s.text)
     if (!touchedCat.current && s.category_id) setCategoryId(s.category_id)
@@ -92,6 +110,7 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
     if (!amount) { toast('Type an amount', 'err'); return }
     if (!accountId) { toast('Choose an account', 'err'); return }
     if (kind === 'transfer' && !toAccountId) { toast('Choose where the money goes', 'err'); return }
+    if (splitting && remaining !== 0) { toast(`The parts are ${fmtMoney(Math.abs(remaining), currency, decimalsOf(currency, currencies))} ${remaining > 0 ? 'short of' : 'over'} the total`, 'err'); return }
     setBusy(true)
     const body: Record<string, unknown> = {
       kind, date, time, account_id: accountId, amount, currency, description, payee, category_id: kind === 'transfer' ? 0 : categoryId || 0, tags, notes,
@@ -100,6 +119,8 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
     if (foreign && accountAmount) body.account_amount = accountAmount
     if (crossTransfer && toAmount) body.to_amount = toAmount
     if (!tx && seed?.template_id) body.template_id = seed.template_id
+    if (splitting) body.splits = parts.map(p => ({ category_id: p.category_id || 0, amount: p.amount || 0, note: p.note }))
+    else if (tx?.splits?.length) body.splits = []
     try {
       let saved = tx ? await api.put<Transaction>(`${V1}/transactions/${tx.id}`, body) : await api.post<Transaction>(`${V1}/transactions`, body)
       for (const f of pending) await upload(`${V1}/transactions/${saved.id}/attachments`, 'file', f)
@@ -166,10 +187,31 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
           )}
         </div>
       </Field>
-      {kind !== 'transfer' && (
+      {splitting && (
+        <Field label="Split across categories" group help={remaining === 0 ? 'The parts add up.' : <span className="bad">{fmtMoney(Math.abs(remaining), currency, decimalsOf(currency, currencies))} {remaining > 0 ? 'left to assign' : 'too much'}</span>}>
+          <div className="split-parts">
+            {parts.map((p, i) => (
+              <div key={i} className="split-part">
+                <CategorySelect value={p.category_id} kind={kind} onChange={id => setPart(i, { category_id: id })} />
+                <MoneyInput value={p.amount} code={currency} onChange={v => setPart(i, { amount: v })} ariaLabel={`Part ${i + 1} amount`} />
+                <input value={p.note} onChange={e => setPart(i, { note: e.target.value })} placeholder="Note" aria-label={`Part ${i + 1} note`} />
+                <button type="button" className="btn ghost icon" onClick={() => dropPart(i)} aria-label="Remove part">✕</button>
+              </div>
+            ))}
+            <div className="row">
+              <button type="button" className="btn ghost sm" onClick={() => setParts(ps => [...ps, { category_id: null, amount: remaining > 0 ? remaining : null, note: '' }])}>＋ Part</button>
+              {remaining > 0 && <button type="button" className="btn ghost sm" onClick={() => setPart(restAt, { amount: (parts[restAt].amount || 0) + remaining })}>Put the rest in {parts[restAt].amount ? 'the last part' : 'the empty part'}</button>}
+              <span className="spacer" />
+              <button type="button" className="btn ghost sm" onClick={() => { if (parts[0]?.category_id) setCategoryId(parts[0].category_id); setParts([]) }}>Don't split</button>
+            </div>
+          </div>
+        </Field>
+      )}
+      {kind !== 'transfer' && !splitting && (
         <Field label="Category" group>
           {page ? <CategoryGrid value={categoryId} kind={kind} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />
             : <CategorySelect value={categoryId} kind={kind} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />}
+          <button type="button" className="btn ghost sm" style={{ alignSelf: 'flex-start', marginTop: 6 }} onClick={startSplit} disabled={!amount}>✂ Split across categories</button>
         </Field>
       )}
       <Field label="Tags" group><TagInput value={tags} onChange={setTags} /></Field>

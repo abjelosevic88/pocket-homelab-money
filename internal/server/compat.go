@@ -150,7 +150,7 @@ func ffAccountRole(kind string) string {
 
 func (s *Server) ffAccountItem(a store.Account) ffItem {
 	typ := "asset"
-	if a.Kind == "loan" {
+	if store.IsLiability(a.Kind) {
 		typ = "liabilities"
 	}
 	return ffItem{Type: "accounts", ID: strconv.FormatInt(a.ID, 10), Attributes: map[string]any{
@@ -158,7 +158,8 @@ func (s *Server) ffAccountItem(a store.Account) ffItem {
 		"account_role": ffAccountRole(a.Kind), "currency_id": a.Currency, "currency_code": a.Currency, "currency_symbol": a.Currency,
 		"currency_decimal_places": currency.Decimals(a.Currency), "current_balance": ffNum(a.Balance, a.Currency), "current_balance_date": time.Now().Format(time.RFC3339),
 		"notes": a.Notes, "iban": a.Number, "account_number": a.Number, "include_net_worth": a.IncludeNetWorth, "opening_balance": ffNum(a.OpeningBalance, a.Currency),
-		"opening_balance_date": a.OpeningDate, "virtual_balance": "0", "credit_card_type": nil, "liability_type": nil,
+		"opening_balance_date": a.OpeningDate, "virtual_balance": "0", "credit_card_type": nil, "liability_type": liabType(a),
+		"liability_direction": liabDir(a), "interest": strconv.FormatFloat(a.InterestRate, 'f', -1, 64), "interest_period": "yearly",
 	}}
 }
 
@@ -171,7 +172,7 @@ func (s *Server) ffAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []ffItem{}
 	for _, a := range accts {
-		isLiab := a.Kind == "loan"
+		isLiab := store.IsLiability(a.Kind)
 		switch t {
 		case "", "all", "asset", "assets":
 			if (t == "asset" || t == "assets") && isLiab {
@@ -378,7 +379,36 @@ func (s *Server) ffGroup(t *store.Transaction) ffItem {
 		"latitude": t.Lat, "longitude": t.Lng, "zoom_level": nil,
 		"pc_amount": nil, "primary_currency_code": nil,
 	}
-	return ffItem{Type: "transactions", ID: id, Attributes: map[string]any{"created_at": t.CreatedAt, "updated_at": t.UpdatedAt, "user": "1", "group_title": nil, "transactions": []any{split}},
+	splits := []any{split}
+	var title any
+	if len(t.Splits) > 0 {
+		// one Firefly split per part; journal ids after the first are made unique
+		title = t.Description
+		splits = splits[:0]
+		for i, sp := range t.Splits {
+			p := map[string]any{}
+			for k, v := range split {
+				p[k] = v
+			}
+			if i > 0 {
+				p["transaction_journal_id"] = strconv.FormatInt(1_000_000_000+sp.ID, 10)
+			}
+			p["order"] = i
+			p["amount"] = ffNum(sp.Amount, t.Currency)
+			if sp.ForeignAmount > 0 {
+				p["foreign_amount"] = ffNum(sp.ForeignAmount, t.ForeignCurrency)
+			}
+			p["category_id"], p["category_name"] = nil, nil
+			if sp.CategoryID != nil {
+				p["category_id"], p["category_name"] = strconv.FormatInt(*sp.CategoryID, 10), sp.CategoryName
+			}
+			if sp.Note != "" {
+				p["description"] = sp.Note
+			}
+			splits = append(splits, p)
+		}
+	}
+	return ffItem{Type: "transactions", ID: id, Attributes: map[string]any{"created_at": t.CreatedAt, "updated_at": t.UpdatedAt, "user": "1", "group_title": title, "transactions": splits},
 		Links: map[string]any{"self": "/api/v1/transactions/" + id}}
 }
 
@@ -535,6 +565,20 @@ func (s *Server) ffCreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accts, _ := s.store.ListAccounts(ctx, actorID(ctx), false)
+	if in, ok := s.ffMergeSplits(ctx, body.Transactions, accts); ok {
+		in.SkipRules = body.ApplyRules != nil && !*body.ApplyRules
+		t, msg, err := s.createTx(ctx, in)
+		if msg != "" {
+			ffError(w, http.StatusUnprocessableEntity, msg)
+			return
+		}
+		if err != nil {
+			ffError(w, 500, err.Error())
+			return
+		}
+		ffJSON(w, http.StatusOK, map[string]any{"data": s.ffGroup(t)})
+		return
+	}
 	var first *store.Transaction
 	for _, sp := range body.Transactions {
 		in, msg := s.ffToIn(ctx, sp, accts)
@@ -612,6 +656,7 @@ func (s *Server) ffUpdateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, _ = s.store.GetTransaction(ctx, t.ID)
+	s.emitTx(ctx, "transaction.updated", t)
 	ffJSON(w, http.StatusOK, map[string]any{"data": s.ffGroup(t)})
 }
 
@@ -626,6 +671,7 @@ func (s *Server) ffDeleteTransaction(w http.ResponseWriter, r *http.Request) {
 		s.removeFile(p)
 	}
 	_ = s.store.DeleteTransaction(ctx, t.ID)
+	s.emitTx(ctx, "transaction.deleted", t)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -661,16 +707,16 @@ func (s *Server) ffBills(w http.ResponseWriter, r *http.Request) {
 				pay = append(pay, ffDate(d, ""))
 			}
 		}
-		if len(pay) == 0 && x.Active && x.NextDate != "" {
-			pay = append(pay, ffDate(x.NextDate, "")) // like Firefly: the next one even past the window
+		if len(pay) == 0 && x.Active && x.NextDate != "" && !limitReached(x) {
+			pay = append(pay, ffDate(dueOf(x), "")) // like Firefly: the next one even past the window
 		}
 		notes := strings.TrimSpace(x.Notes)
 		if x.NotifyDays >= 0 {
 			notes = strings.TrimSpace(notes + "\nnotify: " + strconv.Itoa(x.NotifyDays))
 		}
 		var next any
-		if x.Active && x.NextDate != "" {
-			next = ffDate(x.NextDate, "")
+		if x.Active && x.NextDate != "" && !limitReached(x) {
+			next = ffDate(dueOf(x), "")
 		}
 		hi := x.AmountMax
 		if hi < x.Amount {
@@ -837,4 +883,90 @@ func (s *Server) ffTemplates(w http.ResponseWriter, r *http.Request) {
 			"created_at": t.CreatedAt, "updated_at": t.CreatedAt})
 	}
 	ffPage(w, r, items)
+}
+
+// ffMergeSplits turns a Firefly group of several withdrawal (or deposit)
+// splits from the same account, date and currency into one split transaction.
+func (s *Server) ffMergeSplits(ctx context.Context, sps []ffSplitIn, accts []store.Account) (*txIn, bool) {
+	if len(sps) < 2 {
+		return nil, false
+	}
+	first := sps[0]
+	if ffKindFilter(first.Type) == "transfer" {
+		return nil, false
+	}
+	var total float64
+	var parts []splitIn
+	var cur string
+	for i, sp := range sps {
+		if sp.Type != first.Type || rawString(sp.SourceID) != rawString(first.SourceID) || sp.SourceName != first.SourceName ||
+			rawString(sp.DestinationID) != rawString(first.DestinationID) || sp.Date != first.Date || sp.CurrencyCode != first.CurrencyCode {
+			return nil, false
+		}
+		a, ok := rawFloat(sp.Amount)
+		if !ok || a == 0 {
+			return nil, false
+		}
+		total += math.Abs(a)
+		if i == 0 {
+			cur = strings.ToUpper(sp.CurrencyCode)
+		}
+		p := splitIn{Note: strings.TrimSpace(sp.Description)}
+		if v := rawString(sp.CategoryID); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				p.CategoryID = &n
+			}
+		} else if sp.CategoryName != "" {
+			if id, err := s.store.EnsureCategory(ctx, sp.CategoryName, "expense"); err == nil {
+				p.CategoryID = &id
+			}
+		}
+		parts = append(parts, p)
+		_ = cur
+	}
+	merged := first
+	merged.Amount = json.RawMessage(strconv.FormatFloat(total, 'f', -1, 64))
+	merged.CategoryID, merged.CategoryName, merged.ForeignAmount = nil, "", nil
+	in, msg := s.ffToIn(ctx, merged, accts)
+	if msg != "" {
+		return nil, false
+	}
+	// parts are in the same currency as the total that was typed
+	dec := currency.Decimals(cur)
+	if in.Currency != nil {
+		dec = currency.Decimals(*in.Currency)
+	}
+	for i, sp := range sps {
+		a, _ := rawFloat(sp.Amount)
+		parts[i].Amount = int64(math.Round(math.Abs(a) * math.Pow10(dec)))
+	}
+	var tags []string
+	for _, sp := range sps {
+		tags = append(tags, sp.Tags...)
+	}
+	tags = cleanTags(tags)
+	in.Tags = &tags
+	in.Splits = &parts
+	if g := strings.TrimSpace(first.Description); g != "" {
+		in.Description = &g
+	}
+	return in, true
+}
+
+func liabType(a store.Account) any {
+	if !store.IsLiability(a.Kind) {
+		return nil
+	}
+	return a.Kind
+}
+
+// liabDir uses Firefly's words: debit = I owe it, credit = I am owed it.
+func liabDir(a store.Account) any {
+	if !store.IsLiability(a.Kind) {
+		return nil
+	}
+	if a.Direction == "owed" {
+		return "credit"
+	}
+	return "debit"
 }

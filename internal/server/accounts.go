@@ -59,20 +59,26 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 type accountIn struct {
-	Name            *string `json:"name"`
-	Kind            *string `json:"kind"`
-	Currency        *string `json:"currency"`
-	OpeningBalance  *int64  `json:"opening_balance"`
-	OpeningDate     *string `json:"opening_date"`
-	Institution     *string `json:"institution"`
-	Number          *string `json:"number"`
-	Color           *string `json:"color"`
-	Icon            *string `json:"icon"`
-	CreditLimit     *int64  `json:"credit_limit"`
-	IncludeNetWorth *bool   `json:"include_net_worth"`
-	Everyday        *bool   `json:"everyday"`
-	Archived        *bool   `json:"archived"`
-	Notes           *string `json:"notes"`
+	Name            *string  `json:"name"`
+	Kind            *string  `json:"kind"`
+	Currency        *string  `json:"currency"`
+	OpeningBalance  *int64   `json:"opening_balance"`
+	OpeningDate     *string  `json:"opening_date"`
+	Institution     *string  `json:"institution"`
+	Number          *string  `json:"number"`
+	Color           *string  `json:"color"`
+	Icon            *string  `json:"icon"`
+	CreditLimit     *int64   `json:"credit_limit"`
+	IncludeNetWorth *bool    `json:"include_net_worth"`
+	Everyday        *bool    `json:"everyday"`
+	Direction       *string  `json:"direction"`
+	InterestRate    *float64 `json:"interest_rate"`
+	InterestAuto    *bool    `json:"interest_auto"`
+	Principal       *int64   `json:"principal"`
+	Payment         *int64   `json:"payment"`
+	PaymentDay      *int     `json:"payment_day"`
+	Archived        *bool    `json:"archived"`
+	Notes           *string  `json:"notes"`
 }
 
 func (in *accountIn) apply(a *store.Account) string {
@@ -112,6 +118,33 @@ func (in *accountIn) apply(a *store.Account) string {
 	if in.Everyday != nil {
 		a.Everyday = *in.Everyday
 	}
+	if in.Direction != nil {
+		a.Direction = *in.Direction
+	}
+	if in.InterestRate != nil {
+		a.InterestRate = *in.InterestRate
+	}
+	if in.InterestAuto != nil {
+		a.InterestAuto = *in.InterestAuto
+	}
+	if in.Principal != nil {
+		a.Principal = *in.Principal
+	}
+	if in.Payment != nil {
+		a.Payment = *in.Payment
+	}
+	if in.PaymentDay != nil {
+		a.PaymentDay = *in.PaymentDay
+	}
+	if a.Direction != "owed" {
+		a.Direction = "owe"
+	}
+	if a.InterestRate < 0 || a.InterestRate > 100 {
+		return "interest rate must be between 0 and 100 %"
+	}
+	if a.PaymentDay < 0 || a.PaymentDay > 28 {
+		return "payment day must be 1–28"
+	}
 	if in.Archived != nil {
 		a.Archived = *in.Archived
 	}
@@ -144,7 +177,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Everyday == nil {
-		a.Everyday = a.Kind != "savings" && a.Kind != "investment" && a.Kind != "loan"
+		a.Everyday = a.Kind != "savings" && a.Kind != "investment" && !store.IsLiability(a.Kind)
 	}
 	if a.Kind == "cash" && a.Icon == "" {
 		a.Icon = "💵"
@@ -377,5 +410,8 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.LogActivity(ctx, uid, "account.reconcile", a.Name)
+	if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
+		s.emitTx(ctx, "transaction.created", full)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "difference": diff, "transaction_id": t.ID})
 }

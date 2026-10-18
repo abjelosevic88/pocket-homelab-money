@@ -126,7 +126,7 @@ func (s *Store) TemplateByExternalID(ctx context.Context, ext string) (int64, er
 
 const subCols = `s.id, s.owner_id, s.name, s.kind, s.amount, s.amount_max, s.currency, s.account_id, s.to_account_id, s.category_id, s.tags, s.payee, s.description,
 	s.freq, s.every, s.start_date, s.next_date, s.end_date, s.mode, s.notify_days, s.match_text, s.url, s.icon, s.notes, s.active, s.notified_for, s.external_id,
-	s.created_at, s.updated_at, COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(a.name, ''),
+	s.weekend, s.nth, s.max_count, s.done_count, s.created_at, s.updated_at, COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(a.name, ''),
 	COALESCE((SELECT MAX(date) FROM transactions t WHERE t.subscription_id = s.id), ''),
 	COALESCE((SELECT amount FROM transactions t WHERE t.subscription_id = s.id ORDER BY date DESC, id DESC LIMIT 1), 0),
 	(SELECT COUNT(1) FROM transactions t WHERE t.subscription_id = s.id)`
@@ -139,7 +139,7 @@ func scanSub(row interface{ Scan(...any) error }) (*Subscription, error) {
 	var active int
 	err := row.Scan(&x.ID, &x.OwnerID, &x.Name, &x.Kind, &x.Amount, &x.AmountMax, &x.Currency, &x.AccountID, &x.ToAccountID, &x.CategoryID, &tags, &x.Payee, &x.Description,
 		&x.Freq, &x.Every, &x.StartDate, &x.NextDate, &x.EndDate, &x.Mode, &x.NotifyDays, &x.MatchText, &x.URL, &x.Icon, &x.Notes, &active, &x.NotifiedFor, &x.ExternalID,
-		&x.CreatedAt, &x.UpdatedAt, &x.CategoryName, &x.CategoryIcon, &x.AccountName, &x.LastPaid, &x.LastAmount, &x.PaidCount)
+		&x.Weekend, &x.Nth, &x.MaxCount, &x.DoneCount, &x.CreatedAt, &x.UpdatedAt, &x.CategoryName, &x.CategoryIcon, &x.AccountName, &x.LastPaid, &x.LastAmount, &x.PaidCount)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -178,10 +178,11 @@ func (s *Store) GetSubscription(ctx context.Context, id int64) (*Subscription, e
 // CreateSubscription inserts one.
 func (s *Store) CreateSubscription(ctx context.Context, x *Subscription) error {
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO subscriptions (owner_id, name, kind, amount, amount_max, currency, account_id, to_account_id, category_id, tags, payee, description,
-		freq, every, start_date, next_date, end_date, mode, notify_days, match_text, url, icon, notes, active, external_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		freq, every, start_date, next_date, end_date, mode, notify_days, match_text, url, icon, notes, active, external_id, weekend, nth, max_count, done_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		x.OwnerID, x.Name, x.Kind, x.Amount, x.AmountMax, x.Currency, nullI(x.AccountID), nullI(x.ToAccountID), nullI(x.CategoryID), jsonList(x.Tags), x.Payee, x.Description,
-		x.Freq, x.Every, x.StartDate, x.NextDate, x.EndDate, x.Mode, x.NotifyDays, x.MatchText, x.URL, x.Icon, x.Notes, boolInt(x.Active), x.ExternalID)
+		x.Freq, x.Every, x.StartDate, x.NextDate, x.EndDate, x.Mode, x.NotifyDays, x.MatchText, x.URL, x.Icon, x.Notes, boolInt(x.Active), x.ExternalID,
+		x.Weekend, x.Nth, x.MaxCount, x.DoneCount)
 	if err != nil {
 		return err
 	}
@@ -193,10 +194,10 @@ func (s *Store) CreateSubscription(ctx context.Context, x *Subscription) error {
 func (s *Store) UpdateSubscription(ctx context.Context, x *Subscription) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE subscriptions SET name = ?, kind = ?, amount = ?, amount_max = ?, currency = ?, account_id = ?, to_account_id = ?, category_id = ?, tags = ?,
 		payee = ?, description = ?, freq = ?, every = ?, start_date = ?, next_date = ?, end_date = ?, mode = ?, notify_days = ?, match_text = ?, url = ?, icon = ?, notes = ?,
-		active = ?, notified_for = ?, external_id = ?, updated_at = ? WHERE id = ?`,
+		active = ?, notified_for = ?, external_id = ?, weekend = ?, nth = ?, max_count = ?, done_count = ?, updated_at = ? WHERE id = ?`,
 		x.Name, x.Kind, x.Amount, x.AmountMax, x.Currency, nullI(x.AccountID), nullI(x.ToAccountID), nullI(x.CategoryID), jsonList(x.Tags),
 		x.Payee, x.Description, x.Freq, x.Every, x.StartDate, x.NextDate, x.EndDate, x.Mode, x.NotifyDays, x.MatchText, x.URL, x.Icon, x.Notes,
-		boolInt(x.Active), x.NotifiedFor, x.ExternalID, Now(), x.ID)
+		boolInt(x.Active), x.NotifiedFor, x.ExternalID, x.Weekend, x.Nth, x.MaxCount, x.DoneCount, Now(), x.ID)
 	return err
 }
 
@@ -288,7 +289,7 @@ func (s *Store) DeleteBudget(ctx context.Context, id int64) error {
 // categories (nil = any) and tags (nil = any).
 func (s *Store) SpentHome(ctx context.Context, accountIDs, categoryIDs []int64, tags []string, from, to string) (int64, int, error) {
 	in, args := inList(accountIDs)
-	q := `SELECT COALESCE(SUM(t.amount_home), 0), COUNT(1) FROM transactions t WHERE t.kind = 'expense' AND t.account_id IN ` + in + ` AND t.date >= ? AND t.date <= ?`
+	q := `SELECT COALESCE(SUM(t.amount_home), 0), COUNT(DISTINCT t.transaction_id) FROM tx_lines t WHERE t.kind = 'expense' AND t.account_id IN ` + in + ` AND t.date >= ? AND t.date <= ?`
 	args = append(args, from, to)
 	if len(categoryIDs) > 0 {
 		cin, cargs := inList(categoryIDs)
@@ -301,7 +302,7 @@ func (s *Store) SpentHome(ctx context.Context, accountIDs, categoryIDs []int64, 
 			ph[i] = "?"
 			args = append(args, tg)
 		}
-		q += ` AND EXISTS (SELECT 1 FROM transaction_tags x JOIN tags g ON g.id = x.tag_id WHERE x.transaction_id = t.id AND g.name COLLATE NOCASE IN (` + strings.Join(ph, ",") + `))`
+		q += ` AND EXISTS (SELECT 1 FROM transaction_tags x JOIN tags g ON g.id = x.tag_id WHERE x.transaction_id = t.transaction_id AND g.name COLLATE NOCASE IN (` + strings.Join(ph, ",") + `))`
 	}
 	var sum int64
 	var n int

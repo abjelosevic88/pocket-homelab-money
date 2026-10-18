@@ -102,7 +102,7 @@ func ffDateTime(v string) (string, string) {
 func ffKind(role, typ string) string {
 	switch {
 	case typ == "liabilities" || typ == "liability" || typ == "loan" || typ == "debt" || typ == "mortgage":
-		return "loan"
+		return "loan" // refined from liability_type by the caller
 	case role == "savingAsset":
 		return "savings"
 	case role == "cashWalletAsset":
@@ -169,6 +169,29 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 				Number: firstNonEmpty(fa.Attr.IBAN, fa.Attr.AccountNumber), Notes: fa.Attr.Notes, ExternalID: "firefly:" + fa.ID}
 			if a.Kind == "cash" {
 				a.Icon = "💵"
+			}
+			if store.IsLiability(a.Kind) {
+				if lt := fa.Attr.LiabilityType; lt == "mortgage" || lt == "debt" || lt == "loan" {
+					a.Kind = lt
+				}
+				if fa.Attr.LiabilityDir == "credit" {
+					a.Direction = "owed"
+				}
+				if r, err := strconv.ParseFloat(fa.Attr.Interest, 64); err == nil {
+					switch fa.Attr.InterestPeriod {
+					case "monthly":
+						r *= 12
+					case "daily":
+						r *= 365
+					}
+					a.InterestRate = r
+				}
+				if ob := parseSigned(fa.Attr.OpeningBalance, a.Currency); ob != 0 {
+					if ob < 0 {
+						ob = -ob
+					}
+					a.Principal = ob
+				}
 			}
 			if !currency.Valid(a.Currency) {
 				a.Currency = c.st.HomeCurrency
@@ -275,12 +298,21 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 					continue
 				}
 				t.ID, t.CreatedBy, t.CreatedAt = old.ID, old.CreatedBy, old.CreatedAt
+				// parts made here survive a mirror pass (Firefly only has the total)
+				if len(old.Splits) > 0 && old.Amount == t.Amount {
+					t.Splits, t.CategoryID = old.Splits, old.CategoryID
+				}
 				if t.SubscriptionID == nil {
 					t.SubscriptionID = old.SubscriptionID
 				}
 				if txChanged(old, t) {
 					if err := s.store.UpdateTransaction(ctx, t); err == nil {
 						res.Updated++
+						if !opt.All {
+							if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
+								s.emitTx(ctx, "transaction.updated", full)
+							}
+						}
 					}
 				}
 				continue
@@ -293,6 +325,11 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 			if !opt.All && t.SubscriptionID != nil {
 				s.advanceSubscription(ctx, *t.SubscriptionID, t.Date)
 			}
+			if !opt.All {
+				if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
+					s.emitTx(ctx, "transaction.created", full)
+				}
+			}
 		}
 	}
 	// gone from Firefly → gone here (only inside the window we looked at)
@@ -301,12 +338,17 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 		if !seen[t.ExternalID] && t.Source == "firefly" {
 			if err := s.store.DeleteTransaction(ctx, t.ID); err == nil {
 				res.Deleted++
+				s.emitTx(ctx, "transaction.deleted", &t)
 			}
 		}
 	}
 
 	if opt.All && res.Accounts > 0 {
 		s.guessEveryday(ctx, acctByFF)
+	}
+	if opt.All {
+		_, _ = s.store.DB.ExecContext(ctx, `UPDATE subscriptions SET done_count = (SELECT COUNT(1) FROM transactions t WHERE t.subscription_id = subscriptions.id)
+			WHERE max_count > 0 AND done_count = 0`)
 	}
 	if opt.All && res.Templates > 0 {
 		s.seedTemplateUse(ctx)
@@ -565,10 +607,17 @@ func (s *Server) importSubscriptions(ctx context.Context, ff *firefly.Client, ow
 				x.Freq = "weekly"
 			case "yearly":
 				x.Freq = "yearly"
+			case "ndom":
+				// "2,3" = the 2nd Wednesday of every month
+				x.Freq = "monthly"
+				if parts := strings.Split(rp.Moment, ","); len(parts) == 2 {
+					x.Nth, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+				}
 			default:
 				x.Freq = "monthly"
 			}
 			x.Every = rp.Skip + 1
+			x.Weekend = map[int]string{2: "skip", 3: "before", 4: "after"}[rp.Weekend]
 			if len(rp.Upcoming) > 0 {
 				x.NextDate, _ = ffDateTime(rp.Upcoming[0])
 			}
@@ -576,6 +625,9 @@ func (s *Server) importSubscriptions(ctx context.Context, ff *firefly.Client, ow
 		first, _ := ffDateTime(rc.Attr.FirstDate)
 		if x.StartDate == "" {
 			x.StartDate = first
+		}
+		if rc.Attr.Repeats != nil && *rc.Attr.Repeats > 0 {
+			x.MaxCount = *rc.Attr.Repeats
 		}
 		if rc.Attr.RepeatUntil != nil && *rc.Attr.RepeatUntil != "" {
 			x.EndDate, _ = ffDateTime(*rc.Attr.RepeatUntil)
@@ -856,7 +908,7 @@ func (s *Server) guessEveryday(ctx context.Context, acctByFF map[string]*store.A
 		return
 	}
 	for _, a := range acctByFF {
-		every := a.Kind != "savings" && a.Kind != "investment" && a.Kind != "loan" && float64(counts[a.ID]) >= 0.2*float64(total)
+		every := a.Kind != "savings" && a.Kind != "investment" && !store.IsLiability(a.Kind) && float64(counts[a.ID]) >= 0.2*float64(total)
 		if a.Everyday != every {
 			a.Everyday = every
 			_ = s.store.UpdateAccount(ctx, a)

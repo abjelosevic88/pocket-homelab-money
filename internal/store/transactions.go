@@ -51,6 +51,7 @@ func scanTx(row interface{ Scan(...any) error }) (*Transaction, error) {
 		return nil, notFound(err)
 	}
 	t.Tags = []string{}
+	t.Splits = []Split{}
 	return &t, nil
 }
 
@@ -83,10 +84,10 @@ func (f *TxFilter) where() (string, []any) {
 		args = append(args, f.Kind)
 	}
 	if f.Uncategorized {
-		conds = append(conds, "t.category_id IS NULL AND t.kind != 'transfer'")
+		conds = append(conds, "t.kind != 'transfer' AND EXISTS (SELECT 1 FROM tx_lines l WHERE l.transaction_id = t.id AND l.category_id IS NULL)")
 	} else if len(f.CategoryIDs) > 0 {
 		in, a := inList(f.CategoryIDs)
-		conds = append(conds, "t.category_id IN "+in)
+		conds = append(conds, "EXISTS (SELECT 1 FROM tx_lines l WHERE l.transaction_id = t.id AND l.category_id IN "+in+")")
 		args = append(args, a...)
 	}
 	if f.Tag != "" {
@@ -148,9 +149,19 @@ type TxTotals struct {
 func (s *Store) ListTransactions(ctx context.Context, f TxFilter) ([]Transaction, TxTotals, error) {
 	where, args := f.where()
 	var tot TxTotals
-	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(1), COALESCE(SUM(CASE WHEN t.kind='income' THEN t.amount_home END),0),
-		COALESCE(SUM(CASE WHEN t.kind='expense' THEN t.amount_home END),0), COALESCE(SUM(CASE WHEN t.kind='transfer' THEN t.amount_home END),0)
-		FROM transactions t JOIN accounts a ON a.id = t.account_id LEFT JOIN categories c ON c.id = t.category_id`+where, args...).
+	part, pargs := "t.amount_home", []any{}
+	if f.Uncategorized {
+		part = "(SELECT COALESCE(SUM(l.amount_home), 0) FROM tx_lines l WHERE l.transaction_id = t.id AND l.category_id IS NULL)"
+	} else if len(f.CategoryIDs) > 0 {
+		in, a := inList(f.CategoryIDs)
+		part = "(SELECT COALESCE(SUM(l.amount_home), 0) FROM tx_lines l WHERE l.transaction_id = t.id AND l.category_id IN " + in + ")"
+		pargs = append(pargs, a...)
+		pargs = append(pargs, a...)
+	}
+	targs := append(append([]any{}, pargs...), args...)
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(1), COALESCE(SUM(CASE WHEN t.kind='income' THEN `+part+` END),0),
+		COALESCE(SUM(CASE WHEN t.kind='expense' THEN `+part+` END),0), COALESCE(SUM(CASE WHEN t.kind='transfer' THEN t.amount_home END),0)
+		FROM transactions t JOIN accounts a ON a.id = t.account_id LEFT JOIN categories c ON c.id = t.category_id`+where, targs...).
 		Scan(&tot.Count, &tot.Income, &tot.Expense, &tot.Transfers)
 	if err != nil {
 		return nil, tot, err
@@ -182,7 +193,90 @@ func (s *Store) ListTransactions(ctx context.Context, f TxFilter) ([]Transaction
 	if err := rows.Err(); err != nil {
 		return nil, tot, err
 	}
-	return out, tot, s.attachTags(ctx, out)
+	if err := s.attachTags(ctx, out); err != nil {
+		return nil, tot, err
+	}
+	if err := s.attachSplits(ctx, out); err != nil {
+		return nil, tot, err
+	}
+	if f.AccountID > 0 && len(out) > 0 {
+		if bal, err := s.BalancesAfter(ctx, f.AccountID); err == nil {
+			for i := range out {
+				if v, ok := bal[out[i].ID]; ok {
+					v := v
+					out[i].BalanceAfter = &v
+				}
+			}
+		}
+	}
+	return out, tot, nil
+}
+
+// attachSplits loads the parts of split transactions.
+func (s *Store) attachSplits(ctx context.Context, txs []Transaction) error {
+	if len(txs) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(txs))
+	idx := map[int64]int{}
+	for i := range txs {
+		ids[i] = txs[i].ID
+		idx[txs[i].ID] = i
+	}
+	in, args := inList(ids)
+	rows, err := s.DB.QueryContext(ctx, `SELECT s.transaction_id, s.id, s.category_id, s.amount, s.foreign_amount, s.amount_home, s.note, COALESCE(c.name, ''), COALESCE(c.icon, '')
+		FROM transaction_splits s LEFT JOIN categories c ON c.id = s.category_id WHERE s.transaction_id IN `+in+` ORDER BY s.transaction_id, s.sort_order, s.id`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tid int64
+		var sp Split
+		if err := rows.Scan(&tid, &sp.ID, &sp.CategoryID, &sp.Amount, &sp.ForeignAmount, &sp.AmountHome, &sp.Note, &sp.CategoryName, &sp.CategoryIcon); err != nil {
+			return err
+		}
+		txs[idx[tid]].Splits = append(txs[idx[tid]].Splits, sp)
+	}
+	return rows.Err()
+}
+
+// BalancesAfter returns, for every transaction touching an account, the
+// account's balance right after it (in date, time, id order).
+func (s *Store) BalancesAfter(ctx context.Context, accountID int64) (map[int64]int64, error) {
+	var opening int64
+	if err := s.DB.QueryRowContext(ctx, `SELECT opening_balance FROM accounts WHERE id = ?`, accountID).Scan(&opening); err != nil {
+		return nil, notFound(err)
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, SUM(d) OVER (ORDER BY date, time, id ROWS UNBOUNDED PRECEDING) FROM (
+		SELECT id, date, time, CASE WHEN account_id = ? THEN (CASE kind WHEN 'income' THEN amount ELSE -amount END) ELSE to_amount END AS d
+		FROM transactions WHERE account_id = ? OR (to_account_id = ? AND kind = 'transfer'))`, accountID, accountID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int64{}
+	for rows.Next() {
+		var id, run int64
+		if err := rows.Scan(&id, &run); err != nil {
+			return nil, err
+		}
+		out[id] = opening + run
+	}
+	return out, rows.Err()
+}
+
+func setSplits(ctx context.Context, tx *sql.Tx, txID int64, splits []Split) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM transaction_splits WHERE transaction_id = ?`, txID); err != nil {
+		return err
+	}
+	for i, sp := range splits {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO transaction_splits (transaction_id, category_id, amount, foreign_amount, amount_home, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			txID, nullI(sp.CategoryID), sp.Amount, sp.ForeignAmount, sp.AmountHome, sp.Note, i); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) attachTags(ctx context.Context, txs []Transaction) error {
@@ -222,6 +316,9 @@ func (s *Store) GetTransaction(ctx context.Context, id int64) (*Transaction, err
 	if err := s.attachTags(ctx, list); err != nil {
 		return nil, err
 	}
+	if err := s.attachSplits(ctx, list); err != nil {
+		return nil, err
+	}
 	*t = list[0]
 	t.Attachments, err = s.ListAttachments(ctx, id)
 	return t, err
@@ -254,6 +351,10 @@ func (s *Store) CreateTransaction(ctx context.Context, t *Transaction) error {
 		_ = tx.Rollback()
 		return err
 	}
+	if err := setSplits(ctx, tx, t.ID, t.Splits); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -277,6 +378,10 @@ func (s *Store) UpdateTransaction(ctx context.Context, t *Transaction) error {
 		return err
 	}
 	if err := setTags(ctx, tx, t.ID, t.Tags); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := setSplits(ctx, tx, t.ID, t.Splits); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -321,7 +426,7 @@ func (s *Store) BulkUpdate(ctx context.Context, ids []int64, categoryID *int64, 
 	}
 	for _, id := range ids {
 		if categoryID != nil || clearCategory {
-			if _, err := tx.ExecContext(ctx, `UPDATE transactions SET category_id = ?, updated_at = ? WHERE id = ? AND kind != 'transfer'`, nullI(categoryID), Now(), id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE transactions SET category_id = ?, updated_at = ? WHERE id = ? AND kind != 'transfer' AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = transactions.id)`, nullI(categoryID), Now(), id); err != nil {
 				_ = tx.Rollback()
 				return err
 			}
@@ -348,7 +453,10 @@ func (s *Store) SetTransactionSubscription(ctx context.Context, txID int64, subI
 
 // UpdateHomeAmount stores a recomputed home value.
 func (s *Store) UpdateHomeAmount(ctx context.Context, id, home int64, rate float64) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE transactions SET amount_home = ?, fx_rate = ? WHERE id = ?`, home, rate, id)
+	if _, err := s.DB.ExecContext(ctx, `UPDATE transactions SET amount_home = ?, fx_rate = ? WHERE id = ?`, home, rate, id); err != nil {
+		return err
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE transaction_splits SET amount_home = CAST(ROUND(amount * 1.0 * ? / (SELECT amount FROM transactions WHERE id = ?)) AS INTEGER) WHERE transaction_id = ?`, home, id, id)
 	return err
 }
 

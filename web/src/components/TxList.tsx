@@ -23,6 +23,8 @@ export function TxList({ items, onOpen, selected, onToggle, showAccount = true, 
     if (t.kind === 'income') g.in += t.amount_home
   }
   const dec = decimalsOf(home, currencies)
+  // the running balance is in the currency of the account whose page this is
+  const accCur = (t: Transaction) => (perspective && perspective === t.to_account_id && t.to_currency) || t.currency
   return (
     <div className="tx-list">
       {groups.map(g => (
@@ -38,11 +40,13 @@ export function TxList({ items, onOpen, selected, onToggle, showAccount = true, 
                 <span className="t">{t.description || t.payee || t.category_name || (t.kind === 'transfer' ? 'Transfer' : '—')}{t.attachment_count > 0 && <span title="Receipt">📎</span>}{t.subscription_id && <span title={t.subscription_name}>↻</span>}</span>
                 <span className="s">
                   {compact && <>{fmtDate(t.date, false)} · </>}
-                  {t.kind === 'transfer' ? `${t.account_name} → ${t.to_account_name}` : [t.category_name || 'Uncategorised', showAccount ? t.account_name : '', t.payee && t.payee !== t.description ? t.payee : '', t.time].filter(Boolean).join(' · ')}
+                  {t.kind === 'transfer' ? `${t.account_name} → ${t.to_account_name}` : [t.splits?.length ? `✂ ${t.splits.map(p => p.category_name || 'Uncategorised').join(' + ')}` : t.category_name || 'Uncategorised', showAccount ? t.account_name : '', t.payee && t.payee !== t.description ? t.payee : '', t.time].filter(Boolean).join(' · ')}
                   {t.tags.length > 0 && <> · {t.tags.map(x => <span key={x} className="badge tag">{x}</span>)}</>}
                 </span>
               </span>
-              <TxAmount t={t} perspective={perspective} />
+              {t.balance_after != null
+                ? <span className="tx-end"><TxAmount t={t} perspective={perspective} /><span className="bal-after" title="Balance after this transaction">{fmtMoney(t.balance_after, accCur(t), decimalsOf(accCur(t), currencies))}</span></span>
+                : <TxAmount t={t} perspective={perspective} />}
             </div>
           ))}
         </div>

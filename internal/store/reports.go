@@ -51,7 +51,7 @@ func (s *Store) CategorySums(ctx context.Context, accountIDs []int64, kind, from
 	in, args := inList(accountIDs)
 	args = append(args, kind, from, to)
 	rows, err := s.DB.QueryContext(ctx, `SELECT COALESCE(t.category_id, 0), c.parent_id, COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(c.color, ''), SUM(t.amount_home), COUNT(1)
-		FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+		FROM tx_lines t LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.account_id IN `+in+` AND t.kind = ? AND t.date >= ? AND t.date <= ? GROUP BY COALESCE(t.category_id, 0) ORDER BY SUM(t.amount_home) DESC`, args...)
 	if err != nil {
 		return nil, err

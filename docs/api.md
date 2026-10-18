@@ -16,24 +16,28 @@ JSON over HTTP under `/api/v1`. Authenticate with the session cookie (the UI), a
 | | |
 |---|---|
 | `GET /accounts[?archived=1]` | with `balance` (account currency) and `balance_home` |
-| `POST /accounts` · `GET/PUT/DELETE /accounts/{id}` | `name, kind (checking/savings/cash/credit/investment/loan/other), currency, opening_balance, opening_date, institution, number, icon, color, credit_limit, include_net_worth, archived, notes` |
+| `POST /accounts` · `GET/PUT/DELETE /accounts/{id}` | `name, kind (checking/savings/cash/credit/investment/loan/mortgage/debt/other), currency, opening_balance, opening_date, institution, number, icon, color, credit_limit, include_net_worth, everyday, archived, notes`; liabilities also `direction (owe/owed), interest_rate (% a year), interest_auto, principal, payment, payment_day (1–28)` |
 | `GET /accounts/{id}/history?from=&to=` | end-of-day balances |
 | `POST /accounts/{id}/reconcile` `{balance, date}` | books the difference as an adjustment |
 | `PUT /accounts/{id}/members` `{members:[{user_id, role: editor|viewer}]}` | share |
+| `GET /accounts/{id}/payoff` | liabilities: `outstanding, principal, repaid, pct, payment (payment_estimated = 3-month average), month_interest, months_left, payoff_date, interest_left, total_left, never` and a 36-month `schedule` |
+| `POST /accounts/{id}/interest` | books this month's interest (expense when you owe it, income when it is owed to you); with `interest_auto` it happens on the payment day |
 | `PUT /accounts/reorder` `{ids}` | |
 
 ## Transactions
 
 | | |
 |---|---|
-| `GET /transactions` | filters: `account, kind, category (ids, comma separated, or none), tag, from, to, q, payee, min, max (home minor units), subscription, source, limit (≤1000), offset, oldest`. Returns `{items, totals:{count, income, expense, transfers, net}, has_more}` |
-| `POST /transactions` | `kind (expense/income/transfer), date, time, account_id, amount, currency, account_amount, to_account_id, to_amount, description, payee, category_id, tags, notes, subscription_id, lat, lng, template_id, skip_rules` — see below |
+| `GET /transactions` | filters: `account, kind, category (ids, comma separated, or none), tag, from, to, q, payee, min, max (home minor units), subscription, source, limit (≤1000), offset, oldest`. Returns `{items, totals:{count, income, expense, transfers, net}, has_more}`. With `account`, every item has `balance_after` — the account's balance after it. A category filter matches split parts and totals count only those parts |
+| `POST /transactions` | `kind (expense/income/transfer), date, time, account_id, amount, currency, account_amount, to_account_id, to_amount, description, payee, category_id, tags, notes, subscription_id, lat, lng, template_id, skip_rules, splits` — see below |
 | `GET/PUT/DELETE /transactions/{id}` · `POST /transactions/{id}/duplicate` | |
 | `POST /transactions/bulk` `{ids, action: delete|category|add_tags|remove_tags, category_id, tags}` | |
 | `POST /transactions/{id}/attachments` (multipart `file`) · `GET/DELETE /attachments/{id}` | receipts |
 | `GET /suggest?q=` · `GET /payees` | autocomplete with the usual category |
 
 **Currencies.** `amount` is in `currency` (default: the account's). When it differs, it is kept as the foreign amount and converted at that day's rate into the account's currency — or pass `account_amount` with what the bank actually charged. A transfer between currencies converts `to_amount` the same way unless given. Every transaction stores `amount_home` at the day's rate, so reports never look rates up again.
+
+**Splits.** `splits: [{category_id, amount, note}, …]` (two or more) puts one receipt across categories. Part amounts are in the transaction's `currency` and must add up to `amount`; the transaction's own `category_id` becomes the biggest part's. On PUT, `splits: []` removes the split; leaving `splits` out keeps the parts and rescales them when the amount changes. Transfers cannot be split. Reports, budgets and the category filter count each part under its own category.
 
 **Pipeline on create:** rules → running Pocket Travel trip tag → insert → link to the subscription it pays (name/match words, amount ±20 %, around the due date) → template use counter.
 
@@ -60,10 +64,20 @@ Grammar: `[template or words] amount[currency] [currency word] [date] [@account]
 | | |
 |---|---|
 | `GET /subscriptions` | items with `status, days_left, monthly_home, yearly_home, last_paid, last_amount, paid_count`, totals and `upcoming` (60 days) |
-| `POST /subscriptions` · `GET/PUT/DELETE /subscriptions/{id}` | `name, kind, amount, amount_max, currency, account_id, to_account_id, category_id, tags, payee, description, freq (daily/weekly/monthly/yearly), every, start_date, next_date, end_date, mode (remind/auto/track), notify_days (-1 = off), match_text, url, icon, notes, active` |
+| `POST /subscriptions` · `GET/PUT/DELETE /subscriptions/{id}` | `name, kind, amount, amount_max, currency, account_id, to_account_id, category_id, tags, payee, description, freq (daily/weekly/monthly/yearly), every, start_date, next_date, end_date, mode (remind/auto/track), notify_days (-1 = off), match_text, url, icon, notes, active, weekend ('' / before / after / skip), nth (monthly: 1–4 = that weekday of the month, 5 = the last one), max_count (stop after N payments, 0 = no limit)`. Responses add `due_date` (after the weekend rule) and `done_count` |
 | `POST /subscriptions/{id}/pay {amount?, date?, account_id?}` · `POST …/skip` · `POST …/link {transaction_id, unlink?} or {relink:true}` | |
 | `GET /subscriptions/detect` | repeating payments that are not tracked yet |
 | `GET /cal/subscriptions.ics?token=` | every payment for a year, for calendar apps |
+
+## Webhooks
+
+| | |
+|---|---|
+| `GET /webhooks` | your webhooks (secrets masked) and the list of `events` |
+| `POST /webhooks` · `PUT/DELETE /webhooks/{id}` | `name, url, events, format (native/firefly), secret (empty = generated, returned once), active` |
+| `POST /webhooks/{id}/test` · `GET /webhooks/{id}/deliveries` | send a ping now · the last 50 attempts |
+
+Events: `transaction.created`, `transaction.updated`, `transaction.deleted` (from the app, the API, imports, rules, the Firefly mirror), `budget.alert`, `subscription.due`. Native body: `{"id", "event", "created_at", "data": {"transaction": …}}`. Headers: `X-Pocket-Event`, `X-Pocket-Signature: sha256=<hex HMAC-SHA256(secret, body)>`. The `firefly` format sends Firefly III's webhook body and `Signature: t=<unix>,v1=<hex HMAC-SHA3-256(secret, "<unix>.<body>")>`, for transaction events only. Delivery is retried after 5 s and 30 s.
 
 ## Budgets & goals
 

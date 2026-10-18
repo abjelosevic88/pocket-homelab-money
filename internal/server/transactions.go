@@ -6,6 +6,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,11 +32,151 @@ func (s *Server) fillHome(ctx context.Context, t *store.Transaction) {
 		if t.Amount > 0 {
 			t.FXRate = float64(t.ForeignAmount) / float64(t.Amount) * pow10f(currency.Decimals(cur)-currency.Decimals(st.HomeCurrency))
 		}
-		return
+	} else {
+		r, _ := s.rate(ctx, cur, st.HomeCurrency, t.Date)
+		t.FXRate = r
+		t.AmountHome = currency.Convert(t.Amount, cur, st.HomeCurrency, r)
 	}
-	r, _ := s.rate(ctx, cur, st.HomeCurrency, t.Date)
-	t.FXRate = r
-	t.AmountHome = currency.Convert(t.Amount, cur, st.HomeCurrency, r)
+	if len(t.Splits) > 0 {
+		w := make([]int64, len(t.Splits))
+		for i := range t.Splits {
+			w[i] = t.Splits[i].Amount
+		}
+		for i, v := range apportion(t.AmountHome, w) {
+			t.Splits[i].AmountHome = v
+		}
+	}
+}
+
+// apportion divides total in proportion to weights; the parts always add up
+// exactly (largest remainder).
+func apportion(total int64, weights []int64) []int64 {
+	out := make([]int64, len(weights))
+	var sum int64
+	for _, w := range weights {
+		sum += w
+	}
+	if sum == 0 || len(weights) == 0 {
+		return out
+	}
+	type rem struct {
+		i int
+		r float64
+	}
+	var given int64
+	rems := make([]rem, len(weights))
+	for i, w := range weights {
+		exact := float64(total) * float64(w) / float64(sum)
+		out[i] = int64(exact)
+		given += out[i]
+		rems[i] = rem{i, exact - float64(out[i])}
+	}
+	sort.Slice(rems, func(a, b int) bool { return rems[a].r > rems[b].r })
+	for k := 0; given < total && k < len(rems); k++ {
+		out[rems[k].i]++
+		given++
+	}
+	return out
+}
+
+type splitIn struct {
+	CategoryID *int64 `json:"category_id"`
+	Amount     int64  `json:"amount"` // in the receipt currency: foreign when the transaction has one
+	Note       string `json:"note"`
+}
+
+// applySplits validates the parts and fills their account-currency amounts.
+// in == nil keeps the existing parts, rescaled when the total changed.
+func (s *Server) applySplits(ctx context.Context, in *[]splitIn, t *store.Transaction) string {
+	display := t.Amount
+	if t.ForeignAmount > 0 {
+		display = t.ForeignAmount
+	}
+	if in == nil {
+		if t.Kind == "transfer" {
+			t.Splits = nil
+		}
+		if len(t.Splits) == 0 {
+			return ""
+		}
+		w := make([]int64, len(t.Splits))
+		var sum int64
+		for i, sp := range t.Splits {
+			w[i] = sp.Amount
+			sum += sp.Amount
+		}
+		if sum == t.Amount {
+			return ""
+		}
+		for i, v := range apportion(t.Amount, w) {
+			t.Splits[i].Amount = v
+		}
+		if t.ForeignAmount > 0 {
+			for i, v := range apportion(t.ForeignAmount, w) {
+				t.Splits[i].ForeignAmount = v
+			}
+		}
+		return ""
+	}
+	var parts []splitIn
+	for _, p := range *in {
+		if p.Amount != 0 || p.CategoryID != nil {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) < 2 {
+		t.Splits = nil
+		if len(parts) == 1 && parts[0].CategoryID != nil && *parts[0].CategoryID > 0 {
+			t.CategoryID = parts[0].CategoryID
+		}
+		return ""
+	}
+	if t.Kind == "transfer" {
+		return "a transfer cannot be split"
+	}
+	var sum int64
+	w := make([]int64, len(parts))
+	for i, p := range parts {
+		if p.Amount <= 0 {
+			return "every part needs an amount"
+		}
+		if p.CategoryID != nil && *p.CategoryID > 0 {
+			if _, err := s.store.GetCategory(ctx, *p.CategoryID); err != nil {
+				return "unknown category in a part"
+			}
+		}
+		sum += p.Amount
+		w[i] = p.Amount
+	}
+	if sum != display {
+		return fmt.Sprintf("the parts add up to %s, the transaction is %s", majorString(sum, displayCur(t)), majorString(display, displayCur(t)))
+	}
+	t.Splits = make([]store.Split, len(parts))
+	acct := w
+	if t.ForeignAmount > 0 {
+		acct = apportion(t.Amount, w)
+	}
+	var biggest int
+	for i, p := range parts {
+		sp := store.Split{CategoryID: idOrNil(p.CategoryID), Amount: acct[i], Note: strings.TrimSpace(p.Note)}
+		if t.ForeignAmount > 0 {
+			sp.ForeignAmount = p.Amount
+		}
+		t.Splits[i] = sp
+		if p.Amount > parts[biggest].Amount {
+			biggest = i
+		}
+	}
+	// the transaction itself carries the biggest part's category (learning, old clients)
+	t.CategoryID = t.Splits[biggest].CategoryID
+	return ""
+}
+
+func displayCur(t *store.Transaction) string {
+	if t.ForeignAmount > 0 {
+		return t.ForeignCurrency
+	}
+	return t.Currency
 }
 
 func pow10f(n int) float64 {
@@ -50,28 +191,29 @@ func pow10f(n int) float64 {
 }
 
 type txIn struct {
-	Kind            *string   `json:"kind"`
-	Date            *string   `json:"date"`
-	Time            *string   `json:"time"`
-	AccountID       *int64    `json:"account_id"`
-	Amount          *int64    `json:"amount"`   // in Currency when given, else the account's
-	Currency        *string   `json:"currency"` // the currency Amount is in
-	AccountAmount   *int64    `json:"account_amount"`
-	ToAccountID     *int64    `json:"to_account_id"`
-	ToAmount        *int64    `json:"to_amount"`
-	ForeignAmount   *int64    `json:"foreign_amount"`
-	ForeignCurrency *string   `json:"foreign_currency"`
-	Description     *string   `json:"description"`
-	Payee           *string   `json:"payee"`
-	CategoryID      *int64    `json:"category_id"`
-	Tags            *[]string `json:"tags"`
-	Notes           *string   `json:"notes"`
-	SubscriptionID  *int64    `json:"subscription_id"`
-	Lat             *float64  `json:"lat"`
-	Lng             *float64  `json:"lng"`
-	Source          string    `json:"source"`
-	TemplateID      int64     `json:"template_id"`
-	SkipRules       bool      `json:"skip_rules"`
+	Kind            *string    `json:"kind"`
+	Date            *string    `json:"date"`
+	Time            *string    `json:"time"`
+	AccountID       *int64     `json:"account_id"`
+	Amount          *int64     `json:"amount"`   // in Currency when given, else the account's
+	Currency        *string    `json:"currency"` // the currency Amount is in
+	AccountAmount   *int64     `json:"account_amount"`
+	ToAccountID     *int64     `json:"to_account_id"`
+	ToAmount        *int64     `json:"to_amount"`
+	ForeignAmount   *int64     `json:"foreign_amount"`
+	ForeignCurrency *string    `json:"foreign_currency"`
+	Description     *string    `json:"description"`
+	Payee           *string    `json:"payee"`
+	CategoryID      *int64     `json:"category_id"`
+	Tags            *[]string  `json:"tags"`
+	Notes           *string    `json:"notes"`
+	SubscriptionID  *int64     `json:"subscription_id"`
+	Lat             *float64   `json:"lat"`
+	Lng             *float64   `json:"lng"`
+	Source          string     `json:"source"`
+	TemplateID      int64      `json:"template_id"`
+	SkipRules       bool       `json:"skip_rules"`
+	Splits          *[]splitIn `json:"splits"`
 }
 
 func idOrNil(p *int64) *int64 {
@@ -233,6 +375,11 @@ func (s *Server) build(ctx context.Context, in *txIn, t *store.Transaction) stri
 			return "unknown category"
 		}
 	}
+	if t.Kind == "transfer" {
+		t.Splits = nil
+	} else if msg := s.applySplits(ctx, in.Splits, t); msg != "" {
+		return msg
+	}
 	s.fillHome(ctx, t)
 	return ""
 }
@@ -287,6 +434,9 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 		s.store.TouchTemplate(ctx, in.TemplateID)
 	}
 	full, err := s.store.GetTransaction(ctx, t.ID)
+	if err == nil {
+		s.emitTx(ctx, "transaction.created", full)
+	}
 	return full, "", err
 }
 
@@ -409,6 +559,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 		s.advanceSubscription(ctx, *t.SubscriptionID, t.Date)
 	}
 	t, _ = s.store.GetTransaction(ctx, t.ID)
+	s.emitTx(ctx, "transaction.updated", t)
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -425,6 +576,7 @@ func (s *Server) handleDeleteTransaction(w http.ResponseWriter, r *http.Request)
 		s.fail(w, err, "delete transaction")
 		return
 	}
+	s.emitTx(ctx, "transaction.deleted", t)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -467,9 +619,11 @@ func (s *Server) handleBulkTransactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var ids []int64
+	before := map[int64]*store.Transaction{}
 	for _, id := range in.IDs {
 		if t, err := s.store.GetTransaction(ctx, id); err == nil && s.canWrite(ctx, t.AccountID) {
 			ids = append(ids, id)
+			before[id] = t
 		}
 	}
 	var err error
@@ -482,6 +636,7 @@ func (s *Server) handleBulkTransactions(w http.ResponseWriter, r *http.Request) 
 			if err = s.store.DeleteTransaction(ctx, id); err != nil {
 				break
 			}
+			s.emitTx(ctx, "transaction.deleted", before[id])
 		}
 	case "category":
 		err = s.store.BulkUpdate(ctx, ids, idOrNil(in.CategoryID), in.CategoryID == nil || *in.CategoryID <= 0, nil, nil)
@@ -496,6 +651,13 @@ func (s *Server) handleBulkTransactions(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		s.fail(w, err, "bulk")
 		return
+	}
+	if in.Action != "delete" {
+		for _, id := range ids {
+			if t, err := s.store.GetTransaction(ctx, id); err == nil {
+				s.emitTx(ctx, "transaction.updated", t)
+			}
+		}
 	}
 	s.store.LogActivity(ctx, actorID(ctx), "transactions."+in.Action, fmt.Sprintf("%d transactions", len(ids)))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(ids)})

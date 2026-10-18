@@ -535,3 +535,10 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 .budget-card:focus-visible, .goal-card:focus-visible, .acct-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .budget-card, .goal-card { transition: border-color .12s, box-shadow .12s; }
 .budget-card:hover, .goal-card:hover { box-shadow: 0 4px 14px rgba(16, 24, 40, .08); }
+
+/* running balance on account pages */
+.tx-end { display: flex; flex-direction: column; align-items: flex-end; }
+.bal-after { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.split-parts { display: grid; gap: 8px; }
+.split-part { display: grid; grid-template-columns: minmax(0, 1.4fr) 120px minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+@media (max-width: 640px) { .split-part { grid-template-columns: minmax(0, 1fr) 110px auto; } .split-part input:not(.money-input) { grid-column: 1 / -1; grid-row: 2; } }

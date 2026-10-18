@@ -125,7 +125,7 @@ export default function Transactions() {
       )}
       {!page ? <Loading /> : page.items.length === 0 ? <Empty title="Nothing here">{hasFilters ? 'No transaction matches these filters.' : 'Add your first one with ＋ Add.'}</Empty> : (
         <div className="list-card">
-          <TxList items={page.items} onOpen={t => setOpen(t.id)} selected={sel} onToggle={toggle} />
+          <TxList items={page.items} onOpen={t => setOpen(t.id)} selected={sel} onToggle={toggle} perspective={Number(sp.get('account')) || undefined} />
           {page.has_more && <div className="row" style={{ justifyContent: 'center', padding: 10 }}><button className="btn" disabled={busy} onClick={() => load(true)}>{busy ? 'Loading…' : 'Load more'}</button></div>}
         </div>
       )}

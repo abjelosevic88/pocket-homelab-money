@@ -182,9 +182,13 @@ func (s *Server) handleGetBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	txs, _, _ := s.store.ListTransactions(ctx, f)
 	// daily cumulative spend for the burn chart
+	in := map[int64]bool{}
+	for _, id := range cats {
+		in[id] = true
+	}
 	cum := map[string]int64{}
 	for _, t := range txs {
-		cum[t.Date] += t.AmountHome
+		cum[t.Date] += partHome(&t, in)
 	}
 	days := []store.DayAmount{}
 	run := int64(0)
@@ -632,4 +636,19 @@ func (s *Server) handleDeleteGoalEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// partHome is what of a transaction falls into a set of categories (all of it
+// when the set is empty or the transaction is not split).
+func partHome(t *store.Transaction, cats map[int64]bool) int64 {
+	if len(cats) == 0 || len(t.Splits) == 0 {
+		return t.AmountHome
+	}
+	var v int64
+	for _, sp := range t.Splits {
+		if sp.CategoryID != nil && cats[*sp.CategoryID] {
+			v += sp.AmountHome
+		}
+	}
+	return v
 }

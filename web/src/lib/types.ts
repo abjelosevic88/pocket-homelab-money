@@ -12,12 +12,14 @@ export interface Settings {
   max_upload_bytes: number; setup_complete: boolean; base_url: string
 }
 
-export type AccountKind = 'checking' | 'savings' | 'cash' | 'credit' | 'investment' | 'loan' | 'other'
+export type AccountKind = 'checking' | 'savings' | 'cash' | 'credit' | 'investment' | 'loan' | 'mortgage' | 'debt' | 'other'
+export const LIABILITY: AccountKind[] = ['loan', 'mortgage', 'debt']
 export interface AccountMember { user_id: number; name: string; email: string; role: 'editor' | 'viewer' }
 export interface Account {
   id: number; owner_id: number; name: string; kind: AccountKind; currency: string; opening_balance: number; opening_date: string
   institution: string; number: string; color: string; icon: string; credit_limit: number; include_net_worth: boolean; everyday: boolean; archived: boolean
   sort_order: number; notes: string; external_id: string; created_at: string; updated_at: string
+  direction: 'owe' | 'owed'; interest_rate: number; interest_auto: boolean; principal: number; payment: number; payment_day: number; interest_booked: string
   role?: 'owner' | 'editor' | 'viewer'; members?: AccountMember[]; balance: number; balance_home: number; tx_count: number; last_tx_date: string
 }
 
@@ -33,8 +35,9 @@ export interface Transaction {
   created_by: number | null; created_at: string; updated_at: string
   tags: string[]; account_name: string; currency: string; to_account_name?: string; to_currency?: string
   category_name: string; category_icon: string; category_color: string; subscription_name?: string; created_by_name?: string
-  attachments?: Attachment[]; attachment_count: number
+  attachments?: Attachment[]; attachment_count: number; splits: Split[] | null; balance_after?: number
 }
+export interface Split { id: number; category_id: number | null; amount: number; foreign_amount: number; amount_home: number; note: string; category_name: string; category_icon: string }
 export interface TxTotals { count: number; income: number; expense: number; transfers: number; net: number }
 
 export interface Template {
@@ -50,10 +53,18 @@ export interface Subscription {
   account_id: number | null; to_account_id: number | null; category_id: number | null; tags: string[]; payee: string; description: string
   freq: Freq; every: number; start_date: string; next_date: string; end_date: string; mode: SubMode; notify_days: number; match_text: string
   url: string; icon: string; notes: string; active: boolean; notified_for: string; external_id: string
+  weekend: '' | 'before' | 'after' | 'skip'; nth: number; max_count: number; done_count: number; due_date: string
   category_name?: string; category_icon?: string; account_name?: string
   days_left: number; status: 'overdue' | 'today' | 'soon' | 'upcoming' | 'ended' | 'paused'; monthly_home: number; yearly_home: number
   last_paid: string; last_amount: number; paid_count: number
 }
+export interface AmortRow { date: string; payment: number; interest: number; principal: number; remaining: number }
+export interface Payoff {
+  direction: 'owe' | 'owed'; outstanding: number; principal: number; repaid: number; pct: number; rate: number; payment: number; payment_estimated: boolean
+  months_left: number; payoff_date: string; interest_left: number; total_left: number; month_interest: number; never: boolean; schedule: AmortRow[]
+}
+export interface Webhook { id: number; name: string; url: string; secret?: string; events: string[]; format: 'native' | 'firefly'; active: boolean; last_status: number; last_error: string; last_at: string; created_at: string }
+export interface Delivery { id: number; event: string; subject: string; status: number; error: string; attempts: number; duration_ms: number; created_at: string }
 export interface Upcoming { id: number; name: string; date: string; amount: number; currency?: string; kind: Kind; icon: string }
 export interface Detected { name: string; kind: Kind; amount: number; currency: string; account_id: number; category_id: number | null; freq: Freq; every: number; count: number; last_date: string; next_date: string; confidence: number; monthly_home: number }
 
@@ -98,8 +109,8 @@ export interface Draft {
 
 export interface Meta { account_kinds: AccountKind[]; transaction_kinds: Kind[]; frequencies: Freq[]; subscription_modes: SubMode[]; budget_periods: string[] }
 
-export const KIND_ICON: Record<AccountKind, string> = { checking: '🏦', savings: '🐷', cash: '💵', credit: '💳', investment: '📈', loan: '🏠', other: '👛' }
-export const KIND_LABEL: Record<AccountKind, string> = { checking: 'Current account', savings: 'Savings', cash: 'Cash', credit: 'Credit card', investment: 'Investments', loan: 'Loan / debt', other: 'Other' }
+export const KIND_ICON: Record<AccountKind, string> = { checking: '🏦', savings: '🐷', cash: '💵', credit: '💳', investment: '📈', loan: '🧾', mortgage: '🏠', debt: '🤝', other: '👛' }
+export const KIND_LABEL: Record<AccountKind, string> = { checking: 'Current account', savings: 'Savings', cash: 'Cash', credit: 'Credit card', investment: 'Investments', loan: 'Loan', mortgage: 'Mortgage', debt: 'Debt / IOU', other: 'Other' }
 export const FREQ_LABEL: Record<Freq, string> = { daily: 'day', weekly: 'week', monthly: 'month', yearly: 'year' }
 export const MODE_LABEL: Record<SubMode, string> = { remind: 'Remind me', auto: 'Book automatically', track: 'Only track payments' }
 

@@ -128,6 +128,9 @@ type Account struct {
 	OpeningDate     string `json:"opening_balance_date"`
 	CreditCardType  string `json:"credit_card_type"`
 	LiabilityType   string `json:"liability_type"`
+	LiabilityDir    string `json:"liability_direction"`
+	Interest        string `json:"interest"`
+	InterestPeriod  string `json:"interest_period"`
 }
 
 // Accounts lists asset and liability accounts with the balance on date.
@@ -243,12 +246,14 @@ type Recurrence struct {
 	Description string  `json:"description"`
 	FirstDate   string  `json:"first_date"`
 	RepeatUntil *string `json:"repeat_until"`
+	Repeats     *int    `json:"nr_of_repetitions"`
 	Active      bool    `json:"active"`
 	Notes       *string `json:"notes"`
 	Repetitions []struct {
 		Type     string   `json:"type"` // daily | weekly | ndom | monthly | yearly
 		Moment   string   `json:"moment"`
 		Skip     int      `json:"skip"`
+		Weekend  int      `json:"weekend"` // 1 as is, 2 skip, 3 previous Friday, 4 next Monday
 		Upcoming []string `json:"occurrences"`
 	} `json:"repetitions"`
 	Transactions []struct {

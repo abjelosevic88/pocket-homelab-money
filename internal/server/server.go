@@ -210,6 +210,7 @@ func (s *Server) runJobs(ctx context.Context, mirror bool) {
 		// while Firefly is still the source, its own recurrences book these
 		s.bookDueSubscriptions(ctx)
 	}
+	s.bookDueInterest(ctx)
 	s.maybeNotify(ctx, st)
 }
 
@@ -312,6 +313,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/accounts/{id}/history", s.handleAccountHistory)
 			r.Put("/accounts/{id}/members", s.handleAccountMembers)
 			r.Post("/accounts/{id}/reconcile", s.handleReconcile)
+			r.Get("/accounts/{id}/payoff", s.handlePayoff)
+			r.Post("/accounts/{id}/interest", s.handleBookInterest)
 
 			r.Get("/transactions", s.handleListTransactions)
 			r.Post("/transactions", s.handleCreateTransaction)
@@ -398,6 +401,13 @@ func (s *Server) Router() http.Handler {
 			r.Post("/import/csv", s.handleCSVImport)
 			r.Get("/export/transactions.csv", s.handleExportCSV)
 			r.Get("/export/money.json", s.handleExportJSON)
+
+			r.Get("/webhooks", s.handleListWebhooks)
+			r.Post("/webhooks", s.handleCreateWebhook)
+			r.Put("/webhooks/{id}", s.handleUpdateWebhook)
+			r.Delete("/webhooks/{id}", s.handleDeleteWebhook)
+			r.Post("/webhooks/{id}/test", s.handleTestWebhook)
+			r.Get("/webhooks/{id}/deliveries", s.handleWebhookDeliveries)
 
 			r.Post("/integrations/test", s.handleIntegrationTest)
 			r.Post("/notify/test", s.handleNotifyTest)

@@ -90,7 +90,7 @@ func ruleMatches(r *store.Rule, t *store.Transaction) bool {
 // applyActions changes t; fill-only for category and payee unless force.
 func applyActions(a store.RuleActions, t *store.Transaction, force bool) bool {
 	changed := false
-	if a.CategoryID != nil && t.Kind != "transfer" && (t.CategoryID == nil || force) {
+	if a.CategoryID != nil && t.Kind != "transfer" && len(t.Splits) == 0 && (t.CategoryID == nil || force) {
 		if t.CategoryID == nil || *t.CategoryID != *a.CategoryID {
 			id := *a.CategoryID
 			t.CategoryID = &id
@@ -318,6 +318,9 @@ func (s *Server) handleApplyRule(w http.ResponseWriter, r *http.Request) {
 		if applyActions(rule.Actions, t, in.Force) {
 			if err := s.store.UpdateTransaction(ctx, t); err == nil {
 				n++
+				if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
+					s.emitTx(ctx, "transaction.updated", full)
+				}
 			}
 		}
 	}

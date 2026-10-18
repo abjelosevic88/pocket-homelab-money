@@ -377,6 +377,13 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	_ = cw.Write([]string{"date", "time", "kind", "account", "amount", "currency", "foreign_amount", "foreign_currency", "to_account", "to_amount", "amount_" + strings.ToLower(st.HomeCurrency),
 		"description", "payee", "category", "tags", "notes", "subscription", "id"})
 	for _, t := range txs {
+		if len(t.Splits) > 0 {
+			var parts []string
+			for _, sp := range t.Splits {
+				parts = append(parts, fmt.Sprintf("%s %s", firstNonEmpty(sp.CategoryName, "—"), majorPlain(sp.Amount, t.Currency)))
+			}
+			t.CategoryName = strings.Join(parts, "; ")
+		}
 		fa, ta := "", ""
 		if t.ForeignAmount > 0 {
 			fa = majorPlain(t.ForeignAmount, t.ForeignCurrency)

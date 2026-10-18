@@ -23,8 +23,19 @@ export function dueText(s: Subscription) {
   if (s.days_left === 0) return 'today'
   if (s.days_left === 1) return 'tomorrow'
   if (s.days_left < 30) return `in ${s.days_left} d`
-  return fmtDate(s.next_date, false)
+  return fmtDate(s.due_date || s.next_date, false)
 }
+
+const ORD = ['', '1st', '2nd', '3rd', '4th', 'last']
+const WEEKEND: { value: Subscription['weekend']; label: string }[] = [
+  { value: '', label: 'Keep the date' }, { value: 'before', label: 'Move to the Friday before' }, { value: 'after', label: 'Move to the Monday after' }, { value: 'skip', label: 'Skip that one' },
+]
+/** "2nd Tuesday" for a date. */
+function nthName(n: number, iso: string) {
+  const [y, m, d] = iso.split('-').map(Number)
+  return `${ORD[n]} ${new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long' })}`
+}
+function nthOf(iso: string) { return Math.min(4, Math.ceil(Number(iso.slice(8, 10)) / 7)) }
 
 export default function Subscriptions() {
   const { home, currencies } = useApp()
@@ -118,6 +129,7 @@ export function SubForm({ sub, onClose, onSaved }: { sub: Partial<Subscription>;
     account_id: sub.account_id ?? null as number | null, to_account_id: sub.to_account_id ?? null as number | null, category_id: sub.category_id ?? null as number | null, tags: sub.tags || [] as string[],
     payee: sub.payee || '', description: sub.description || '', freq: (sub.freq || 'monthly') as Freq, every: sub.every || 1, start_date: sub.start_date || '', next_date: sub.next_date || todayISO(),
     end_date: sub.end_date || '', mode: (sub.mode || 'remind') as SubMode, notify_days: sub.notify_days ?? 2, match_text: sub.match_text || '', url: sub.url || '', icon: sub.icon || '', notes: sub.notes || '', active: sub.active ?? true,
+    weekend: (sub.weekend || '') as Subscription['weekend'], nth: sub.nth || 0, max_count: sub.max_count || 0,
   })
   const [range, setRange] = useState(sub.amount_max ? true : false)
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF(x => ({ ...x, [k]: v }))
@@ -146,6 +158,21 @@ export function SubForm({ sub, onClose, onSaved }: { sub: Partial<Subscription>;
         <div className="row wrap">
           <span>Every</span><input type="number" min={1} value={f.every} onChange={e => set('every', Math.max(1, Number(e.target.value)))} style={{ width: 70 }} />
           <Segmented value={f.freq} onChange={v => set('freq', v)} options={[{ value: 'daily', label: 'days' }, { value: 'weekly', label: 'weeks' }, { value: 'monthly', label: 'months' }, { value: 'yearly', label: 'years' }]} />
+        </div>
+        {f.freq === 'monthly' && f.next_date && (
+          <Field label="On" group>
+            <Select value={String(f.nth)} onChange={v => set('nth', Number(v))} options={[
+              { value: '0', label: `Day ${Number(f.next_date.slice(8, 10))} of the month` },
+              { value: String(nthOf(f.next_date)), label: `The ${nthName(nthOf(f.next_date), f.next_date)}` },
+              { value: '5', label: `The ${nthName(5, f.next_date)}` },
+            ].filter((o, i, a) => a.findIndex(x => x.value === o.value) === i)} />
+          </Field>
+        )}
+        <div className="two-col tight">
+          <Field label="If it falls on a weekend" group><Select value={f.weekend} onChange={v => set('weekend', v as Subscription['weekend'])} options={WEEKEND.map(w => ({ value: w.value, label: w.label }))} /></Field>
+          <Field label="Stop after" help={f.max_count > 0 && sub.done_count ? `${sub.done_count} of ${f.max_count} done` : 'Number of payments — leave empty to keep going'}>
+            <input type="number" min={0} value={f.max_count || ''} onChange={e => set('max_count', Math.max(0, Number(e.target.value) || 0))} placeholder="no limit" />
+          </Field>
         </div>
         <div className="three-col tight" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
           <Field label="Next due"><input type="date" value={f.next_date} onChange={e => set('next_date', e.target.value)} required /></Field>
@@ -198,16 +225,17 @@ export function SubscriptionPage() {
   const del = async () => { if (confirm(`Delete ${s.name}? Its payments stay, unlinked.`)) { await api.del(`${V1}/subscriptions/${s.id}`); navigate('/subscriptions') } }
   return (
     <>
-      <PageHeader title={<>{s.icon || s.category_icon || '↻'} {s.name}</>} sub={<>{fmtMoney(s.amount, s.currency, dec)}{s.amount_max > s.amount ? `–${fmtMoney(s.amount_max, s.currency, dec)}` : ''} {every(s)} · {MODE_LABEL[s.mode]}{s.account_name ? ` · ${s.account_name}` : ''}</>} actions={<>
+      <PageHeader title={<>{s.icon || s.category_icon || '↻'} {s.name}</>} sub={<>{fmtMoney(s.amount, s.currency, dec)}{s.amount_max > s.amount ? `–${fmtMoney(s.amount_max, s.currency, dec)}` : ''} {every(s)}{s.nth ? ` on the ${nthName(s.nth, s.next_date)}` : ''} · {MODE_LABEL[s.mode]}{s.account_name ? ` · ${s.account_name}` : ''}</>} actions={<>
         {s.active && <button className="btn primary" onClick={() => act('pay')}>Pay now</button>}
         {s.active && <button className="btn" onClick={() => act('skip')}>Skip this one</button>}
         <button className="btn" onClick={() => setEditing(true)}>Edit</button>
       </>} />
       <div className="stats">
-        <div className="stat"><div className="n">{dueText(s)}</div><div className="l">next {fmtDate(s.next_date)}</div></div>
+        <div className="stat"><div className="n">{dueText(s)}</div><div className="l">next {fmtDate(s.due_date || s.next_date)}{s.due_date && s.due_date !== s.next_date ? ` (moved from ${fmtDate(s.next_date, false)})` : ''}</div></div>
         <div className="stat"><div className="n">{fmtMoney(Math.abs(s.monthly_home), home, decimalsOf(home, currencies))}</div><div className="l">a month</div></div>
         <div className="stat"><div className="n">{fmtMoney(Math.abs(s.yearly_home), home, decimalsOf(home, currencies))}</div><div className="l">a year</div></div>
         <div className="stat"><div className="n">{s.paid_count}</div><div className="l">payments linked{s.last_paid ? ` · last ${fmtDate(s.last_paid, false)}` : ''}</div></div>
+        {s.max_count > 0 && <div className="stat"><div className="n">{s.done_count} / {s.max_count}</div><div className="l">{s.max_count - s.done_count > 0 ? `${s.max_count - s.done_count} to go` : 'all done'}</div></div>}
       </div>
       <div className="home-grid">
         <Card title="Payments" actions={<button className="btn ghost sm" onClick={relink} title="Find past payments that match">Find payments</button>}>

@@ -15,7 +15,9 @@ import (
 // maybeNotify runs the daily checks once the configured hour has passed.
 func (s *Server) maybeNotify(ctx context.Context, st store.Settings) {
 	if st.NotifyURL == "" {
-		return
+		if hooks, _ := s.store.ListWebhooks(ctx, 0); len(hooks) == 0 {
+			return
+		}
 	}
 	now := time.Now()
 	day := now.Format("2006-01-02")
@@ -80,7 +82,7 @@ func (s *Server) runNotifications(ctx context.Context, dry bool) ([]notify.Messa
 		case x.DaysLeft == 1:
 			when = "tomorrow"
 		case x.DaysLeft > 1:
-			when = fmt.Sprintf("in %d days (%s)", x.DaysLeft, x.NextDate)
+			when = fmt.Sprintf("in %d days (%s)", x.DaysLeft, x.DueDate)
 		}
 		body := fmt.Sprintf("%s %s", majorString(x.Amount, x.Currency), when)
 		if x.Mode == "auto" {
@@ -97,6 +99,7 @@ func (s *Server) runNotifications(ctx context.Context, dry bool) ([]notify.Messa
 		if !dry {
 			x.NotifiedFor = x.NextDate
 			_ = s.store.UpdateSubscription(ctx, x)
+			s.emit(ctx, x.OwnerID, "subscription.due", x.Name, map[string]any{"subscription": x, "message": m.Title + " — " + m.Body})
 		}
 	}
 	budgets, _ := s.store.ListBudgets(ctx, 0)
@@ -126,6 +129,8 @@ func (s *Server) runNotifications(ctx context.Context, dry bool) ([]notify.Messa
 		if !dry {
 			b.Notified = key
 			_ = s.store.UpdateBudget(ctx, b)
+			b.Status = bs
+			s.emit(ctx, b.OwnerID, "budget.alert", b.Name, map[string]any{"budget": b, "message": m.Title + " — " + m.Body})
 		}
 	}
 	if dry || !c.notify.Configured() {

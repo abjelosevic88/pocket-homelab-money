@@ -79,6 +79,76 @@ func anchorOf(x *store.Subscription) int {
 	return 0
 }
 
+// nthWeekday is the nth (1..4, 5 = last) weekday of a month.
+func nthWeekday(y int, m time.Month, nth int, wd time.Weekday) time.Time {
+	if nth >= 5 {
+		last := time.Date(y, m+1, 0, 0, 0, 0, 0, time.UTC)
+		return last.AddDate(0, 0, -((int(last.Weekday()) - int(wd) + 7) % 7))
+	}
+	first := time.Date(y, m, 1, 0, 0, 0, 0, time.UTC)
+	return first.AddDate(0, 0, (int(wd)-int(first.Weekday())+7)%7+7*(nth-1))
+}
+
+// anchorWeekday is the weekday a "2nd Tuesday" subscription falls on (its start date's).
+func anchorWeekday(x *store.Subscription) time.Weekday {
+	d := firstNonEmpty(x.StartDate, x.NextDate)
+	if t, err := store.ParseDate(d); err == nil {
+		return t.Weekday()
+	}
+	return time.Monday
+}
+
+// step moves a nominal due date one period forward, honouring "nth weekday".
+func step(x *store.Subscription, d string) string {
+	if x.Freq == "monthly" && x.Nth > 0 {
+		t, err := store.ParseDate(d)
+		if err != nil {
+			return d
+		}
+		every := max(1, x.Every)
+		m := time.Date(t.Year(), t.Month()+time.Month(every), 1, 0, 0, 0, 0, time.UTC)
+		return nthWeekday(m.Year(), m.Month(), x.Nth, anchorWeekday(x)).Format("2006-01-02")
+	}
+	return addPeriod(d, x.Freq, x.Every, anchorOf(x))
+}
+
+func isWeekend(d string) bool {
+	t, err := store.ParseDate(d)
+	return err == nil && (t.Weekday() == time.Saturday || t.Weekday() == time.Sunday)
+}
+
+// shiftWeekend moves a date off the weekend: before = the Friday, after = the Monday.
+func shiftWeekend(d, mode string) string {
+	t, err := store.ParseDate(d)
+	if err != nil || !isWeekend(d) {
+		return d
+	}
+	switch mode {
+	case "before":
+		for t.Weekday() != time.Friday {
+			t = t.AddDate(0, 0, -1)
+		}
+	case "after":
+		for t.Weekday() != time.Monday {
+			t = t.AddDate(0, 0, 1)
+		}
+	}
+	return t.Format("2006-01-02")
+}
+
+// dueOf is when the next payment is actually due: the nominal date moved off
+// the weekend, or — with "skip" — the next nominal date that is a weekday.
+func dueOf(x *store.Subscription) string {
+	d := x.NextDate
+	for i := 0; x.Weekend == "skip" && isWeekend(d) && i < 30; i++ {
+		d = step(x, d)
+	}
+	return shiftWeekend(d, x.Weekend)
+}
+
+// limitReached reports whether a subscription with "stop after N" is done.
+func limitReached(x *store.Subscription) bool { return x.MaxCount > 0 && x.DoneCount >= x.MaxCount }
+
 // tolerance is how far from the due date a payment still counts.
 func tolerance(x *store.Subscription) int {
 	return int(math.Min(10, math.Max(2, subPeriodDays(x.Freq, x.Every)/3)))
@@ -87,14 +157,15 @@ func tolerance(x *store.Subscription) int {
 // decorate fills the computed fields.
 func (s *Server) decorate(ctx context.Context, x *store.Subscription, home string) {
 	today := store.Today()
-	x.DaysLeft = store.DaysBetween(today, x.NextDate)
-	if x.NextDate < today {
-		x.DaysLeft = -store.DaysBetween(x.NextDate, today)
+	x.DueDate = dueOf(x)
+	x.DaysLeft = store.DaysBetween(today, x.DueDate)
+	if x.DueDate < today {
+		x.DaysLeft = -store.DaysBetween(x.DueDate, today)
 	}
 	switch {
 	case !x.Active:
 		x.Status = "paused"
-	case x.EndDate != "" && x.NextDate > x.EndDate:
+	case limitReached(x) || (x.EndDate != "" && x.NextDate > x.EndDate):
 		x.Status = "ended"
 	case x.DaysLeft < 0:
 		x.Status = "overdue"
@@ -118,17 +189,32 @@ func (s *Server) decorate(ctx context.Context, x *store.Subscription, home strin
 	}
 }
 
-// occurrences lists due dates from the next one up to `until`.
-func occurrences(x *store.Subscription, until string, max int) []string {
+// occurrences lists the actual due dates (weekend rule applied) from the next
+// one up to `until`, stopping at the end date or the payment limit.
+func occurrences(x *store.Subscription, until string, limit int) []string {
 	var out []string
 	d := x.NextDate
-	anchor := anchorOf(x)
-	for i := 0; d != "" && d <= until && i < max; i++ {
+	left := -1
+	if x.MaxCount > 0 {
+		left = max(0, x.MaxCount-x.DoneCount)
+	}
+	for i := 0; d != "" && i < limit*3 && len(out) < limit && left != 0; i++ {
 		if x.EndDate != "" && d > x.EndDate {
 			break
 		}
-		out = append(out, d)
-		d = addPeriod(d, x.Freq, x.Every, anchor)
+		if x.Weekend == "skip" && isWeekend(d) {
+			d = step(x, d)
+			continue
+		}
+		due := shiftWeekend(d, x.Weekend)
+		if due > until {
+			break
+		}
+		out = append(out, due)
+		if left > 0 {
+			left--
+		}
+		d = step(x, d)
 	}
 	return out
 }
@@ -200,7 +286,7 @@ func (s *Server) matchSubscription(ctx context.Context, t *store.Transaction) {
 	}
 	for i := range subs {
 		x := &subs[i]
-		if !x.Active || x.Kind != t.Kind || x.NextDate == "" {
+		if !x.Active || x.Kind != t.Kind || x.NextDate == "" || limitReached(x) {
 			continue
 		}
 		if x.AccountID != nil && *x.AccountID != t.AccountID {
@@ -210,7 +296,7 @@ func (s *Server) matchSubscription(ctx context.Context, t *store.Transaction) {
 			continue
 		}
 		tol := tolerance(x)
-		lo, _ := store.ParseDate(x.NextDate)
+		lo, _ := store.ParseDate(dueOf(x))
 		from := lo.AddDate(0, 0, -tol).Format("2006-01-02")
 		to := lo.AddDate(0, 0, int(math.Max(float64(tol), subPeriodDays(x.Freq, x.Every)/2))).Format("2006-01-02")
 		if t.Date < from || t.Date > to {
@@ -233,11 +319,27 @@ func (s *Server) advanceSubscription(ctx context.Context, id int64, date string)
 	if err != nil || x.NextDate == "" {
 		return
 	}
-	nd, _ := store.ParseDate(x.NextDate)
+	nd, _ := store.ParseDate(dueOf(x))
 	if date < nd.AddDate(0, 0, -tolerance(x)).Format("2006-01-02") {
 		return // an early or old payment does not pay the next one
 	}
-	x.NextDate = addPeriod(x.NextDate, x.Freq, x.Every, anchorOf(x))
+	s.moveOn(ctx, x, true)
+}
+
+// moveOn steps a subscription to its next due date; paid counts toward
+// "stop after N", a skip does not. Weekend-skipped dates are stepped over.
+func (s *Server) moveOn(ctx context.Context, x *store.Subscription, paid bool) {
+	for i := 0; x.Weekend == "skip" && isWeekend(x.NextDate) && i < 30; i++ {
+		x.NextDate = step(x, x.NextDate)
+	}
+	last := x.NextDate
+	x.NextDate = step(x, x.NextDate)
+	if paid {
+		x.DoneCount++
+		if limitReached(x) && (x.EndDate == "" || x.EndDate > last) {
+			x.EndDate = last
+		}
+	}
 	x.NotifiedFor = ""
 	_ = s.store.UpdateSubscription(ctx, x)
 }
@@ -251,20 +353,21 @@ func (s *Server) bookDueSubscriptions(ctx context.Context) {
 	today := store.Today()
 	for i := range subs {
 		x := &subs[i]
-		for n := 0; n < 12 && x.Active && x.Mode == "auto" && x.NextDate != "" && x.NextDate <= today && (x.EndDate == "" || x.NextDate <= x.EndDate); n++ {
+		for n := 0; n < 12 && x.Active && x.Mode == "auto" && x.NextDate != "" && !limitReached(x) && dueOf(x) <= today && (x.EndDate == "" || x.NextDate <= x.EndDate); n++ {
 			owner, err := s.store.GetUser(ctx, x.OwnerID)
 			if err != nil {
 				break
 			}
 			uctx := context.WithValue(ctx, userKey, owner)
-			due := x.NextDate
+			due := dueOf(x)
+			before := x.NextDate
 			if _, msg, err := s.bookSubscription(uctx, x, due, nil, nil); msg != "" || err != nil {
 				s.log.Warn("auto-book subscription", "name", x.Name, "msg", msg, "err", err)
 				break
 			}
 			s.log.Info("subscription booked", "name", x.Name, "date", due)
 			nx, err := s.store.GetSubscription(ctx, x.ID)
-			if err != nil || nx.NextDate == due {
+			if err != nil || nx.NextDate == before {
 				break
 			}
 			*x = *nx
@@ -396,6 +499,10 @@ type subIn struct {
 	Icon        *string   `json:"icon"`
 	Notes       *string   `json:"notes"`
 	Active      *bool     `json:"active"`
+	Weekend     *string   `json:"weekend"`
+	Nth         *int      `json:"nth"`
+	MaxCount    *int      `json:"max_count"`
+	DoneCount   *int      `json:"done_count"`
 }
 
 func (s *Server) applySub(ctx context.Context, in *subIn, x *store.Subscription) string {
@@ -448,6 +555,35 @@ func (s *Server) applySub(ctx context.Context, in *subIn, x *store.Subscription)
 	}
 	if in.Active != nil {
 		x.Active = *in.Active
+	}
+	if in.Weekend != nil {
+		x.Weekend = *in.Weekend
+	}
+	if in.Nth != nil {
+		x.Nth = *in.Nth
+	}
+	if in.MaxCount != nil {
+		x.MaxCount = max(0, *in.MaxCount)
+	}
+	if in.DoneCount != nil {
+		x.DoneCount = max(0, *in.DoneCount)
+	}
+	if x.Weekend != "before" && x.Weekend != "after" && x.Weekend != "skip" {
+		x.Weekend = ""
+	}
+	if x.Nth < 0 || x.Nth > 5 || x.Freq != "monthly" {
+		x.Nth = 0
+	}
+	// "2nd Tuesday": the next date must itself be that weekday of its month
+	if x.Nth > 0 {
+		if t, err := store.ParseDate(x.NextDate); err == nil {
+			c := nthWeekday(t.Year(), t.Month(), x.Nth, anchorWeekday(x))
+			if c.Before(t) {
+				m := time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+				c = nthWeekday(m.Year(), m.Month(), x.Nth, anchorWeekday(x))
+			}
+			x.NextDate = c.Format("2006-01-02")
+		}
 	}
 	if x.Every < 1 {
 		x.Every = 1
@@ -604,9 +740,7 @@ func (s *Server) handlePaySubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	// paying ahead of time still pays the next one
 	if nx, err := s.store.GetSubscription(r.Context(), x.ID); err == nil && nx.NextDate == x.NextDate {
-		nx.NextDate = addPeriod(nx.NextDate, nx.Freq, nx.Every, anchorOf(nx))
-		nx.NotifiedFor = ""
-		_ = s.store.UpdateSubscription(r.Context(), nx)
+		s.moveOn(r.Context(), nx, true)
 	}
 	writeJSON(w, http.StatusCreated, t)
 }
@@ -616,12 +750,7 @@ func (s *Server) handleSkipSubscription(w http.ResponseWriter, r *http.Request) 
 	if x == nil {
 		return
 	}
-	x.NextDate = addPeriod(x.NextDate, x.Freq, x.Every, anchorOf(x))
-	x.NotifiedFor = ""
-	if err := s.store.UpdateSubscription(r.Context(), x); err != nil {
-		s.fail(w, err, "skip")
-		return
-	}
+	s.moveOn(r.Context(), x, false)
 	writeJSON(w, http.StatusOK, x)
 }
 

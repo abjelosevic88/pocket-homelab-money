@@ -10,8 +10,9 @@ import { AccountSelect } from '../components/pickers'
 import { Avatar } from '../components/people'
 import { Categories, Rules, TagsAdmin, TemplatesAdmin } from './Manage'
 import { ImportTab } from './Import'
+import { Webhooks } from './Webhooks'
 
-type Tab = 'general' | 'categories' | 'tags' | 'templates' | 'rules' | 'import' | 'integrations' | 'users' | 'profile' | 'api' | 'data' | 'about'
+type Tab = 'general' | 'categories' | 'tags' | 'templates' | 'rules' | 'import' | 'integrations' | 'users' | 'profile' | 'api' | 'webhooks' | 'data' | 'about'
 
 export default function Settings() {
   const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(window.location.search).get('tab') as Tab) || 'general')
@@ -19,7 +20,7 @@ export default function Settings() {
     <>
       <PageHeader title="Settings" />
       <Tabs tabs={[{ id: 'general', label: 'General' }, { id: 'categories', label: 'Categories' }, { id: 'tags', label: 'Tags' }, { id: 'templates', label: 'Templates' }, { id: 'rules', label: 'Rules' },
-        { id: 'import', label: 'Import' }, { id: 'integrations', label: 'Integrations' }, { id: 'users', label: 'Users' }, { id: 'profile', label: 'Profile' }, { id: 'api', label: 'API & apps' }, { id: 'data', label: 'Backup & data' }, { id: 'about', label: 'About' }]} value={tab} onChange={setTab} />
+        { id: 'import', label: 'Import' }, { id: 'integrations', label: 'Integrations' }, { id: 'users', label: 'Users' }, { id: 'profile', label: 'Profile' }, { id: 'api', label: 'API & apps' }, { id: 'webhooks', label: 'Webhooks' }, { id: 'data', label: 'Backup & data' }, { id: 'about', label: 'About' }]} value={tab} onChange={setTab} />
       <div className="mt">
         {tab === 'general' && <General />}
         {tab === 'categories' && <Categories />}
@@ -31,6 +32,7 @@ export default function Settings() {
         {tab === 'users' && <Users />}
         {tab === 'profile' && <Profile />}
         {tab === 'api' && <Tokens />}
+        {tab === 'webhooks' && <Webhooks />}
         {tab === 'data' && <Data />}
         {tab === 'about' && <About />}
       </div>

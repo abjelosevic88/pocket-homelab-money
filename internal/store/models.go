@@ -59,26 +59,33 @@ type Settings struct {
 
 // Account holds money in one currency.
 type Account struct {
-	ID              int64  `json:"id"`
-	OwnerID         int64  `json:"owner_id"`
-	Name            string `json:"name"`
-	Kind            string `json:"kind"`
-	Currency        string `json:"currency"`
-	OpeningBalance  int64  `json:"opening_balance"`
-	OpeningDate     string `json:"opening_date"`
-	Institution     string `json:"institution"`
-	Number          string `json:"number"`
-	Color           string `json:"color"`
-	Icon            string `json:"icon"`
-	CreditLimit     int64  `json:"credit_limit"`
-	IncludeNetWorth bool   `json:"include_net_worth"`
-	Everyday        bool   `json:"everyday"`
-	Archived        bool   `json:"archived"`
-	SortOrder       int    `json:"sort_order"`
-	Notes           string `json:"notes"`
-	ExternalID      string `json:"external_id"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	ID              int64   `json:"id"`
+	OwnerID         int64   `json:"owner_id"`
+	Name            string  `json:"name"`
+	Kind            string  `json:"kind"`
+	Currency        string  `json:"currency"`
+	OpeningBalance  int64   `json:"opening_balance"`
+	OpeningDate     string  `json:"opening_date"`
+	Institution     string  `json:"institution"`
+	Number          string  `json:"number"`
+	Color           string  `json:"color"`
+	Icon            string  `json:"icon"`
+	CreditLimit     int64   `json:"credit_limit"`
+	IncludeNetWorth bool    `json:"include_net_worth"`
+	Everyday        bool    `json:"everyday"`
+	Direction       string  `json:"direction"` // liabilities: owe | owed
+	InterestRate    float64 `json:"interest_rate"`
+	InterestAuto    bool    `json:"interest_auto"`
+	Principal       int64   `json:"principal"`
+	Payment         int64   `json:"payment"`
+	PaymentDay      int     `json:"payment_day"`
+	InterestBooked  string  `json:"interest_booked"`
+	Archived        bool    `json:"archived"`
+	SortOrder       int     `json:"sort_order"`
+	Notes           string  `json:"notes"`
+	ExternalID      string  `json:"external_id"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 
 	Role        string          `json:"role,omitempty"` // the caller's: owner | editor | viewer
 	Members     []AccountMember `json:"members,omitempty"`
@@ -162,6 +169,49 @@ type Transaction struct {
 	CreatedByName   string       `json:"created_by_name,omitempty"`
 	Attachments     []Attachment `json:"attachments,omitempty"`
 	AttachmentCount int          `json:"attachment_count"`
+	Splits          []Split      `json:"splits"`
+	BalanceAfter    *int64       `json:"balance_after,omitempty"` // account balance after it (single-account lists)
+}
+
+// Split is one part of a split transaction.
+type Split struct {
+	ID            int64  `json:"id"`
+	CategoryID    *int64 `json:"category_id"`
+	Amount        int64  `json:"amount"`         // account currency
+	ForeignAmount int64  `json:"foreign_amount"` // receipt currency, when the transaction has one
+	AmountHome    int64  `json:"amount_home"`
+	Note          string `json:"note"`
+	CategoryName  string `json:"category_name"`
+	CategoryIcon  string `json:"category_icon"`
+}
+
+// Webhook pushes events to a URL.
+type Webhook struct {
+	ID         int64    `json:"id"`
+	OwnerID    int64    `json:"owner_id"`
+	Name       string   `json:"name"`
+	URL        string   `json:"url"`
+	Secret     string   `json:"secret,omitempty"`
+	Events     []string `json:"events"`
+	Format     string   `json:"format"`
+	Active     bool     `json:"active"`
+	LastStatus int      `json:"last_status"`
+	LastError  string   `json:"last_error"`
+	LastAt     string   `json:"last_at"`
+	CreatedAt  string   `json:"created_at"`
+}
+
+// Delivery is one webhook attempt (kept for the log).
+type Delivery struct {
+	ID         int64  `json:"id"`
+	WebhookID  int64  `json:"webhook_id"`
+	Event      string `json:"event"`
+	Subject    string `json:"subject"`
+	Status     int    `json:"status"`
+	Error      string `json:"error"`
+	Attempts   int    `json:"attempts"`
+	DurationMS int    `json:"duration_ms"`
+	CreatedAt  string `json:"created_at"`
 }
 
 // Attachment is a receipt or document on a transaction.
@@ -230,6 +280,10 @@ type Subscription struct {
 	Icon        string   `json:"icon"`
 	Notes       string   `json:"notes"`
 	Active      bool     `json:"active"`
+	Weekend     string   `json:"weekend"`
+	Nth         int      `json:"nth"`
+	MaxCount    int      `json:"max_count"`
+	DoneCount   int      `json:"done_count"`
 	NotifiedFor string   `json:"notified_for"`
 	ExternalID  string   `json:"external_id"`
 	CreatedAt   string   `json:"created_at"`
@@ -238,6 +292,7 @@ type Subscription struct {
 	CategoryName string `json:"category_name,omitempty"`
 	CategoryIcon string `json:"category_icon,omitempty"`
 	AccountName  string `json:"account_name,omitempty"`
+	DueDate      string `json:"due_date"` // next_date after weekend handling
 	DaysLeft     int    `json:"days_left"`
 	Status       string `json:"status"` // overdue | today | soon | upcoming | ended | paused
 	MonthlyHome  int64  `json:"monthly_home"`
@@ -370,7 +425,7 @@ type Activity struct {
 
 // Kinds and lists the UI offers.
 var (
-	AccountKinds      = []string{"checking", "savings", "cash", "credit", "investment", "loan", "other"}
+	AccountKinds      = []string{"checking", "savings", "cash", "credit", "investment", "loan", "mortgage", "debt", "other"}
 	TransactionKinds  = []string{"expense", "income", "transfer"}
 	Frequencies       = []string{"daily", "weekly", "monthly", "yearly"}
 	SubscriptionModes = []string{"remind", "auto", "track"}
@@ -386,3 +441,9 @@ func Valid(list []string, v string) bool {
 	}
 	return false
 }
+
+// IsLiability reports whether an account kind is a loan, mortgage or debt.
+func IsLiability(kind string) bool { return kind == "loan" || kind == "mortgage" || kind == "debt" }
+
+// WebhookEvents are the events a webhook may subscribe to.
+var WebhookEvents = []string{"transaction.created", "transaction.updated", "transaction.deleted", "budget.alert", "subscription.due"}

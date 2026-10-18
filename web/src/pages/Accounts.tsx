@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { addDays, decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
-import { KIND_ICON, KIND_LABEL, type Account, type AccountKind, type AccountMember, type DayAmount, type Transaction, type TxTotals } from '../lib/types'
+import { KIND_ICON, KIND_LABEL, LIABILITY, type Account, type AccountKind, type AccountMember, type DayAmount, type Payoff, type Transaction, type TxTotals } from '../lib/types'
 import { Card, Empty, Field, Loading, Modal, PageHeader, Segmented, useAsync, useToast } from '../components/ui'
 import { CurrencySelect, MoneyInput } from '../components/Money'
 import { Line } from '../components/Charts'
@@ -21,13 +21,18 @@ export function AccountForm({ account, onClose, onSaved }: { account?: Account; 
     opening_balance: account?.opening_balance ?? 0, opening_date: account?.opening_date || '', institution: account?.institution || '', number: account?.number || '',
     color: account?.color || '', icon: account?.icon || '', credit_limit: account?.credit_limit ?? 0, include_net_worth: account?.include_net_worth ?? true, everyday: account?.everyday ?? true,
     archived: account?.archived ?? false, notes: account?.notes || '',
+    direction: account?.direction || 'owe', interest_rate: account?.interest_rate ?? 0, interest_auto: account?.interest_auto ?? false,
+    principal: account?.principal ?? 0, payment: account?.payment ?? 0, payment_day: account?.payment_day ?? 0,
   })
+  const liability = LIABILITY.includes(f.kind)
   const [balance, setBalance] = useState<number | null>(null)
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF(x => ({ ...x, [k]: v }))
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      const body = { ...f, opening_balance: account ? f.opening_balance : balance ?? 0, opening_date: account ? f.opening_date : f.opening_date || todayISO() }
+      // a new liability is typed as what is still owed; I owe it = a negative balance
+      const start = liability && f.direction === 'owe' ? -Math.abs(balance ?? 0) : balance ?? 0
+      const body = { ...f, opening_balance: account ? f.opening_balance : start, opening_date: account ? f.opening_date : f.opening_date || todayISO() }
       const a = account ? await api.put<Account>(`${V1}/accounts/${account.id}`, body) : await api.post<Account>(`${V1}/accounts`, body)
       toast(account ? 'Saved' : 'Account created')
       onSaved(a)
@@ -39,11 +44,11 @@ export function AccountForm({ account, onClose, onSaved }: { account?: Account; 
       <form onSubmit={save} className="grid" style={{ gap: 12 }}>
         <Field label="Name"><input value={f.name} onChange={e => set('name', e.target.value)} autoFocus required placeholder="UniCredit, Cash, Revolut…" /></Field>
         <div className="two-col tight">
-          <Field label="Type" group><Select value={f.kind} onChange={v => set('kind', v as AccountKind)} options={kinds.map(k => ({ value: k, label: `${KIND_ICON[k]} ${KIND_LABEL[k]}` }))} /></Field>
+          <Field label="Type" group><Select value={f.kind} onChange={v => { const k = v as AccountKind; set('kind', k); if (!account && LIABILITY.includes(k)) set('everyday', false) }} options={kinds.map(k => ({ value: k, label: `${KIND_ICON[k]} ${KIND_LABEL[k]}` }))} /></Field>
           <Field label="Currency" group><CurrencySelect value={f.currency} onChange={v => set('currency', v)} disabled={Boolean(account && account.tx_count > 0)} /></Field>
         </div>
         {!account ? (
-          <Field label="Balance today" help="What the bank app shows right now. You can correct it later with “Balance check”.">
+          <Field label={liability ? 'Still owed today' : 'Balance today'} help={liability ? 'The amount left to pay off, as a positive number.' : 'What the bank app shows right now. You can correct it later with “Balance check”.'}>
             <MoneyInput value={balance} code={f.currency} onChange={setBalance} />
           </Field>
         ) : (
@@ -56,6 +61,20 @@ export function AccountForm({ account, onClose, onSaved }: { account?: Account; 
           <Field label="Bank"><input value={f.institution} onChange={e => set('institution', e.target.value)} /></Field>
           <Field label="IBAN / number"><input value={f.number} onChange={e => set('number', e.target.value)} /></Field>
         </div>
+        {liability && <>
+          <Field label="Direction" group>
+            <Segmented value={f.direction} onChange={v => set('direction', v)} options={[{ value: 'owe', label: 'I owe it' }, { value: 'owed', label: 'Someone owes me' }]} />
+          </Field>
+          <div className="two-col tight">
+            <Field label="Original amount" help="Borrowed or lent at the start — for the progress bar"><MoneyInput value={f.principal} code={f.currency} onChange={v => set('principal', v ?? 0)} /></Field>
+            <Field label="Interest rate (% a year)"><input type="number" min={0} max={100} step="0.01" value={f.interest_rate || ''} onChange={e => set('interest_rate', Number(e.target.value) || 0)} placeholder="0" /></Field>
+          </div>
+          <div className="two-col tight">
+            <Field label="Monthly payment" help="Leave empty to use the average of the last 3 months"><MoneyInput value={f.payment} code={f.currency} onChange={v => set('payment', v ?? 0)} /></Field>
+            <Field label="Payment day" help="Day of the month, 1–28"><input type="number" min={0} max={28} value={f.payment_day || ''} onChange={e => set('payment_day', Math.min(28, Math.max(0, Number(e.target.value) || 0)))} placeholder="—" /></Field>
+          </div>
+          <label className="row"><input type="checkbox" checked={f.interest_auto} onChange={e => set('interest_auto', e.target.checked)} style={{ width: 'auto' }} disabled={!f.interest_rate} /> Book the interest automatically each month on the payment day</label>
+        </>}
         {f.kind === 'credit' && <Field label="Credit limit"><MoneyInput value={f.credit_limit} code={f.currency} onChange={v => set('credit_limit', v ?? 0)} /></Field>}
         <div className="two-col tight">
           <Field label="Icon (emoji)"><input value={f.icon} onChange={e => set('icon', e.target.value)} placeholder={KIND_ICON[f.kind]} maxLength={4} /></Field>
@@ -150,6 +169,7 @@ export function AccountPage() {
         <div className="stat"><div className="n">{a.tx_count}</div><div className="l">Transactions</div></div>
         {a.kind === 'credit' && a.credit_limit > 0 && <div className="stat"><div className="n">{fmtMoney(a.credit_limit + a.balance, a.currency, dec)}</div><div className="l">Available credit</div></div>}
       </div>
+      {LIABILITY.includes(a.kind) && <PayoffCard a={a} onBooked={refresh} />}
       <Card title="Balance" actions={<Segmented size="sm" value={range} onChange={setRange} options={[{ value: '90', label: '3 months' }, { value: '365', label: 'Year' }, { value: 'all', label: 'All' }]} />}>
         <Line points={points} fmt={v => fmtMoney(v, a.currency, dec)} area zero height={180} />
       </Card>
@@ -218,5 +238,42 @@ function Share({ a, users, onClose, onDone }: { a: Account; users: { id: number;
       )}
       <div className="form-actions"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save}>Save</button></div>
     </Modal>
+  )
+}
+
+function PayoffCard({ a, onBooked }: { a: Account; onBooked: () => void }) {
+  const { currencies } = useApp()
+  const { toast } = useToast()
+  const { data: p, reload } = useAsync(() => api.get<Payoff>(`${V1}/accounts/${a.id}/payoff`), [a.id, a.balance])
+  const [all, setAll] = useState(false)
+  if (!p) return null
+  const dec = decimalsOf(a.currency, currencies)
+  const m = (v: number) => fmtMoney(v, a.currency, dec)
+  const owe = p.direction === 'owe'
+  const book = async () => {
+    if (!confirm(`Book ${m(p.month_interest)} interest on ${a.name} today?`)) return
+    try { await api.post(`${V1}/accounts/${a.id}/interest`); toast('Interest booked'); reload(); onBooked() } catch (e) { toast((e as Error).message, 'err') }
+  }
+  const rows = all ? p.schedule : p.schedule.slice(0, 6)
+  return (
+    <Card className="mb" title={owe ? 'Paying it off' : 'Getting it back'} actions={p.rate > 0 && p.outstanding > 0 && a.role !== 'viewer' && <button className="btn sm" onClick={book}>Book this month's interest</button>}>
+      <div className="stats">
+        <div className="stat"><div className="n">{m(p.outstanding)}</div><div className="l">{owe ? 'Still owed' : 'Still to get back'}</div></div>
+        {p.principal > 0 && <div className="stat"><div className="n ok">{p.pct}%</div><div className="l">{owe ? 'Repaid' : 'Returned'} · {m(p.repaid)} of {m(p.principal)}</div></div>}
+        <div className="stat"><div className="n">{p.payment > 0 ? m(p.payment) : '—'}</div><div className="l">A month{p.payment_estimated ? ' (3-month average)' : ''}</div></div>
+        {p.rate > 0 && <div className="stat"><div className="n">{m(p.month_interest)}</div><div className="l">Interest this month · {p.rate}% a year</div></div>}
+        <div className="stat"><div className="n">{p.outstanding === 0 ? 'Done 🎉' : p.never ? 'Never' : fmtDate(p.payoff_date)}</div><div className="l">{p.never ? 'the payment does not cover the interest' : p.outstanding === 0 ? 'Nothing left' : `${p.months_left} payments left${p.interest_left > 0 ? ` · ${m(p.interest_left)} interest` : ''}`}</div></div>
+      </div>
+      {p.principal > 0 && <div className="bar lg mt-sm"><span className="fill" style={{ width: `${Math.min(100, p.pct)}%` }} /></div>}
+      {p.schedule.length > 0 && (
+        <div className="mt">
+          <table className="table compact">
+            <thead><tr><th>Date</th><th className="num">Payment</th><th className="num">Interest</th><th className="num">Principal</th><th className="num">Left after</th></tr></thead>
+            <tbody>{rows.map(r => <tr key={r.date}><td>{fmtDate(r.date)}</td><td className="num">{m(r.payment)}</td><td className="num">{m(r.interest)}</td><td className="num">{m(r.principal)}</td><td className="num">{m(r.remaining)}</td></tr>)}</tbody>
+          </table>
+          {p.schedule.length > 6 && <button className="btn ghost sm mt-sm" onClick={() => setAll(x => !x)}>{all ? 'Show less' : `Show ${p.schedule.length} months`}</button>}
+        </div>
+      )}
+    </Card>
   )
 }
