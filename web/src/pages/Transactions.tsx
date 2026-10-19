@@ -131,14 +131,20 @@ export default function Transactions() {
       )}
       {sel.size > 0 && (
         <div className="bulk-bar">
-          <b>{sel.size} selected</b>
-          <div style={{ width: 220 }}><CategorySelect value={bulkCat} onChange={setBulkCat} kind="any" placeholder="Set category…" /></div>
-          <button className="btn sm" disabled={!bulkCat} onClick={() => bulk('category', { category_id: bulkCat })}>Apply</button>
-          <input value={bulkTag} onChange={e => setBulkTag(e.target.value)} placeholder="tag" style={{ width: 120 }} />
-          <button className="btn sm" disabled={!bulkTag.trim()} onClick={() => bulk('add_tags', { tags: [bulkTag] })}>+ Tag</button>
-          <button className="btn sm" disabled={!bulkTag.trim()} onClick={() => bulk('remove_tags', { tags: [bulkTag] })}>− Tag</button>
+          <span className="count">{sel.size} selected<button onClick={() => setSel(new Set())} aria-label="Clear selection" title="Clear selection">×</button></span>
+          <div className="divider" />
+          <div className="group">
+            <div style={{ width: 210 }}><CategorySelect value={bulkCat} onChange={setBulkCat} kind="any" placeholder="Set category…" /></div>
+            <button className="btn primary sm" disabled={!bulkCat} onClick={() => bulk('category', { category_id: bulkCat })}>Apply</button>
+          </div>
+          <div className="divider" />
+          <div className="group">
+            <input value={bulkTag} onChange={e => setBulkTag(e.target.value)} placeholder="Tag" style={{ width: 120 }} />
+            <button className="btn sm" disabled={!bulkTag.trim()} onClick={() => bulk('add_tags', { tags: [bulkTag] })}>+ Add</button>
+            <button className="btn sm" disabled={!bulkTag.trim()} onClick={() => bulk('remove_tags', { tags: [bulkTag] })}>− Remove</button>
+          </div>
           <span className="spacer" />
-          <button className="btn sm" onClick={() => bulk('delete')}>Delete</button>
+          <button className="btn sm danger-ghost" onClick={() => bulk('delete')}>Delete</button>
         </div>
       )}
       {(open || creating) && <TxModal id={open || undefined} onClose={() => { creating ? setCreating(false) : closeModal() }} onChanged={() => load(false)} />}
