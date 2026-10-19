@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -238,6 +239,7 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	oldCur := a.Currency
+	beforeFields := acctFields(a)
 	var in accountIn
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -256,6 +258,7 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a, _ = s.store.GetAccount(ctx, id)
+	s.auditAccountUpdate(ctx, beforeFields, acctFields(a), a)
 	a.Role = "owner"
 	writeJSON(w, http.StatusOK, a)
 }
@@ -281,9 +284,31 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// this account's own log goes with it; a transfer to or from another
+	// account disappears from that account too, so its log says so
+	var gone []*txSnap
+	for i := range txs {
+		if txs[i].Kind == "transfer" && txs[i].ToAccountID != nil {
+			if sn := snapTx(&txs[i]); sn != nil {
+				var other []int64
+				for _, x := range sn.accounts {
+					if x != id {
+						other = append(other, x)
+					}
+				}
+				sn.accounts, sn.line = other, sn.line+" (account "+a.Name+" deleted)"
+				gone = append(gone, sn)
+			}
+		}
+	}
 	if err := s.store.DeleteAccount(ctx, id); err != nil {
 		s.fail(w, err, "delete account")
 		return
+	}
+	for _, sn := range gone {
+		if len(sn.accounts) > 0 {
+			s.auditTx(ctx, sn, nil)
+		}
 	}
 	s.store.LogActivity(ctx, actorID(ctx), "account.delete", a.Name)
 	w.WriteHeader(http.StatusNoContent)
@@ -330,11 +355,15 @@ func (s *Server) handleAccountMembers(w http.ResponseWriter, r *http.Request) {
 			keep = append(keep, m)
 		}
 	}
+	oldMembers, _ := s.store.AccountMembers(ctx, id)
 	if err := s.store.SetAccountMembers(ctx, id, keep); err != nil {
 		s.fail(w, err, "members")
 		return
 	}
 	ms, _ := s.store.AccountMembers(ctx, id)
+	if a, err := s.store.GetAccount(ctx, id); err == nil {
+		s.auditMembers(ctx, a, oldMembers, ms)
+	}
 	writeJSON(w, http.StatusOK, ms)
 }
 
@@ -421,6 +450,15 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogActivity(ctx, uid, "account.reconcile", a.Name)
 	if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
+		sign := "+"
+		if diff < 0 {
+			sign = "−"
+		}
+		adj := sign + majorString(abs64(diff), a.Currency)
+		rctx := withAuditSource(ctx, "reconcile")
+		s.auditWrite(rctx, []int64{id}, "account.reconciled", full.ID,
+			fmt.Sprintf("%s reconciled %s to %s on %s (adjustment %s)", s.who(rctx).name, a.Name, majorString(in.Balance, a.Currency), in.Date, adj),
+			map[string]change{"balance": {From: majorString(current, a.Currency), To: majorString(in.Balance, a.Currency)}, "adjustment": {To: adj}, "date": {To: in.Date}})
 		s.emitTx(ctx, "transaction.created", full)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "difference": diff, "transaction_id": t.ID})
@@ -455,4 +493,11 @@ func (s *Server) handleAccountCategories(w http.ResponseWriter, r *http.Request)
 		out = append(out, c)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

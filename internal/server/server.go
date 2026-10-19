@@ -163,7 +163,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 					_ = s.store.SaveSettings(ctx, owner.ID, st, false)
 				}
 				go func() {
-					res := s.importFirefly(context.Background(), owner.ID, importOptions{All: true})
+					res := s.importFirefly(withAuditJob(context.Background(), "Firefly import", "import"), owner.ID, importOptions{All: true})
 					s.log.Info("firefly import on first start", "summary", res.Summary(), "error", res.Error)
 				}()
 			} else {
@@ -237,7 +237,7 @@ func (s *Server) runJobs(ctx context.Context, mirror bool) {
 		st, _ := s.store.GetSettings(ctx, u.ID)
 		mirrored[u.ID] = st.FireflyMirror
 		if mirror && st.FireflyMirror && st.FireflyURL != "" && !s.importing.Load() {
-			res := s.importFirefly(ctx, u.ID, importOptions{Transactions: true, Since: time.Now().AddDate(0, 0, -45).Format("2006-01-02"), Quiet: true})
+			res := s.importFirefly(withAuditJob(ctx, "Firefly mirror", "mirror"), u.ID, importOptions{Transactions: true, Since: time.Now().AddDate(0, 0, -45).Format("2006-01-02"), Quiet: true})
 			if res.Error != "" {
 				s.log.Warn("firefly mirror", "user", u.ID, "err", res.Error)
 			} else if res.Created+res.Updated > 0 {
@@ -358,6 +358,8 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/accounts/{id}", s.handleDeleteAccount)
 			r.Get("/accounts/{id}/history", s.handleAccountHistory)
 			r.Get("/accounts/{id}/categories", s.handleAccountCategories)
+			r.Get("/accounts/{id}/audit", s.handleAccountAudit)
+			r.Get("/audit", s.handleAudit)
 			r.Put("/accounts/{id}/members", s.handleAccountMembers)
 			r.Post("/accounts/{id}/reconcile", s.handleReconcile)
 			r.Get("/accounts/{id}/payoff", s.handlePayoff)

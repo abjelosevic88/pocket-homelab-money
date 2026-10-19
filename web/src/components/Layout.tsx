@@ -13,11 +13,14 @@ const nav = [
   { to: '/subscriptions', label: 'Subscriptions', ico: '↻' },
   { to: '/goals', label: 'Goals', ico: '🎯' },
   { to: '/reports', label: 'Reports', ico: '📊', tab: true },
+  { to: '/audit', label: 'Audit log', ico: '🕵', owner: true },
   { to: '/settings', label: 'Settings', ico: '⚙' },
 ]
 
 export default function Layout() {
-  const { user, settings, status, theme, toggleTheme, setUser } = useApp()
+  const { user, settings, status, theme, toggleTheme, setUser, accounts } = useApp()
+  // the audit log is for owners: someone with only shared accounts has none
+  const ownsAny = accounts.some(a => a.role === 'owner')
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
   const logout = async () => { await api.post(`${V1}/auth/logout`); setUser(null); navigate('/login') }
@@ -27,7 +30,7 @@ export default function Layout() {
       <aside className={`sidebar ${open ? 'open' : ''}`} onClick={() => setOpen(false)}>
         <div className="brand"><span className="logo"><img src="/favicon.svg" alt="" /></span><span className="brand-name">{title}</span></div>
         <nav>
-          {nav.map(n => <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => isActive ? 'active' : ''}><span className="ico">{n.ico}</span>{n.label}</NavLink>)}
+          {nav.filter(n => !n.owner || ownsAny).map(n => <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => isActive ? 'active' : ''}><span className="ico">{n.ico}</span>{n.label}</NavLink>)}
         </nav>
         <div className="foot">
           <span className="row" title={user?.email}>{user && <Avatar user={user} />}<span className="foot-id"><span>{user?.name || user?.email}</span>{status?.version && <a className="ver" href="https://github.com/abjelosevic88/pocket-homelab-money/releases" target="_blank" rel="noreferrer" title="Version — click for release notes">v{status.version.replace(/^v/, '')}</a>}</span></span>

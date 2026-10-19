@@ -62,13 +62,14 @@ func (s *Server) compatRoutes(r chi.Router) {
 // first) and answers in Firefly's error shape.
 func (s *Server) compatAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, err := s.resolveUser(r)
-		if err != nil || u == nil {
+		p, err := s.resolvePrincipal(r)
+		if err != nil || p == nil || p.User == nil {
 			ffError(w, http.StatusUnauthorized, "Unauthenticated.")
 			return
 		}
+		p.Source = "firefly_api"
 		w.Header().Set("Content-Type", "application/vnd.api+json")
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+		next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 	})
 }
 
@@ -648,6 +649,7 @@ func (s *Server) ffUpdateTransaction(w http.ResponseWriter, r *http.Request) {
 	if sp.Tags == nil {
 		in.Tags = nil
 	}
+	before := snapTx(t)
 	if msg := s.build(ctx, in, t); msg != "" {
 		ffError(w, http.StatusUnprocessableEntity, msg)
 		return
@@ -657,6 +659,7 @@ func (s *Server) ffUpdateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, _ = s.store.GetTransaction(ctx, t.ID)
+	s.auditTx(ctx, before, snapTx(t))
 	s.emitTx(ctx, "transaction.updated", t)
 	ffJSON(w, http.StatusOK, map[string]any{"data": s.ffGroup(t)})
 }
@@ -671,7 +674,11 @@ func (s *Server) ffDeleteTransaction(w http.ResponseWriter, r *http.Request) {
 	for _, p := range s.store.AttachmentPaths(ctx, t.ID) {
 		s.removeFile(p)
 	}
-	_ = s.store.DeleteTransaction(ctx, t.ID)
+	if err := s.store.DeleteTransaction(ctx, t.ID); err != nil {
+		ffError(w, 500, err.Error())
+		return
+	}
+	s.auditTx(ctx, snapTx(t), nil)
 	s.emitTx(ctx, "transaction.deleted", t)
 	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), s.txEvent(ctx, t))
 	w.WriteHeader(http.StatusNoContent)

@@ -334,7 +334,7 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		if in.CategoryID == nil {
 			in.CategoryID = s.store.LearnedCategory(ctx, actorID(ctx), firstNonEmpty(payee, desc))
 		}
-		t, msg, err := s.createTx(ctx, &in)
+		t, msg, err := s.createTx(withAuditQuiet(ctx), &in)
 		if msg != "" || err != nil {
 			rr.Status, rr.Reason = "error", firstNonEmpty(msg, fmt.Sprint(err))
 			bad++
@@ -349,6 +349,7 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if !dry && created > 0 {
 		s.store.LogActivity(ctx, actorID(ctx), "import.csv", fmt.Sprintf("%d transactions into %s", created, acct.Name))
+		s.auditImports(withAuditSource(ctx, "import"), "CSV import", map[int64]*importCounts{accountID: {added: created}})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"created": created, "duplicates": dupes, "errors": bad, "rows": out})
 }

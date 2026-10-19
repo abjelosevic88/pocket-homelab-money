@@ -162,6 +162,7 @@ func (s *Server) bookInterest(ctx context.Context, a *store.Account, month strin
 
 // bookDueInterest runs from the janitor: once a month on the payment day.
 func (s *Server) bookDueInterest(ctx context.Context) {
+	ctx = withAuditJob(ctx, "Interest", "schedule")
 	accts, err := s.store.AllAccounts(ctx)
 	if err != nil {
 		return

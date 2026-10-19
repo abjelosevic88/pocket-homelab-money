@@ -122,3 +122,11 @@ export const SERIES: Record<string, { light: string; dark: string }> = {
   a: { light: '#2a78d6', dark: '#3987e5' }, b: { light: '#eb6834', dark: '#d95926' }, c: { light: '#1baf7a', dark: '#199e70' }, d: { light: '#eda100', dark: '#c98500' }, e: { light: '#e87ba4', dark: '#d55181' },
 }
 export const PALETTE = ['a', 'b', 'c', 'd', 'e']
+
+export type AuditChange = { from?: string; to?: string }
+export interface AuditEntry {
+  id: number; account_id: number; account_name?: string; actor_user_id: number | null; actor_name: string; actor_label: string
+  source: string; action: string; transaction_id: number | null; summary: string; changes: Record<string, AuditChange>; created_at: string
+}
+export interface AuditActor { key: string; user_id: number | null; name: string }
+export interface AuditPage { items: AuditEntry[]; next_before: number | null; actors: AuditActor[] }

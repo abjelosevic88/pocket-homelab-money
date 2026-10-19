@@ -10,6 +10,7 @@ import (
 
 // seedDemo fills an empty database with half a year of a believable household.
 func (s *Server) seedDemo(ctx context.Context) error {
+	ctx = withAuditQuiet(ctx) // sample data, not changes anyone made
 	if s.store.Counts(ctx)["accounts"] > 0 {
 		return nil
 	}

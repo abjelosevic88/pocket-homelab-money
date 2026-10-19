@@ -34,16 +34,34 @@ func actorID(ctx context.Context) int64 {
 // or trusted proxy header depending on AUTH_MODE.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, err := s.resolveUser(r)
-		if err != nil || u == nil {
+		p, err := s.resolvePrincipal(r)
+		if err != nil || p == nil || p.User == nil {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+		next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 	})
 }
 
 func (s *Server) resolveUser(r *http.Request) (*store.User, error) {
+	p, err := s.resolvePrincipal(r)
+	if err != nil || p == nil {
+		return nil, err
+	}
+	return p.User, nil
+}
+
+// resolvePrincipal is resolveUser plus how the person came in (session, API
+// token, Pocket Core device), which the audit log records.
+func (s *Server) resolvePrincipal(r *http.Request) (*principal, error) {
+	p, err := s.resolvePrincipalRaw(r)
+	if err != nil || p == nil || p.User == nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (s *Server) resolvePrincipalRaw(r *http.Request) (*principal, error) {
 	ctx := r.Context()
 	tok := ""
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(strings.ToLower(h), "bearer ") {
@@ -55,11 +73,17 @@ func (s *Server) resolveUser(r *http.Request) (*store.User, error) {
 		if s.core.Configured() && core.IsCoreToken(tok) {
 			return s.coreUser(ctx, tok)
 		}
-		return s.store.GetUserByAPIToken(ctx, tok)
+		u, name, err := s.store.APITokenUser(ctx, tok)
+		via := "API token"
+		if name != "" {
+			via = "API token '" + name + "'"
+		}
+		return &principal{User: u, Kind: "token", Via: via, Source: "api"}, err
 	}
 	switch s.cfg.AuthMode {
 	case "none":
-		return s.firstOrSystemUser(ctx, "admin@localhost", "Admin")
+		u, err := s.firstOrSystemUser(ctx, "admin@localhost", "Admin")
+		return &principal{User: u, Kind: "none", Source: "web"}, err
 	case "proxy":
 		name := r.Header.Get(s.cfg.AuthProxyHeader)
 		if name == "" {
@@ -72,19 +96,21 @@ func (s *Server) resolveUser(r *http.Request) (*store.User, error) {
 				email += "@proxy"
 			}
 		}
-		return s.firstOrSystemUser(ctx, strings.ToLower(email), name)
+		u, err := s.firstOrSystemUser(ctx, strings.ToLower(email), name)
+		return &principal{User: u, Kind: "proxy", Source: "web"}, err
 	}
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.GetSessionUser(ctx, c.Value)
+	u, err := s.store.GetSessionUser(ctx, c.Value)
+	return &principal{User: u, Kind: "session", Source: "web"}, err
 }
 
 // coreUser validates a token Pocket Core issued to a paired phone (pcd_), a
 // person (pcu_) or an OIDC client (pco_) and maps it to the local account
 // with the same email, creating a member on first sight.
-func (s *Server) coreUser(ctx context.Context, tok string) (*store.User, error) {
+func (s *Server) coreUser(ctx context.Context, tok string) (*principal, error) {
 	in, err := s.core.Introspect(ctx, tok)
 	if err != nil {
 		return nil, err
@@ -92,7 +118,17 @@ func (s *Server) coreUser(ctx context.Context, tok string) (*store.User, error) 
 	if !in.Active || in.User == nil || in.User.Email == "" {
 		return nil, http.ErrNoCookie
 	}
-	return s.firstOrSystemUser(ctx, strings.ToLower(in.User.Email), in.User.Name)
+	u, err := s.firstOrSystemUser(ctx, strings.ToLower(in.User.Email), in.User.Name)
+	via := "Pocket Core"
+	switch {
+	case in.Device != nil && in.Device.Name != "":
+		via = "Pocket Core device '" + in.Device.Name + "'"
+	case in.Device != nil:
+		via = "Pocket Core device"
+	case in.App != nil && in.App.Name != "":
+		via = "Pocket Core app '" + in.App.Name + "'"
+	}
+	return &principal{User: u, Kind: "core", Via: via, Source: "api"}, err
 }
 
 // firstOrSystemUser returns the user with that email, creating it when missing.

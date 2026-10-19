@@ -15,6 +15,7 @@ import Subscriptions, { SubscriptionPage } from './pages/Subscriptions'
 import Goals from './pages/Goals'
 import Reports from './pages/Reports'
 import Settings from './pages/Settings'
+import Audit from './pages/Audit'
 
 function Gate({ children }: { children: React.ReactNode }) {
   const { status, user } = useApp()
@@ -43,6 +44,7 @@ function App() {
         <Route path="/goals" element={<Goals />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/audit" element={<Audit />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

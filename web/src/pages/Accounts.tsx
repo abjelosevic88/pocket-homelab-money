@@ -4,7 +4,8 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { addDays, decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
 import { KIND_ICON, KIND_LABEL, LIABILITY, type Account, type AccountKind, type AccountMember, type DayAmount, type Payoff, type Transaction, type TxTotals } from '../lib/types'
-import { Card, Empty, Field, Loading, Modal, PageHeader, Segmented, useAsync, useToast } from '../components/ui'
+import { Card, Empty, Field, Loading, Modal, PageHeader, Segmented, Tabs, useAsync, useToast } from '../components/ui'
+import { AuditLog } from './Audit'
 import { CurrencySelect, MoneyInput } from '../components/Money'
 import { Line } from '../components/Charts'
 import { TxList } from '../components/TxList'
@@ -150,6 +151,7 @@ export function AccountPage() {
   const [sharing, setSharing] = useState(false)
   const [open, setOpen] = useState<number | null>(null)
   const [adding, setAdding] = useState(false)
+  const [tab, setTab] = useState<'tx' | 'audit'>('tx')
   if (!a) return <Loading />
   const dec = decimalsOf(a.currency, currencies)
   const points = (hist?.days || []).filter((_, i, arr) => arr.length < 400 || i % Math.ceil(arr.length / 400) === 0 || i === arr.length - 1).map(d => ({ x: d.date, y: d.amount }))
@@ -173,10 +175,17 @@ export function AccountPage() {
       <Card title="Balance" actions={<Segmented size="sm" value={range} onChange={setRange} options={[{ value: '90', label: '3 months' }, { value: '365', label: 'Year' }, { value: 'all', label: 'All' }]} />}>
         <Line points={points} fmt={v => fmtMoney(v, a.currency, dec)} area zero height={180} />
       </Card>
+      {a.role === 'owner' && <div className="mt"><Tabs tabs={[{ id: 'tx', label: 'Transactions' }, { id: 'audit', label: 'Audit log' }]} value={tab} onChange={setTab} /></div>}
       <div className="mt">
-        <Card title="Transactions" actions={<Link className="btn ghost sm" to={`/transactions?account=${a.id}`}>Filter & search →</Link>}>
-          {!txs ? <Loading /> : txs.items.length === 0 ? <Empty title="No transactions yet" /> : <TxList items={txs.items} onOpen={t => setOpen(t.id)} showAccount={false} perspective={a.id} />}
-        </Card>
+        {a.role === 'owner' && tab === 'audit' ? (
+          <Card title="Audit log" actions={<Link className="btn ghost sm" to="/audit">All my accounts →</Link>}>
+            <AuditLog accountId={a.id} />
+          </Card>
+        ) : (
+          <Card title="Transactions" actions={<Link className="btn ghost sm" to={`/transactions?account=${a.id}`}>Filter & search →</Link>}>
+            {!txs ? <Loading /> : txs.items.length === 0 ? <Empty title="No transactions yet" /> : <TxList items={txs.items} onOpen={t => setOpen(t.id)} showAccount={false} perspective={a.id} />}
+          </Card>
+        )}
       </div>
       {a.notes && <div className="mt callout">{a.notes}</div>}
       {editing && <AccountForm account={a} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); refresh() }} />}

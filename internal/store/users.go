@@ -141,14 +141,22 @@ func (s *Store) CreateAPIToken(ctx context.Context, userID int64, name string) (
 
 // GetUserByAPIToken resolves a bearer token.
 func (s *Store) GetUserByAPIToken(ctx context.Context, token string) (*User, error) {
+	u, _, err := s.APITokenUser(ctx, token)
+	return u, err
+}
+
+// APITokenUser resolves a bearer token to its user and the token's name.
+func (s *Store) APITokenUser(ctx context.Context, token string) (*User, string, error) {
 	h := HashToken(token)
-	u, err := scanUser(s.DB.QueryRowContext(ctx, `SELECT u.id, u.email, u.name, u.password_hash, u.role, u.created_at
-		FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?`, h))
+	var name string
+	var u User
+	err := s.DB.QueryRowContext(ctx, `SELECT u.id, u.email, u.name, u.password_hash, u.role, u.created_at, t.name
+		FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?`, h).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role, &u.CreatedAt, &name)
 	if err != nil {
-		return nil, err
+		return nil, "", notFound(err)
 	}
 	_, _ = s.DB.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, Now(), h)
-	return u, nil
+	return &u, name, nil
 }
 
 // ListAPITokens lists tokens for a user.

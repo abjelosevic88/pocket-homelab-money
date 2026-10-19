@@ -274,6 +274,7 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 	}
 
 	seen := map[string]bool{}
+	counts := map[int64]*importCounts{} // the audit log gets one summary per account
 	for _, g := range groups {
 		for _, sp := range g.Attr.Transactions {
 			ext := "firefly:" + sp.JournalID
@@ -310,6 +311,10 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 				if txChanged(old, t) {
 					if err := s.store.UpdateTransaction(ctx, ownerID, t); err == nil {
 						res.Updated++
+						countImport(counts, old, "updated")
+						if old.AccountID != t.AccountID || (t.ToAccountID != nil && (old.ToAccountID == nil || *old.ToAccountID != *t.ToAccountID)) {
+							countImport(counts, t, "updated")
+						}
 						if !opt.All {
 							if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
 								s.emitTx(ctx, "transaction.updated", full)
@@ -324,6 +329,7 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 				continue
 			}
 			res.Created++
+			countImport(counts, t, "added")
 			if !opt.All && t.SubscriptionID != nil {
 				s.advanceSubscription(ctx, *t.SubscriptionID, t.Date)
 			}
@@ -340,10 +346,13 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 		if !seen[t.ExternalID] && t.Source == "firefly" {
 			if err := s.store.DeleteTransaction(ctx, t.ID); err == nil {
 				res.Deleted++
+				countImport(counts, &t, "deleted")
 				s.emitTx(ctx, "transaction.deleted", &t)
 			}
 		}
 	}
+
+	s.auditImports(ctx, "Firefly import", counts)
 
 	if opt.All && res.Accounts > 0 {
 		s.guessEveryday(ctx, acctByFF)
@@ -867,13 +876,15 @@ func (s *Server) handleImportFirefly(w http.ResponseWriter, r *http.Request) {
 	_ = decode(r, &in)
 	opt := importOptions{All: in.Mode != "transactions", Transactions: true, Since: in.Since}
 	uid := actorID(r.Context())
+	// outlives the request, keeps who started it for the audit log
+	bg := withAuditSource(context.WithoutCancel(r.Context()), "import")
 	if s.importing.Load() {
 		writeErr(w, http.StatusConflict, "an import is already running")
 		return
 	}
 	if in.Wait {
 		s.jobMu.Lock()
-		res := s.importFirefly(context.Background(), uid, opt)
+		res := s.importFirefly(bg, uid, opt)
 		s.jobMu.Unlock()
 		writeJSON(w, http.StatusOK, res)
 		return
@@ -881,7 +892,7 @@ func (s *Server) handleImportFirefly(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		s.jobMu.Lock()
 		defer s.jobMu.Unlock()
-		s.importFirefly(context.Background(), uid, opt)
+		s.importFirefly(bg, uid, opt)
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]any{"started": true})
 }

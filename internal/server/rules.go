@@ -302,7 +302,7 @@ func (s *Server) handleTestRule(w http.ResponseWriter, r *http.Request) {
 
 // handleApplyRule runs a saved rule over existing transactions.
 func (s *Server) handleApplyRule(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx := withAuditSource(r.Context(), "bulk")
 	rule := s.ownRule(w, r)
 	if rule == nil {
 		return
@@ -323,10 +323,12 @@ func (s *Server) handleApplyRule(w http.ResponseWriter, r *http.Request) {
 	n := 0
 	for i := range txs {
 		t := &txs[i]
+		before := snapTx(t)
 		if applyActions(rule.Actions, t, in.Force) {
 			if err := s.store.UpdateTransaction(ctx, actorID(ctx), t); err == nil {
 				n++
 				if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
+					s.auditTx(ctx, before, snapTx(full))
 					s.emitTx(ctx, "transaction.updated", full)
 				}
 			}

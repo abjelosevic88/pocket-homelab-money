@@ -469,6 +469,11 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 	}
 	full, err := s.store.GetTransaction(ctx, t.ID)
 	if err == nil {
+		actx := ctx
+		if src, _ := ctx.Value(auditSourceKey).(string); src == "" && (in.Source == "quick" || in.Source == "template") {
+			actx = withAuditSource(ctx, in.Source)
+		}
+		s.auditTx(actx, nil, snapTx(full))
 		s.emitTx(ctx, "transaction.created", full)
 		s.publish("money.transaction_created", fmt.Sprintf("transaction:%d", full.ID), s.txEvent(ctx, full))
 	}
@@ -593,6 +598,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	oldSub := t.SubscriptionID
+	before := snapTx(t)
 	var in txIn
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -610,6 +616,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 		s.advanceSubscription(ctx, *t.SubscriptionID, t.Date)
 	}
 	t, _ = s.store.GetTransaction(ctx, t.ID)
+	s.auditTx(ctx, before, snapTx(t))
 	s.emitTx(ctx, "transaction.updated", t)
 	writeJSON(w, http.StatusOK, t)
 }
@@ -627,6 +634,7 @@ func (s *Server) handleDeleteTransaction(w http.ResponseWriter, r *http.Request)
 		s.fail(w, err, "delete transaction")
 		return
 	}
+	s.auditTx(ctx, snapTx(t), nil)
 	s.emitTx(ctx, "transaction.deleted", t)
 	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), s.txEvent(ctx, t))
 	w.WriteHeader(http.StatusNoContent)
@@ -659,7 +667,7 @@ func (s *Server) handleDuplicateTransaction(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleBulkTransactions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx := withAuditSource(r.Context(), "bulk")
 	var in struct {
 		IDs        []int64  `json:"ids"`
 		Action     string   `json:"action"` // delete | category | add_tags | remove_tags
@@ -688,6 +696,7 @@ func (s *Server) handleBulkTransactions(w http.ResponseWriter, r *http.Request) 
 			if err = s.store.DeleteTransaction(ctx, id); err != nil {
 				break
 			}
+			s.auditTx(ctx, snapTx(before[id]), nil)
 			s.emitTx(ctx, "transaction.deleted", before[id])
 		}
 	case "category":
@@ -723,6 +732,7 @@ func (s *Server) handleBulkTransactions(w http.ResponseWriter, r *http.Request) 
 	if in.Action != "delete" {
 		for _, id := range ids {
 			if t, err := s.store.GetTransaction(ctx, id); err == nil {
+				s.auditTx(ctx, snapTx(before[id]), snapTx(t))
 				s.emitTx(ctx, "transaction.updated", t)
 			}
 		}
@@ -765,6 +775,7 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		s.fail(w, err, "attachment")
 		return
 	}
+	s.auditAttachment(ctx, t, name, true)
 	writeJSON(w, http.StatusCreated, a)
 }
 
@@ -799,6 +810,9 @@ func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) 
 		if err := s.store.DeleteAttachment(r.Context(), a.ID); err != nil {
 			s.fail(w, err, "delete attachment")
 			return
+		}
+		if t, err := s.store.GetTransaction(r.Context(), a.TransactionID); err == nil {
+			s.auditAttachment(r.Context(), t, a.Name, false)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}

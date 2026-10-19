@@ -361,6 +361,7 @@ func (s *Server) moveOn(ctx context.Context, x *store.Subscription, paid bool) {
 // are due, each booked as its owner. People whose Firefly III is still being
 // mirrored (mirrored[owner]) are skipped: Firefly's own recurrences book theirs.
 func (s *Server) bookDueSubscriptions(ctx context.Context, mirrored map[int64]bool) {
+	ctx = withAuditJob(ctx, "Auto-booking", "schedule")
 	subs, err := s.store.ListSubscriptions(ctx, 0)
 	if err != nil {
 		return
