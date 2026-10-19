@@ -20,11 +20,16 @@ import (
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
 
-// Sign-in with an OpenID Connect provider (PocketID here): authorization code
-// flow with PKCE and the client secret, the ID token's RS256 signature checked
-// against the provider's published keys. Users are matched by verified email;
-// API tokens are untouched, so apps and scripts keep working when passwords
-// are switched off.
+// Sign-in with an OpenID Connect provider (PocketID, Pocket Core…):
+// authorization code flow with PKCE and the client secret, the ID token's
+// RS256 signature checked against the provider's published keys. Users are
+// matched by verified email; API tokens are untouched, so apps and scripts
+// keep working when passwords are switched off.
+//
+// Where the client comes from: explicit OIDC_* settings win; otherwise, on a
+// box with Pocket Core, the relying-party client Core issued when the app
+// registered (the SDK persists it next to the app token). Without either the
+// button, the routes and every outbound call stay off.
 
 const oidcCookie = "pm_oidc"
 
@@ -47,9 +52,55 @@ type oidcDiscovery struct {
 
 var oidcHTTP = &http.Client{Timeout: 15 * time.Second}
 
-func (s *Server) oidcEnabled() bool { return s.cfg.OIDCIssuer != "" && s.cfg.OIDCClientID != "" }
+// oidcSettings returns issuer, client id, secret, label: explicit OIDC_* env
+// wins, else the client Core issued.
+func (s *Server) oidcSettings() (issuer, clientID, secret, name string) {
+	if s.cfg.OIDCIssuer != "" && s.cfg.OIDCClientID != "" {
+		return s.cfg.OIDCIssuer, s.cfg.OIDCClientID, s.cfg.OIDCClientSecret, s.cfg.OIDCName
+	}
+	if s.core.Configured() {
+		if o := s.core.OIDC(); o.Issuer != "" && o.ClientID != "" {
+			return strings.TrimRight(o.Issuer, "/"), o.ClientID, o.ClientSecret, "Pocket Core"
+		}
+	}
+	return "", "", "", ""
+}
+
+func (s *Server) oidcEnabled() bool {
+	issuer, clientID, _, _ := s.oidcSettings()
+	return issuer != "" && clientID != ""
+}
+
+func (s *Server) oidcName() string {
+	_, _, _, name := s.oidcSettings()
+	if name == "" {
+		return s.cfg.OIDCName
+	}
+	return name
+}
+
+// oidcAutoCreate: a client issued by Core means Core already vouches for the
+// person, so unknown emails get an account; with explicit settings the
+// operator decides through OIDC_AUTO_CREATE.
+func (s *Server) oidcAutoCreate() bool {
+	if s.cfg.OIDCIssuer != "" && s.cfg.OIDCClientID != "" {
+		return s.cfg.OIDCAutoCreate
+	}
+	return true
+}
 
 func (s *Server) oidcCallbackURL() string { return s.cfg.BaseURL + "/api/v1/auth/oidc/callback" }
+
+// provider returns the discovery/key cache for the effective issuer,
+// rebuilding it when the issuer changed (Core's values arrive after start).
+func (s *Server) provider(issuer string) *oidcProvider {
+	s.oidcMu.Lock()
+	defer s.oidcMu.Unlock()
+	if s.oidc == nil || s.oidc.issuerURL != issuer {
+		s.oidc = &oidcProvider{issuerURL: issuer}
+	}
+	return s.oidc
+}
 
 func getJSON(ctx context.Context, u string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -79,7 +130,7 @@ func (p *oidcProvider) discovery(ctx context.Context) (*oidcDiscovery, error) {
 		return nil, err
 	}
 	if d.Issuer != p.issuerURL || d.Auth == "" || d.Token == "" || d.JWKS == "" {
-		return nil, fmt.Errorf("the provider's discovery document does not match OIDC_ISSUER %q (says %q)", p.issuerURL, d.Issuer)
+		return nil, fmt.Errorf("the provider's discovery document does not match the issuer %q (says %q)", p.issuerURL, d.Issuer)
 	}
 	p.disc, p.discAt = &d, time.Now()
 	return p.disc, nil
@@ -158,7 +209,7 @@ func (c *idClaims) hasAudience(id string) bool {
 }
 
 // verifyIDToken checks an RS256 ID token's signature, issuer, audience, expiry and nonce.
-func (s *Server) verifyIDToken(ctx context.Context, d *oidcDiscovery, raw, nonce string) (*idClaims, error) {
+func verifyIDToken(ctx context.Context, p *oidcProvider, d *oidcDiscovery, clientID, raw, nonce string) (*idClaims, error) {
 	parts := strings.Split(raw, ".")
 	if len(parts) != 3 {
 		return nil, errors.New("malformed ID token")
@@ -174,7 +225,7 @@ func (s *Server) verifyIDToken(ctx context.Context, d *oidcDiscovery, raw, nonce
 	if json.Unmarshal(hb, &head) != nil || head.Alg != "RS256" {
 		return nil, fmt.Errorf("ID token algorithm %q is not RS256", head.Alg)
 	}
-	key, err := s.oidc.key(ctx, d.JWKS, head.Kid)
+	key, err := p.key(ctx, d.JWKS, head.Kid)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +248,7 @@ func (s *Server) verifyIDToken(ctx context.Context, d *oidcDiscovery, raw, nonce
 	switch {
 	case c.Iss != d.Issuer:
 		return nil, errors.New("ID token from another issuer")
-	case !c.hasAudience(s.cfg.OIDCClientID):
+	case !c.hasAudience(clientID):
 		return nil, errors.New("ID token for another client")
 	case time.Now().Unix() > c.Exp+60:
 		return nil, errors.New("ID token expired")
@@ -222,14 +273,15 @@ func safeNext(p string) string {
 
 // handleOIDCStart sends the browser to the provider.
 func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
-	if !s.oidcEnabled() {
+	issuer, clientID, _, name := s.oidcSettings()
+	if issuer == "" || clientID == "" {
 		writeErr(w, http.StatusNotFound, "single sign-on is not configured")
 		return
 	}
-	d, err := s.oidc.discovery(r.Context())
+	d, err := s.provider(issuer).discovery(r.Context())
 	if err != nil {
 		s.log.Warn("oidc discovery", "err", err)
-		http.Redirect(w, r, "/login?error="+url.QueryEscape("Cannot reach "+s.cfg.OIDCName+" right now"), http.StatusFound)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("Cannot reach "+name+" right now"), http.StatusFound)
 		return
 	}
 	state, nonce, verifier := store.RandomToken(16), store.RandomToken(16), store.RandomToken(32)
@@ -239,7 +291,7 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 		Path: "/api/v1/auth/oidc", HttpOnly: true, Secure: s.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: 600,
 	})
 	q := url.Values{
-		"response_type": {"code"}, "client_id": {s.cfg.OIDCClientID}, "redirect_uri": {s.oidcCallbackURL()},
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {s.oidcCallbackURL()},
 		"scope": {"openid email profile"}, "state": {state}, "nonce": {nonce},
 		"code_challenge": {pkceChallenge(verifier)}, "code_challenge_method": {"S256"},
 	}
@@ -259,7 +311,8 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Redirect(w, r, "/login?error="+url.QueryEscape(msg), http.StatusFound)
 	}
-	if !s.oidcEnabled() {
+	issuer, clientID, secret, name := s.oidcSettings()
+	if issuer == "" || clientID == "" {
 		fail("Single sign-on is not configured", nil)
 		return
 	}
@@ -286,24 +339,25 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		fail("The sign-in could not be matched to this browser — try again", nil)
 		return
 	}
-	d, err := s.oidc.discovery(ctx)
+	p := s.provider(issuer)
+	d, err := p.discovery(ctx)
 	if err != nil {
-		fail("Cannot reach "+s.cfg.OIDCName, err)
+		fail("Cannot reach "+name, err)
 		return
 	}
 	form := url.Values{
 		"grant_type": {"authorization_code"}, "code": {q.Get("code")}, "redirect_uri": {s.oidcCallbackURL()},
-		"client_id": {s.cfg.OIDCClientID}, "code_verifier": {verifier},
+		"client_id": {clientID}, "code_verifier": {verifier},
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, d.Token, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	if s.cfg.OIDCClientSecret != "" {
-		req.SetBasicAuth(url.QueryEscape(s.cfg.OIDCClientID), url.QueryEscape(s.cfg.OIDCClientSecret))
+	if secret != "" {
+		req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(secret))
 	}
 	res, err := oidcHTTP.Do(req)
 	if err != nil {
-		fail("Cannot reach "+s.cfg.OIDCName, err)
+		fail("Cannot reach "+name, err)
 		return
 	}
 	var tok struct {
@@ -315,12 +369,12 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&tok)
 	res.Body.Close()
 	if res.StatusCode != http.StatusOK || tok.IDToken == "" {
-		fail(s.cfg.OIDCName+" refused the sign-in", fmt.Errorf("token endpoint HTTP %d: %s %s", res.StatusCode, tok.Error, tok.Desc))
+		fail(name+" refused the sign-in", fmt.Errorf("token endpoint HTTP %d: %s %s", res.StatusCode, tok.Error, tok.Desc))
 		return
 	}
-	claims, err := s.verifyIDToken(ctx, d, tok.IDToken, nonce)
+	claims, err := verifyIDToken(ctx, p, d, clientID, tok.IDToken, nonce)
 	if err != nil {
-		fail("The answer from "+s.cfg.OIDCName+" did not check out", err)
+		fail("The answer from "+name+" did not check out", err)
 		return
 	}
 	// some providers keep the email out of the ID token
@@ -341,12 +395,12 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(claims.Email))
 	if email == "" || claims.EmailVerified == nil || !*claims.EmailVerified {
-		fail("Your "+s.cfg.OIDCName+" account needs a verified email address", nil)
+		fail("Your "+name+" account needs a verified email address", nil)
 		return
 	}
 	u, err := s.store.GetUserByEmail(ctx, email)
 	if err != nil {
-		if !s.cfg.OIDCAutoCreate {
+		if !s.oidcAutoCreate() {
 			fail("No Pocket Money account for "+email+" — ask the admin to add you under Settings → Users", nil)
 			return
 		}

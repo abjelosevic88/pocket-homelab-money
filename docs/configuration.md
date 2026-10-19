@@ -16,9 +16,9 @@ Everything is read from environment variables; every value has a default so a ba
 | `AUTH_MODE` | `local` | `local` (built-in accounts), `proxy` (trust `AUTH_PROXY_HEADER`), `none` (single user, LAN only) |
 | `AUTH_PROXY_HEADER` / `AUTH_PROXY_EMAIL_HEADER` | `Remote-User` / `Remote-Email` | Headers for proxy mode |
 | `SESSION_TTL` | `720h` | Cookie lifetime |
-| `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | – | Sign in with an OpenID Connect provider (PocketID, Authelia, Authentik, Keycloak…). Needs `BASE_URL`; the callback is `BASE_URL/api/v1/auth/oidc/callback` |
-| `OIDC_NAME` | `single sign-on` | Button label: “Sign in with …” |
-| `OIDC_AUTO_CREATE` | `false` | Give an unknown (verified) email a member account instead of refusing it |
+| `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | – | Sign in with an OpenID Connect provider (Pocket Core, PocketID, Authelia, Authentik, Keycloak…). Needs `BASE_URL`; the callback is `BASE_URL/api/v1/auth/oidc/callback`. On a box with Pocket Core none of these are needed — the app receives its client when it registers. |
+| `OIDC_NAME` | `single sign-on` | Button label: “Sign in with …” (“Pocket Core” for the client Core issued) |
+| `OIDC_AUTO_CREATE` | `false` | Give an unknown (verified) email a member account instead of refusing it; always on for the client Core issued, since Core already vouches for the person |
 | `PASSWORD_LOGIN` | `true` | `false` = only the provider. Ignored (stays on) without `OIDC_ISSUER`, so nobody gets locked out |
 | `SECURE_COOKIES` | `false` | Set `true` behind HTTPS |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | – | Create the first admin on an empty database (otherwise the UI asks) |

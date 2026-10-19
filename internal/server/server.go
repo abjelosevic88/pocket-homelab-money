@@ -51,7 +51,8 @@ type Server struct {
 	notifyDay string
 	digestDay string
 
-	oidc *oidcProvider
+	oidcMu sync.Mutex
+	oidc   *oidcProvider
 
 	tripMu  sync.Mutex
 	trips   []pocket.Trip
@@ -591,13 +592,18 @@ func (s *Server) coreLoop(ctx context.Context) {
 }
 
 func (s *Server) registerWithCore(ctx context.Context) error {
-	reg, err := s.core.Register(ctx, s.cfg.CoreRegistrationKey, core.Manifest{
+	m := core.Manifest{
 		Slug: "money", Name: "Pocket Money",
 		Description: "Personal finance for a homelab: accounts in any currency, quick entry, subscriptions, budgets, savings goals, a forecast and reports.",
 		Icon:        "/favicon.svg", Version: Version,
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "MONEY",
 		Publishes: []string{"money.transaction_created", "money.transaction_deleted", "money.subscription_paid"},
-	})
+	}
+	if s.cfg.BaseURL != "" {
+		// ask Core for a relying-party client so "Sign in with Pocket Core" needs no configuration
+		m.OIDC = &core.OIDCRequest{RedirectURIs: []string{s.oidcCallbackURL()}}
+	}
+	reg, err := s.core.Register(ctx, s.cfg.CoreRegistrationKey, m)
 	if err != nil {
 		return err
 	}

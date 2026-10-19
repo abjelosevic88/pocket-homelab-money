@@ -136,7 +136,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		"version":        Version,
 		"title":          st.Title,
 		"oidc":           s.oidcEnabled() && s.cfg.AuthMode == "local",
-		"oidc_name":      s.cfg.OIDCName,
+		"oidc_name":      s.oidcName(),
 		"password_login": s.cfg.PasswordLogin || s.cfg.AuthMode != "local",
 	})
 }
@@ -195,7 +195,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.cfg.PasswordLogin {
-		writeErr(w, http.StatusForbidden, "password sign-in is switched off — use "+s.cfg.OIDCName)
+		writeErr(w, http.StatusForbidden, "password sign-in is switched off — use "+s.oidcName())
 		return
 	}
 	u, err := s.store.GetUserByEmail(r.Context(), strings.TrimSpace(strings.ToLower(in.Email)))
