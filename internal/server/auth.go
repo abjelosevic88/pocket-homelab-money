@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -35,6 +36,10 @@ func actorID(ctx context.Context) int64 {
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.resolvePrincipal(r)
+		if errors.Is(err, errLinkScope) {
+			writeErr(w, http.StatusForbidden, "this Pocket Core link does not cover "+r.Method+" "+r.URL.Path)
+			return
+		}
 		if err != nil || p == nil || p.User == nil {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -58,6 +63,9 @@ func (s *Server) resolvePrincipal(r *http.Request) (*principal, error) {
 	if err != nil || p == nil || p.User == nil {
 		return nil, err
 	}
+	if p.Kind == "link" && !linkAllows(p, r) {
+		return nil, errLinkScope
+	}
 	return p, nil
 }
 
@@ -70,7 +78,7 @@ func (s *Server) resolvePrincipalRaw(r *http.Request) (*principal, error) {
 		tok = t
 	}
 	if tok != "" {
-		if s.core.Configured() && core.IsCoreToken(tok) {
+		if s.core.Configured() && (core.IsCoreToken(tok) || core.IsLinkToken(tok)) {
 			return s.coreUser(ctx, tok)
 		}
 		u, name, err := s.store.APITokenUser(ctx, tok)
@@ -119,6 +127,16 @@ func (s *Server) coreUser(ctx context.Context, tok string) (*principal, error) {
 		return nil, http.ErrNoCookie
 	}
 	u, err := s.firstOrSystemUser(ctx, strings.ToLower(in.User.Email), in.User.Name)
+	if in.Delegated() {
+		if in.App == nil || in.App.Slug == "" {
+			return nil, http.ErrNoCookie
+		}
+		name := in.App.Name
+		if name == "" {
+			name = in.App.Slug
+		}
+		return &principal{User: u, Kind: "link", Via: name + " (Pocket Core link)", Source: "api", LinkApp: in.App.Slug, Scopes: strings.Fields(in.Scope)}, err
+	}
 	via := "Pocket Core"
 	switch {
 	case in.Device != nil && in.Device.Name != "":

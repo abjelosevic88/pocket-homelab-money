@@ -101,7 +101,7 @@ All optional, under **Settings → Integrations** (or environment variables, see
 - **Notifications** — an Apprise gateway endpoint, an ntfy topic URL or any JSON webhook; pick the hour.
 - **AI** — any OpenAI-compatible key: voice and free-text entry, “Ask your money”.
 - **Pocket Travel** — while a trip runs, new expenses get the trip's tag, and the trip's budget in Pocket Travel shows them.
-- **Pocket Core** — with Core on the box the app registers itself, publishes `money.transaction_created`, `money.transaction_deleted` and `money.subscription_paid`, accepts paired-phone tokens, finds Pocket Travel without a `TRAVEL_URL` setting, and shows “Sign in with Pocket Core” on the login page with no OIDC configuration at all.
+- **Pocket Core** — with Core on the box the app registers itself, publishes `money.transaction_created`, `money.transaction_deleted` and `money.subscription_paid`, accepts paired-phone tokens, finds Pocket Travel without a `TRAVEL_URL` setting, and shows “Sign in with Pocket Core” on the login page with no OIDC configuration at all. It also **offers app links**: another Pocket app the person allowed in Core (Pocket Garage booking car costs, say) can list their accounts and categories (`accounts:read`) and book transactions (`transactions:write`) with a five-minute Core token. Such a token reaches only those routes, and the app may change or delete only the transactions it booked (`source` = its slug). The person's audit log names the app.
 
 ## Documentation
 

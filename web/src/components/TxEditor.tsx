@@ -299,7 +299,7 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
         {!tx && <button type="button" className="btn" disabled={busy} onClick={() => save(true)}>Save & add another</button>}
         <button className="btn primary" disabled={busy}>{busy ? 'Saving…' : tx ? 'Save' : 'Add'}</button>
       </div>
-      {tx && <div className="muted small">Added {tx.created_at.slice(0, 10)}{tx.created_by_name ? ` by ${tx.created_by_name}` : ''} · via {tx.source}{tx.subscription_name ? ` · pays ${tx.subscription_name}` : ''}</div>}
+      {tx && <div className="muted small">Added {tx.created_at.slice(0, 10)}{tx.created_by_name ? ` by ${tx.created_by_name}` : ''} · via {POCKET_SOURCES[tx.source] || tx.source}{tx.subscription_name ? ` · pays ${tx.subscription_name}` : ''}</div>}
     </form>
   )
 }
@@ -315,3 +315,6 @@ export function TxModal({ id, seed, onClose, onChanged }: { id?: number; seed?: 
     </Modal>
   )
 }
+
+// transactions another Pocket app booked through a Core link carry its slug
+const POCKET_SOURCES: Record<string, string> = { garage: 'Pocket Garage', kitchen: 'Pocket Kitchen', travel: 'Pocket Travel', split: 'Pocket Split', invoicing: 'Pocket Invoicing' }

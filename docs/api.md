@@ -11,6 +11,18 @@ JSON over HTTP under `/api/v1`. Authenticate with the session cookie (the UI), a
 | `GET/POST /tokens` · `DELETE /tokens/{id}` | API tokens |
 | `GET/POST/PUT/DELETE /users[/{id}]` | users (admin) |
 
+### Pocket Core app links
+
+Another Pocket app can act for a person here with a `pcx_` token from Pocket Core (see `docs/links.md` in pocket-homelab-core). Money offers two scopes:
+
+| Scope | Routes |
+|---|---|
+| any | `GET /auth/me` |
+| `accounts:read` | `GET /accounts`, `GET /accounts/{id}/categories`, `GET /categories` |
+| `transactions:write` | `POST /transactions`; `GET` / `PUT` / `DELETE /transactions/{id}` only for transactions that app created |
+
+Every other route answers `403` to a link token; the Firefly-compatible API answers `401`. A transaction created this way gets `source` = the acting app's slug, and its `external_id` is prefixed with `<slug>:`. Audit entries read "<person> via Pocket Garage (Pocket Core link)". `POST /transactions` takes an optional `external_id` from any caller, except the reserved `firefly:` prefix.
+
 ## Accounts
 
 | | |

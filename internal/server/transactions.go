@@ -220,6 +220,7 @@ type txIn struct {
 	Lat             *float64   `json:"lat"`
 	Lng             *float64   `json:"lng"`
 	Source          string     `json:"source"`
+	ExternalID      string     `json:"external_id"` // the caller's own id for it (set on create only)
 	TemplateID      int64      `json:"template_id"`
 	SkipRules       bool       `json:"skip_rules"`
 	Splits          *[]splitIn `json:"splits"`
@@ -440,6 +441,17 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 	if in.Source != "" {
 		t.Source = in.Source
 	}
+	t.ExternalID = strings.TrimSpace(in.ExternalID)
+	if app := linkApp(principalFrom(ctx)); app != "" {
+		// a linked app's transactions carry its name, which is what lets it
+		// change them later (and nothing else)
+		t.Source = app
+		if t.ExternalID != "" && !strings.HasPrefix(t.ExternalID, app+":") {
+			t.ExternalID = app + ":" + t.ExternalID
+		}
+	} else if strings.HasPrefix(t.ExternalID, "firefly:") {
+		t.ExternalID = "" // reserved for the Firefly import and mirror
+	}
 	if uid > 0 {
 		t.CreatedBy = &uid
 	}
@@ -577,6 +589,9 @@ func (s *Server) loadTx(w http.ResponseWriter, r *http.Request, write bool) *sto
 	ok := s.canSee(ctx, t.AccountID) || (t.ToAccountID != nil && s.canSee(ctx, *t.ToAccountID))
 	if write {
 		ok = s.canWrite(ctx, t.AccountID)
+	}
+	if app := linkApp(principalFrom(ctx)); app != "" && t.Source != app {
+		ok = false // a linked app only touches what it booked
 	}
 	if !ok {
 		writeErr(w, http.StatusNotFound, "not found")

@@ -21,9 +21,12 @@ import (
 // principal is who made a request and how they came in.
 type principal struct {
 	User   *store.User
-	Kind   string // session | token | core | proxy | none
+	Kind   string // session | token | core | link | proxy | none
 	Via    string // "API token 'Homepage widget'", "Pocket Core device 'iPhone'"
 	Source string // web | api | firefly_api
+	// LinkApp and Scopes are set for another Pocket app acting through a Core link.
+	LinkApp string
+	Scopes  []string
 }
 
 const (
