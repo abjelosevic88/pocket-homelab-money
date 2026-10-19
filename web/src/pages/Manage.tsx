@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
@@ -26,14 +26,14 @@ export function Categories() {
   }
   return (
     <Card title="Categories" actions={<button className="btn primary sm" onClick={() => setEdit({ kind: 'expense' })}>+ Category</button>}>
-      <p className="muted small">Shared by everyone. One level of sub-categories (Food › Bakery): reports roll children up into their parent, budgets on a parent include its children.</p>
+      <p className="muted small">Your own list; accounts you share book in it unless a category is hidden from sharing. One level of sub-categories (Food › Bakery): reports roll children up into their parent, budgets on a parent include its children.</p>
       {categories.length === 0 ? <Empty title="No categories yet" /> : (
         <table className="table compact">
           <thead><tr><th>Category</th><th>Kind</th><th className="num">Transactions</th><th /></tr></thead>
           <tbody>
             {parents.flatMap(p => [p, ...categories.filter(c => c.parent_id === p.id)]).map(c => (
               <tr key={c.id} className={`clickable ${c.archived ? 'muted' : ''}`} {...clickRow(() => setEdit(c))} title="Edit">
-                <td style={{ paddingLeft: c.parent_id ? 34 : undefined }}>{c.icon || '•'} {c.name}{c.archived && <span className="badge" style={{ marginLeft: 6 }}>archived</span>}</td>
+                <td style={{ paddingLeft: c.parent_id ? 34 : undefined }}>{c.icon || '•'} {c.name}{c.archived && <span className="badge" style={{ marginLeft: 6 }}>archived</span>}{c.share_hidden && <span className="badge" style={{ marginLeft: 6 }} title="Others you share accounts with can't pick it">hidden from sharing</span>}</td>
                 <td className="muted">{c.kind}</td>
                 <td className="num">{c.tx_count}</td>
                 <td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?category=${c.id}`}>Show</Link><button className="btn ghost sm danger-text" onClick={() => setDel(c)}>Remove</button></td>
@@ -58,7 +58,7 @@ const EMOJI = ['🛒', '🥐', '🍽️', '☕', '🍷', '🚗', '⛽', '🚇', 
 
 function CategoryModal({ cat, parents, onClose, onSaved }: { cat: Partial<Category>; parents: Category[]; onClose: () => void; onSaved: () => void }) {
   const { toast } = useToast()
-  const [f, setF] = useState({ name: cat.name || '', icon: cat.icon || '', kind: cat.kind || 'expense', parent_id: cat.parent_id ?? null as number | null, archived: cat.archived ?? false })
+  const [f, setF] = useState({ name: cat.name || '', icon: cat.icon || '', kind: cat.kind || 'expense', parent_id: cat.parent_id ?? null as number | null, archived: cat.archived ?? false, share_hidden: cat.share_hidden ?? false })
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
@@ -74,6 +74,7 @@ function CategoryModal({ cat, parents, onClose, onSaved }: { cat: Partial<Catego
         <div className="chips">{EMOJI.map(e => <button type="button" key={e} className={`chip sm ${f.icon === e ? 'active' : ''}`} onClick={() => setF({ ...f, icon: e })}>{e}</button>)}</div>
         <Field label="Used for" group><Segmented value={f.kind} onChange={v => setF({ ...f, kind: v })} options={[{ value: 'expense', label: 'Expenses' }, { value: 'income', label: 'Income' }, { value: 'both', label: 'Both' }]} /></Field>
         <Field label="Inside (optional)" group><Select value={f.parent_id ? String(f.parent_id) : ''} onChange={v => setF({ ...f, parent_id: v ? Number(v) : null })} options={parents.map(p => ({ value: String(p.id), label: `${p.icon || '•'} ${p.name}` }))} clearLabel="Top level" placeholder="Top level" /></Field>
+        <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={f.share_hidden} onChange={e => setF({ ...f, share_hidden: e.target.checked })} style={{ width: 'auto', marginTop: 3 }} /><span>Hide from sharing<span className="muted small" style={{ display: 'block' }}>Others you share accounts with can't pick it; transactions already on a shared account still show it.</span></span></label>
         {cat.id && <label className="row"><input type="checkbox" checked={f.archived} onChange={e => setF({ ...f, archived: e.target.checked })} style={{ width: 'auto' }} /> Archived (kept on old transactions, hidden from pickers)</label>}
         <div className="form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary">Save</button></div>
       </form>
@@ -127,15 +128,20 @@ export function TemplatesAdmin() {
   const { data, reload } = useAsync(() => api.get<Template[]>(`${V1}/templates`), [])
   const [edit, setEdit] = useState<Partial<Template> | null>(null)
   if (!data) return <Loading />
+  // someone else's shared template: usable, not editable; "Copy to mine" makes an own one
+  const copy = (t: Template) => setEdit({ ...t, id: undefined, owner_id: undefined, owner_name: undefined, shared: false, pinned: false, use_count: 0 })
   return (
     <Card title="Templates" actions={<button className="btn primary sm" onClick={() => setEdit({ kind: 'expense', tags: [] })}>+ Template</button>}>
-      <p className="muted small">One tap on Home or Add books a template with an amount; without one it opens the form. Quick add matches them by the start of the name or an alias — <code>cg h 20</code> finds “cg hrana”. Most used come first, on every device.</p>
+      <p className="muted small">One tap on Home or Add books a template with an amount; without one it opens the form. Quick add matches them by the start of the name or an alias — <code>cg h 20</code> finds “cg hrana”. Most used come first, on every device. Templates are private; switch on Share to let people who can book on its account use it.</p>
       {data.length === 0 ? <Empty title="No templates yet" /> : (
         <table className="table compact">
           <thead><tr><th>Name</th><th>Aliases</th><th className="num">Amount</th><th>Category</th><th>Account</th><th className="num">Used</th></tr></thead>
           <tbody>{data.map(t => {
             const cur = t.currency || acctById(t.account_id)?.currency || ''
-            return <tr key={t.id} className="clickable" {...clickRow(() => setEdit(t))} title="Edit"><td>{t.pinned && '📌 '}{t.category_icon} {t.name}</td><td className="muted">{t.aliases}</td><td className="num">{t.amount != null ? fmtMoney(t.amount, cur, decimalsOf(cur, currencies)) : '—'}{t.currency && <span className="badge" style={{ marginLeft: 4 }}>{t.currency}</span>}</td><td>{t.category_name}</td><td className="muted">{t.account_name}</td><td className="num">{t.use_count}</td></tr>
+            const theirs = Boolean(t.owner_name)
+            const amount = <td className="num">{t.amount != null ? fmtMoney(t.amount, cur, decimalsOf(cur, currencies)) : '—'}{t.currency && <span className="badge" style={{ marginLeft: 4 }}>{t.currency}</span>}</td>
+            if (theirs) return <tr key={t.id}><td>{t.category_icon} {t.name}<div className="muted small">shared · {t.owner_name} · {t.account_name}</div></td><td className="muted">{t.aliases}</td>{amount}<td>{t.category_name}</td><td className="muted">{t.account_name}</td><td className="num right"><button className="btn ghost sm" onClick={() => copy(t)}>Copy to mine</button></td></tr>
+            return <tr key={t.id} className="clickable" {...clickRow(() => setEdit(t))} title="Edit"><td>{t.pinned && '📌 '}{t.category_icon} {t.name}{t.shared && <span className="badge" style={{ marginLeft: 6 }} title="People who can book on its account can use it">shared</span>}</td><td className="muted">{t.aliases}</td>{amount}<td>{t.category_name}</td><td className="muted">{t.account_name}</td><td className="num">{t.use_count}</td></tr>
           })}</tbody>
         </table>
       )}
@@ -149,12 +155,23 @@ function TemplateModal({ t, onClose, onSaved }: { t: Partial<Template>; onClose:
   const { toast } = useToast()
   const [f, setF] = useState({ name: t.name || '', aliases: t.aliases || '', kind: (t.kind || 'expense') as Kind, amount: t.amount ?? null as number | null, currency: t.currency || '',
     account_id: t.account_id ?? null as number | null, to_account_id: t.to_account_id ?? null as number | null, category_id: t.category_id ?? null as number | null,
-    tags: t.tags || [] as string[], description: t.description || '', payee: t.payee || '', notes: t.notes || '', pinned: t.pinned ?? false })
+    tags: t.tags || [] as string[], description: t.description || '', payee: t.payee || '', notes: t.notes || '', pinned: t.pinned ?? false, shared: t.shared ?? false })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF(x => ({ ...x, [k]: v }))
   const cur = f.currency || acctById(f.account_id)?.currency || home
+  // a template on an account shared with you books in its owner's categories
+  const acct = acctById(f.account_id)
+  const sharedAcct = acct && acct.role && acct.role !== 'owner' ? acct.id : 0
+  const [sharedCats, setSharedCats] = useState<Category[] | undefined>(undefined)
+  useEffect(() => {
+    if (!sharedAcct) { setSharedCats(undefined); return }
+    let live = true
+    api.get<Category[]>(`${V1}/accounts/${sharedAcct}/categories`).then(l => live && setSharedCats(l)).catch(() => live && setSharedCats([]))
+    return () => { live = false }
+  }, [sharedAcct])
+  const catList = sharedAcct ? sharedCats || [] : undefined
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
-    const body = { ...f, amount: f.amount || 0, clear_amount: !f.amount, account_id: f.account_id || 0, to_account_id: f.to_account_id || 0, category_id: f.category_id || 0 }
+    const body = { ...f, shared: f.shared && !!f.account_id, amount: f.amount || 0, clear_amount: !f.amount, account_id: f.account_id || 0, to_account_id: f.to_account_id || 0, category_id: f.category_id || 0 }
     try { if (t.id) await api.put(`${V1}/templates/${t.id}`, body); else await api.post(`${V1}/templates`, body); onSaved() } catch (err) { toast((err as Error).message, 'err') }
   }
   const del = async () => { if (t.id && confirm(`Delete ${t.name}?`)) { await api.del(`${V1}/templates/${t.id}`); onSaved() } }
@@ -173,7 +190,7 @@ function TemplateModal({ t, onClose, onSaved }: { t: Partial<Template>; onClose:
         <div className="two-col tight">
           <Field label="Account" group><AccountSelect value={f.account_id} onChange={id => set('account_id', id || null)} clearLabel="Default account" placeholder="Default account" /></Field>
           {f.kind === 'transfer' ? <Field label="To" group><AccountSelect value={f.to_account_id} onChange={id => set('to_account_id', id || null)} exclude={f.account_id} /></Field>
-            : <Field label="Category" group><CategorySelect value={f.category_id} kind={f.kind} onChange={v => set('category_id', v)} /></Field>}
+            : <Field label="Category" group><CategorySelect value={f.category_id} kind={f.kind} list={catList} onChange={v => set('category_id', v)} /></Field>}
         </div>
         <div className="two-col tight">
           <Field label="Description" help="Empty = the template name"><input value={f.description} onChange={e => set('description', e.target.value)} /></Field>
@@ -181,6 +198,7 @@ function TemplateModal({ t, onClose, onSaved }: { t: Partial<Template>; onClose:
         </div>
         <Field label="Tags" group><TagInput value={f.tags} onChange={v => set('tags', v)} /></Field>
         <label className="row"><input type="checkbox" checked={f.pinned} onChange={e => set('pinned', e.target.checked)} style={{ width: 'auto' }} /> Pin to the front</label>
+        <label className="row" style={{ alignItems: 'flex-start' }}><input type="checkbox" checked={f.shared && !!f.account_id} disabled={!f.account_id} onChange={e => set('shared', e.target.checked)} style={{ width: 'auto', marginTop: 3 }} /><span>Share<span className="muted small" style={{ display: 'block' }}>{f.account_id ? 'Let people who can book on this account use it.' : 'Pick an account first: only people who can book on it may use a shared template.'}</span></span></label>
         <div className="form-actions">{t.id && <button type="button" className="btn ghost danger-text" onClick={del}>Delete</button>}<span className="spacer" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary">Save</button></div>
       </form>
     </Modal>

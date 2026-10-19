@@ -117,6 +117,9 @@ type Category struct {
 	ExternalID string `json:"external_id"`
 	TxCount    int    `json:"tx_count"`
 	FullName   string `json:"full_name"` // "Parent › Child"
+	// ShareHidden keeps the category out of shared accounts: nobody but its
+	// owner can pick it, and shared templates using it lose their category.
+	ShareHidden bool `json:"share_hidden"`
 }
 
 // Tag is a free label ("lustica 2026", "skoda").
@@ -250,10 +253,18 @@ type Template struct {
 	SortOrder   int      `json:"sort_order"`
 	ExternalID  string   `json:"external_id"`
 	CreatedAt   string   `json:"created_at"`
+	// Shared lets people who can book on the template's account (and
+	// destination) use it; off by default.
+	Shared bool `json:"shared"`
 
 	CategoryName string `json:"category_name,omitempty"`
 	CategoryIcon string `json:"category_icon,omitempty"`
 	AccountName  string `json:"account_name,omitempty"`
+	// OwnerName is set only on someone else's shared template (output only).
+	OwnerName string `json:"owner_name,omitempty"`
+	// CategoryHidden is internal: the template's category is hidden from sharing.
+	CategoryHidden  bool  `json:"-"`
+	CategoryOwnerID int64 `json:"-"`
 }
 
 // Subscription is a bill, a subscription or any other repeating payment.

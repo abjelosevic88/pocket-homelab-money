@@ -54,6 +54,7 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
   const [sugg, setSugg] = useState<Suggestion[]>([])
   const [showSugg, setShowSugg] = useState(false)
   const touchedCat = useRef(Boolean(tx?.category_id || seed?.category_id))
+  const existingCats = new Set<number>([tx?.category_id || 0, ...(tx?.splits || []).map(p => p.category_id || 0)].filter(Boolean))
   // an account shared with you books in its owner's categories, so a household account keeps one list
   const shared = acct && acct.role && acct.role !== 'owner' ? acct : undefined
   const [sharedCats, setSharedCats] = useState<Category[] | undefined>(undefined)
@@ -64,9 +65,10 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
     api.get<Category[]>(`${V1}/accounts/${shared.id}/categories`).then(list => {
       if (!live) return
       setSharedCats(list)
-      // carry a picked category over by name, else clear it
+      // carry a picked category over by name, else clear it; a category the
+      // transaction already has stays (the owner may have hidden it from sharing)
       const remap = (id: number | null) => {
-        if (!id || list.some(c => c.id === id)) return id
+        if (!id || list.some(c => c.id === id) || existingCats.has(id)) return id
         const mine = catById(id)
         return (mine && list.find(c => !c.archived && c.name.toLowerCase() === mine.name.toLowerCase())?.id) || null
       }
@@ -76,6 +78,15 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
     return () => { live = false }
   }, [shared?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const catList = shared ? sharedCats || [] : undefined
+  // an existing transaction's category that is not in the shared list (hidden
+  // by the owner) is kept as it is; the server keeps it too
+  const hiddenCat = Boolean(shared && sharedCats && tx && categoryId && categoryId === tx.category_id && !sharedCats.some(c => c.id === categoryId))
+  const partList = useMemo(() => {
+    if (!catList || !tx) return catList
+    const extra: Category[] = (tx.splits || []).filter(p => p.category_id && !catList.some(c => c.id === p.category_id))
+      .map(p => ({ id: p.category_id as number, parent_id: null, name: p.category_name || 'Hidden category', kind: 'both', icon: p.category_icon, color: '', archived: false, sort_order: 0, external_id: '', tx_count: 0, full_name: p.category_name, share_hidden: true }))
+    return extra.length ? [...catList, ...extra.filter((c, i) => extra.findIndex(x => x.id === c.id) === i)] : catList
+  }, [catList, tx])
   const dq = useDebounce(description, 200)
   const toAcct = acctById(toAccountId)
   const foreign = acct && currency && currency !== acct.currency
@@ -218,7 +229,7 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
           <div className="split-parts">
             {parts.map((p, i) => (
               <div key={i} className="split-part">
-                <CategorySelect value={p.category_id} kind={kind} list={catList} onChange={id => setPart(i, { category_id: id })} />
+                <CategorySelect value={p.category_id} kind={kind} list={partList} onChange={id => setPart(i, { category_id: id })} />
                 <MoneyInput value={p.amount} code={currency} onChange={v => setPart(i, { amount: v })} ariaLabel={`Part ${i + 1} amount`} />
                 <input value={p.note} onChange={e => setPart(i, { note: e.target.value })} placeholder="Note" aria-label={`Part ${i + 1} note`} />
                 <button type="button" className="btn ghost icon" onClick={() => dropPart(i)} aria-label="Remove part">✕</button>
@@ -235,7 +246,13 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
       )}
       {kind !== 'transfer' && !splitting && (
         <Field label="Category" group>
-          {page ? <CategoryGrid value={categoryId} kind={kind} list={catList} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />
+          {hiddenCat ? (
+            <div className="row wrap">
+              <span>{tx?.category_icon || '•'} {tx?.category_name}</span>
+              <span className="muted small">Category set by the owner (hidden)</span>
+              <button type="button" className="btn ghost sm" onClick={() => { touchedCat.current = true; setCategoryId(null) }}>Change</button>
+            </div>
+          ) : page ? <CategoryGrid value={categoryId} kind={kind} list={catList} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />
             : <CategorySelect value={categoryId} kind={kind} list={catList} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />}
           {shared && <span className="muted small">Shared account: {owner?.name || owner?.email || 'its owner'}'s categories</span>}
           <button type="button" className="btn ghost sm" style={{ alignSelf: 'flex-start', marginTop: 6 }} onClick={startSplit} disabled={!amount}>✂ Split across categories</button>

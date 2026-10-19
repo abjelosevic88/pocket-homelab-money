@@ -460,3 +460,197 @@ func TestSharedAccountUsesOwnerCategories(t *testing.T) {
 		}
 	}
 }
+
+// Templates are private until their owner switches Share on; then only people
+// who can book on the template's account (and destination) see and use it.
+// Categories hidden from sharing stay the owner's alone.
+func TestSharedTemplatesAndHiddenCategories(t *testing.T) {
+	s, a, b, bu := newPerUserServer(t)
+	ctx := context.Background()
+	// a viewer of the same account
+	cu, err := s.firstOrSystemUser(ctx, "viewer@example.com", "Viewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctok, _, _ := s.store.CreateAPIToken(ctx, cu.ID, "phone")
+	c := &peer{t: t, base: b.base, token: ctok}
+
+	var acct, private, savings store.Account
+	a.call("POST", "/api/v1/accounts", map[string]any{"name": "Household", "currency": "BAM", "kind": "cash"}, &acct)
+	a.call("POST", "/api/v1/accounts", map[string]any{"name": "Private", "currency": "BAM", "kind": "cash"}, &private)
+	a.call("POST", "/api/v1/accounts", map[string]any{"name": "Savings", "currency": "BAM", "kind": "savings"}, &savings)
+	var food, gifts, bgifts store.Category
+	a.call("POST", "/api/v1/categories", map[string]any{"name": "Groceries"}, &food)
+	if code, raw := a.call("POST", "/api/v1/categories", map[string]any{"name": "Gifts", "share_hidden": true}, &gifts); code != 201 || !gifts.ShareHidden {
+		t.Fatalf("hidden category: %d %s", code, raw)
+	}
+	b.call("POST", "/api/v1/categories", map[string]any{"name": "gifts"}, &bgifts)
+	members := func(acctID int64, m ...map[string]any) {
+		t.Helper()
+		if m == nil {
+			m = []map[string]any{}
+		}
+		if code := a.status("PUT", "/api/v1/accounts/"+itoa(acctID)+"/members", map[string]any{"members": m}); code != 200 {
+			t.Fatal("share")
+		}
+	}
+	members(acct.ID, map[string]any{"user_id": bu.ID, "role": "editor"}, map[string]any{"user_id": cu.ID, "role": "viewer"})
+
+	var tpl, hiddenTpl, privTpl, xfer store.Template
+	a.call("POST", "/api/v1/templates", map[string]any{"name": "Pijaca", "aliases": "market", "amount": 2000, "account_id": acct.ID, "category_id": food.ID}, &tpl)
+	a.call("POST", "/api/v1/templates", map[string]any{"name": "Poklon", "amount": 5000, "account_id": acct.ID, "category_id": gifts.ID, "shared": true}, &hiddenTpl)
+	a.call("POST", "/api/v1/templates", map[string]any{"name": "Tajna", "amount": 100, "account_id": private.ID, "shared": true}, &privTpl)
+	a.call("POST", "/api/v1/templates", map[string]any{"name": "Stednja", "kind": "transfer", "amount": 100, "account_id": acct.ID, "to_account_id": savings.ID, "shared": true}, &xfer)
+	if tpl.Shared || !hiddenTpl.Shared {
+		t.Fatalf("shared flag: default %v, set %v", tpl.Shared, hiddenTpl.Shared)
+	}
+	list := func(p *peer) map[int64]store.Template {
+		t.Helper()
+		var l []store.Template
+		if code, raw := p.call("GET", "/api/v1/templates", nil, &l); code != 200 {
+			t.Fatalf("list templates: %d %s", code, raw)
+		}
+		out := map[int64]store.Template{}
+		for _, x := range l {
+			out[x.ID] = x
+		}
+		return out
+	}
+
+	// hidden by default
+	if _, ok := list(b)[tpl.ID]; ok {
+		t.Fatal("unshared template visible to the editor")
+	}
+	if code := b.status("POST", "/api/v1/templates/"+itoa(tpl.ID)+"/use", nil); code != 404 {
+		t.Fatalf("unshared template usable: %d", code)
+	}
+	// the owner switches Share on
+	if code := a.status("PUT", "/api/v1/templates/"+itoa(tpl.ID), map[string]any{"shared": true}); code != 200 {
+		t.Fatal("share template")
+	}
+	bl := list(b)
+	got, ok := bl[tpl.ID]
+	if !ok || got.OwnerName == "" || got.AccountName != "Household" || got.CategoryID == nil || *got.CategoryID != food.ID {
+		t.Fatalf("shared template for the editor: %v %+v", ok, got)
+	}
+	if _, ok := bl[privTpl.ID]; ok {
+		t.Error("template on an unshared account is visible")
+	}
+	if _, ok := bl[xfer.ID]; ok {
+		t.Error("transfer into an account B cannot book on is visible")
+	}
+	// the viewer never sees it
+	if l := list(c); len(l) != 0 {
+		t.Errorf("viewer sees templates: %+v", l)
+	}
+	if code := c.status("POST", "/api/v1/templates/"+itoa(tpl.ID)+"/use", nil); code != 404 {
+		t.Errorf("viewer used a shared template: %d", code)
+	}
+	// B uses it in one tap: booked on the shared account in A's category
+	var tx store.Transaction
+	if code, raw := b.call("POST", "/api/v1/templates/"+itoa(tpl.ID)+"/use", map[string]any{}, &tx); code != 201 || tx.AccountID != acct.ID || tx.CategoryID == nil || *tx.CategoryID != food.ID {
+		t.Fatalf("use shared template: %d %s", code, raw)
+	}
+	// and through quick entry by alias
+	var drafts []quickPreview
+	b.call("POST", "/api/v1/quick/parse", map[string]any{"text": "market 15"}, &drafts)
+	if len(drafts) != 1 || drafts[0].TemplateID != tpl.ID || drafts[0].AccountID != acct.ID || drafts[0].CategoryName != "Groceries" {
+		t.Fatalf("quick entry with a shared template: %+v", drafts)
+	}
+	var qtx []store.Transaction
+	if code, raw := b.call("POST", "/api/v1/quick", map[string]any{"text": "market 15"}, &qtx); code != 201 || len(qtx) != 1 || qtx[0].AccountID != acct.ID || qtx[0].CategoryID == nil || *qtx[0].CategoryID != food.ID {
+		t.Fatalf("quick add with a shared template: %d %s", code, raw)
+	}
+	// only the owner edits or deletes; others' uses do not count
+	if code := b.status("PUT", "/api/v1/templates/"+itoa(tpl.ID), map[string]any{"name": "pwned", "shared": false}); code != 404 {
+		t.Errorf("B edited A's template: %d", code)
+	}
+	if code := b.status("DELETE", "/api/v1/templates/"+itoa(tpl.ID), nil); code != 404 {
+		t.Errorf("B deleted A's template: %d", code)
+	}
+	if g, _ := s.store.GetTemplate(ctx, tpl.ID); g.UseCount != 0 || g.LastUsedAt != "" || g.Name != "Pijaca" || !g.Shared {
+		t.Errorf("A's template changed by B: %+v", g)
+	}
+
+	// a hidden category: not in the shared list, refused, not mapped onto
+	var cats []store.Category
+	b.call("GET", "/api/v1/accounts/"+itoa(acct.ID)+"/categories", nil, &cats)
+	for _, x := range cats {
+		if x.ID == gifts.ID {
+			t.Error("hidden category listed for the editor")
+		}
+	}
+	if len(cats) != 1 {
+		t.Errorf("editor's shared categories: %+v", cats)
+	}
+	a.call("GET", "/api/v1/accounts/"+itoa(acct.ID)+"/categories", nil, &cats)
+	if len(cats) != 2 {
+		t.Errorf("owner should see all categories: %+v", cats)
+	}
+	if code := b.status("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": acct.ID, "amount": 100, "category_id": gifts.ID}); code != 400 {
+		t.Errorf("editor booked a hidden category: %d", code)
+	}
+	if code := b.status("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": acct.ID, "amount": 100, "category_id": bgifts.ID}); code != 400 {
+		t.Errorf("same-name mapping onto a hidden category: %d", code)
+	}
+	var atx store.Transaction
+	if code, raw := a.call("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": acct.ID, "amount": 100, "category_id": gifts.ID}, &atx); code != 201 || atx.CategoryID == nil || *atx.CategoryID != gifts.ID {
+		t.Errorf("owner booking the hidden category: %d %s", code, raw)
+	}
+	// the editor may still edit that transaction and its category stays
+	var etx store.Transaction
+	if code, raw := b.call("PUT", "/api/v1/transactions/"+itoa(atx.ID), map[string]any{"amount": 150, "category_id": gifts.ID}, &etx); code != 200 || etx.CategoryID == nil || *etx.CategoryID != gifts.ID {
+		t.Errorf("editor editing a hidden-category transaction: %d %s", code, raw)
+	}
+	// a shared template with a hidden category comes without it and books uncategorised
+	got, ok = list(b)[hiddenTpl.ID]
+	if !ok || got.CategoryID != nil || got.CategoryName != "" {
+		t.Fatalf("hidden category on a shared template: %v %+v", ok, got)
+	}
+	if code, raw := b.call("POST", "/api/v1/templates/"+itoa(hiddenTpl.ID)+"/use", map[string]any{}, &tx); code != 201 || tx.CategoryID != nil {
+		t.Fatalf("shared template with a hidden category: %d %s", code, raw)
+	}
+	if got := list(a)[hiddenTpl.ID]; got.CategoryID == nil || *got.CategoryID != gifts.ID {
+		t.Errorf("owner's own template lost its category: %+v", got)
+	}
+
+	// "Copy to mine": B makes his own template on the shared account with A's category
+	var mine store.Template
+	if code, raw := b.call("POST", "/api/v1/templates", map[string]any{"name": "Pijaca", "amount": 2000, "account_id": acct.ID, "category_id": food.ID}, &mine); code != 201 || mine.OwnerID != bu.ID || mine.CategoryID == nil || *mine.CategoryID != food.ID || mine.Shared {
+		t.Fatalf("copy to mine: %d %s", code, raw)
+	}
+	if code := b.status("POST", "/api/v1/templates", map[string]any{"name": "x", "amount": 1, "account_id": acct.ID, "category_id": gifts.ID}); code != 400 {
+		t.Errorf("B's template with A's hidden category: %d", code)
+	}
+	if code := b.status("POST", "/api/v1/templates", map[string]any{"name": "x", "amount": 1, "category_id": food.ID}); code != 400 {
+		t.Errorf("B's account-less template with A's category: %d", code)
+	}
+	if code := b.status("POST", "/api/v1/templates/"+itoa(mine.ID)+"/use", map[string]any{}); code != 201 {
+		t.Errorf("B using his copy: %d", code)
+	}
+	if g, _ := s.store.GetTemplate(ctx, mine.ID); g.UseCount != 1 {
+		t.Errorf("B's own template use not counted: %d", g.UseCount)
+	}
+
+	// sharing the destination makes the transfer template visible; unsharing hides everything again
+	members(savings.ID, map[string]any{"user_id": bu.ID, "role": "editor"})
+	if _, ok := list(b)[xfer.ID]; !ok {
+		t.Error("transfer template not visible once both accounts are bookable")
+	}
+	if code := a.status("PUT", "/api/v1/templates/"+itoa(tpl.ID), map[string]any{"shared": false}); code != 200 {
+		t.Fatal("unshare template")
+	}
+	if _, ok := list(b)[tpl.ID]; ok {
+		t.Error("template still visible after Share off")
+	}
+	members(acct.ID)
+	bl = list(b)
+	for _, id := range []int64{hiddenTpl.ID, xfer.ID} {
+		if _, ok := bl[id]; ok {
+			t.Errorf("template %d still visible after the account was unshared", id)
+		}
+	}
+	if code := b.status("POST", "/api/v1/templates/"+itoa(hiddenTpl.ID)+"/use", nil); code != 404 {
+		t.Errorf("use after unsharing: %d", code)
+	}
+}

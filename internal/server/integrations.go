@@ -444,6 +444,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	recent, _, _ := s.store.ListTransactions(ctx, store.TxFilter{AccountIDs: ids, Limit: 12})
 	tpls, _ := s.store.ListTemplates(ctx, uid)
+	tpls = append(tpls, s.sharedTemplates(ctx)...)
 	if len(tpls) > 12 {
 		tpls = tpls[:12]
 	}

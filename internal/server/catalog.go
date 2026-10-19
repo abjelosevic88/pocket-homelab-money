@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -27,6 +28,8 @@ type categoryIn struct {
 	Color     *string `json:"color"`
 	Archived  *bool   `json:"archived"`
 	SortOrder *int    `json:"sort_order"`
+	// ShareHidden keeps the category out of accounts shared with others.
+	ShareHidden *bool `json:"share_hidden"`
 }
 
 func (in *categoryIn) apply(c *store.Category) string {
@@ -50,6 +53,9 @@ func (in *categoryIn) apply(c *store.Category) string {
 	}
 	if in.SortOrder != nil {
 		c.SortOrder = *in.SortOrder
+	}
+	if in.ShareHidden != nil {
+		c.ShareHidden = *in.ShareHidden
 	}
 	switch {
 	case c.Name == "":
@@ -223,7 +229,59 @@ func (s *Server) handleMergeTag(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// ---- templates (per user) ----
+// ---- templates (per user, optionally shared) ----
+
+// sharedTemplates returns other people's templates the caller may use: the
+// owner switched Share on and the caller can book on the template's account
+// (and, for a transfer, on its destination). Visibility is computed on every
+// read, so unsharing the account or the template hides it at once. A category
+// the caller may not book with there (hidden from sharing) is left out.
+func (s *Server) sharedTemplates(ctx context.Context) []store.Template {
+	out := []store.Template{}
+	cands, err := s.store.SharedTemplateCandidates(ctx, actorID(ctx))
+	if err != nil {
+		return out
+	}
+	for _, t := range cands {
+		if t.AccountID == nil || !s.canWrite(ctx, *t.AccountID) {
+			continue
+		}
+		if t.Kind == "transfer" {
+			if t.ToAccountID == nil || !s.canWrite(ctx, *t.ToAccountID) {
+				continue
+			}
+		} else {
+			t.ToAccountID = nil
+		}
+		if t.CategoryID != nil {
+			acct, err := s.store.GetAccount(ctx, *t.AccountID)
+			id, ok := int64(0), false
+			if err == nil {
+				id, ok = s.bookingCategory(ctx, acct.OwnerID, *t.CategoryID)
+			}
+			if !ok || id != *t.CategoryID {
+				t.CategoryID, t.CategoryName, t.CategoryIcon = nil, "", ""
+			}
+		}
+		t.UseCount, t.LastUsedAt, t.Pinned, t.ExternalID, t.SortOrder = 0, "", false, "", 0
+		out = append(out, t)
+	}
+	return out
+}
+
+// usableTemplate is the caller's own template or one shared with them (with
+// the shared view applied); nil otherwise.
+func (s *Server) usableTemplate(ctx context.Context, id int64) *store.Template {
+	if t, err := s.store.GetTemplate(ctx, id); err == nil && t.OwnerID == actorID(ctx) {
+		return t
+	}
+	for _, t := range s.sharedTemplates(ctx) {
+		if t.ID == id {
+			return &t
+		}
+	}
+	return nil
+}
 
 func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	out, err := s.store.ListTemplates(r.Context(), actorID(r.Context()))
@@ -231,6 +289,7 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "templates")
 		return
 	}
+	out = append(out, s.sharedTemplates(r.Context())...)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -250,6 +309,7 @@ type templateIn struct {
 	Notes       *string   `json:"notes"`
 	Pinned      *bool     `json:"pinned"`
 	SortOrder   *int      `json:"sort_order"`
+	Shared      *bool     `json:"shared"`
 }
 
 func (s *Server) applyTemplate(r *http.Request, in *templateIn, t *store.Template) string {
@@ -301,6 +361,25 @@ func (s *Server) applyTemplate(r *http.Request, in *templateIn, t *store.Templat
 	if in.SortOrder != nil {
 		t.SortOrder = *in.SortOrder
 	}
+	if in.Shared != nil {
+		t.Shared = *in.Shared // only ever the owner's own template
+	}
+	if (in.CategoryID != nil || in.AccountID != nil) && t.CategoryID != nil {
+		// on an account it books in that account owner's categories (a shared
+		// account's, mapped from a same-name one of the caller's); without an
+		// account only the caller's own categories
+		if t.AccountID != nil {
+			if acct, err := s.store.GetAccount(r.Context(), *t.AccountID); err == nil && s.canWrite(r.Context(), acct.ID) {
+				id, ok := s.bookingCategory(r.Context(), acct.OwnerID, *t.CategoryID)
+				if !ok {
+					return "unknown category"
+				}
+				t.CategoryID = &id
+			}
+		} else if !s.store.OwnsCategories(r.Context(), t.OwnerID, []int64{*t.CategoryID}) {
+			return "unknown category"
+		}
+	}
 	switch {
 	case t.Name == "":
 		return "name is required"
@@ -312,8 +391,6 @@ func (s *Server) applyTemplate(r *http.Request, in *templateIn, t *store.Templat
 		return "you cannot book on that account"
 	case t.ToAccountID != nil && !s.canWrite(r.Context(), *t.ToAccountID):
 		return "you cannot book on the destination account"
-	case in.CategoryID != nil && t.CategoryID != nil && !s.store.OwnsCategories(r.Context(), t.OwnerID, []int64{*t.CategoryID}):
-		return "unknown category"
 	case t.Kind == "transfer" && t.ToAccountID == nil:
 		return "a transfer template needs a destination account"
 	}
@@ -383,11 +460,13 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUseTemplate books a template in one tap; the body may override the
-// amount (in the template's currency), date and description.
+// amount (in the template's currency), date and description. Someone else's
+// shared template works too (it only counts uses of the caller's own).
 func (s *Server) handleUseTemplate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	t := s.ownTemplate(w, r)
+	t := s.usableTemplate(ctx, idParam(r, "id"))
 	if t == nil {
+		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
 	var over struct {

@@ -31,9 +31,9 @@ export function Templates({ items, onBooked, onOpen }: { items: Template[]; onBo
       {items.map(t => {
         const cur = t.currency || acctById(t.account_id)?.currency || ''
         return (
-          <button key={t.id} type="button" className={`tpl ${t.pinned ? 'pinned' : ''}`} onClick={() => tap(t)} title={t.amount == null ? 'Opens the form for the amount' : 'Books it right away'}>
+          <button key={t.id} type="button" className={`tpl ${t.pinned ? 'pinned' : ''}`} onClick={() => tap(t)} title={`${t.amount == null ? 'Opens the form for the amount' : 'Books it right away'}${t.owner_name ? ` · shared by ${t.owner_name} on ${t.account_name}` : ''}`}>
             <span className="cat-ico sm">{t.category_icon || (t.kind === 'income' ? '💰' : t.kind === 'transfer' ? '⇄' : '•')}</span>
-            <span className="tx"><span className="t">{t.name}</span><span className="s">{t.amount != null ? fmtMoney(t.amount, cur, decimalsOf(cur, currencies)) : 'amount…'}{t.currency ? ` · ${t.currency}` : ''}</span></span>
+            <span className="tx"><span className="t">{t.name}</span><span className="s">{t.amount != null ? fmtMoney(t.amount, cur, decimalsOf(cur, currencies)) : 'amount…'}{t.currency ? ` · ${t.currency}` : ''}{t.owner_name ? ` · ${t.owner_name}` : ''}</span></span>
           </button>
         )
       })}

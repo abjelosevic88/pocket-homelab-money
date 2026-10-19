@@ -446,8 +446,13 @@ func (s *Server) handleAccountCategories(w http.ResponseWriter, r *http.Request)
 		s.fail(w, err, "list categories")
 		return
 	}
-	if list == nil {
-		list = []store.Category{}
+	out := []store.Category{}
+	for _, c := range list {
+		// the owner keeps categories hidden from sharing to themselves
+		if c.ShareHidden && a.OwnerID != actorID(ctx) {
+			continue
+		}
+		out = append(out, c)
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, out)
 }

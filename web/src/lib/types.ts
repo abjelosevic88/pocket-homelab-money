@@ -23,7 +23,7 @@ export interface Account {
   role?: 'owner' | 'editor' | 'viewer'; members?: AccountMember[]; balance: number; balance_home: number; tx_count: number; last_tx_date: string
 }
 
-export interface Category { id: number; parent_id: number | null; name: string; kind: 'expense' | 'income' | 'both'; icon: string; color: string; archived: boolean; sort_order: number; external_id: string; tx_count: number; full_name: string }
+export interface Category { id: number; parent_id: number | null; name: string; kind: 'expense' | 'income' | 'both'; icon: string; color: string; archived: boolean; sort_order: number; external_id: string; tx_count: number; full_name: string; share_hidden: boolean }
 export interface Tag { id: number; name: string; color: string; archived: boolean; tx_count: number; last_used: string; created_at: string }
 
 export type Kind = 'expense' | 'income' | 'transfer'
@@ -44,6 +44,8 @@ export interface Template {
   id: number; owner_id: number; name: string; aliases: string; kind: Kind; amount: number | null; currency: string
   account_id: number | null; to_account_id: number | null; category_id: number | null; tags: string[]; description: string; payee: string; notes: string
   pinned: boolean; use_count: number; last_used_at: string; sort_order: number; category_name?: string; category_icon?: string; account_name?: string
+  /** owner switched sharing on; owner_name is set only on someone else's shared template */
+  shared: boolean; owner_name?: string
 }
 
 export type Freq = 'daily' | 'weekly' | 'monthly' | 'yearly'

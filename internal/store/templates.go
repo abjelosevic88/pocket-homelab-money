@@ -41,27 +41,67 @@ func parseIDs(s string) []int64 {
 }
 
 const templateCols = `t.id, t.owner_id, t.name, t.aliases, t.kind, t.amount, t.currency, t.account_id, t.to_account_id, t.category_id, t.tags,
-	t.description, t.payee, t.notes, t.pinned, t.use_count, t.last_used_at, t.sort_order, t.external_id, t.created_at,
-	COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(a.name, '')`
+	t.description, t.payee, t.notes, t.pinned, t.use_count, t.last_used_at, t.sort_order, t.external_id, t.created_at, t.shared,
+	COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(a.name, ''), COALESCE(c.share_hidden, 0), COALESCE(c.user_id, 0)`
+
+const templateFrom = ` FROM templates t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN accounts a ON a.id = t.account_id`
 
 func scanTemplate(row interface{ Scan(...any) error }) (*Template, error) {
 	var t Template
 	var tags string
-	var pinned int
+	var pinned, shared, hidden int
 	err := row.Scan(&t.ID, &t.OwnerID, &t.Name, &t.Aliases, &t.Kind, &t.Amount, &t.Currency, &t.AccountID, &t.ToAccountID, &t.CategoryID, &tags,
-		&t.Description, &t.Payee, &t.Notes, &pinned, &t.UseCount, &t.LastUsedAt, &t.SortOrder, &t.ExternalID, &t.CreatedAt,
-		&t.CategoryName, &t.CategoryIcon, &t.AccountName)
+		&t.Description, &t.Payee, &t.Notes, &pinned, &t.UseCount, &t.LastUsedAt, &t.SortOrder, &t.ExternalID, &t.CreatedAt, &shared,
+		&t.CategoryName, &t.CategoryIcon, &t.AccountName, &hidden, &t.CategoryOwnerID)
 	if err != nil {
 		return nil, notFound(err)
 	}
-	t.Tags, t.Pinned = parseList(tags), pinned == 1
+	t.Tags, t.Pinned, t.Shared, t.CategoryHidden = parseList(tags), pinned == 1, shared == 1, hidden == 1
 	return &t, nil
 }
 
 // ListTemplates returns a user's templates: pinned first, then most used.
 func (s *Store) ListTemplates(ctx context.Context, ownerID int64) ([]Template, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+templateCols+` FROM templates t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN accounts a ON a.id = t.account_id
+	return s.queryTemplates(ctx, `SELECT `+templateCols+templateFrom+`
 		WHERE t.owner_id = ? ORDER BY t.pinned DESC, t.use_count DESC, t.sort_order, lower(t.name)`, ownerID)
+}
+
+// SharedTemplateCandidates returns other people's templates switched to
+// Shared whose account the user may book on (owner or editor), with the
+// owner's name. The caller still checks the destination of transfers.
+func (s *Store) SharedTemplateCandidates(ctx context.Context, userID int64) ([]Template, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+templateCols+`, COALESCE(NULLIF(u.name, ''), u.email)`+templateFrom+`
+		JOIN users u ON u.id = t.owner_id
+		WHERE t.shared = 1 AND t.owner_id != ? AND t.account_id IS NOT NULL
+		  AND (a.owner_id = ? OR EXISTS (SELECT 1 FROM account_members m WHERE m.account_id = t.account_id AND m.user_id = ? AND m.role = 'editor'))
+		ORDER BY t.pinned DESC, t.use_count DESC, t.sort_order, lower(t.name)`, userID, userID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Template{}
+	for rows.Next() {
+		var owner string
+		t, err := scanTemplate(withExtra{rows, &owner})
+		if err != nil {
+			return nil, err
+		}
+		t.OwnerName = owner
+		out = append(out, *t)
+	}
+	return out, rows.Err()
+}
+
+// withExtra scans additional trailing columns after a template's.
+type withExtra struct {
+	row   interface{ Scan(...any) error }
+	extra *string
+}
+
+func (w withExtra) Scan(dest ...any) error { return w.row.Scan(append(dest, w.extra)...) }
+
+func (s *Store) queryTemplates(ctx context.Context, q string, args ...any) ([]Template, error) {
+	rows, err := s.DB.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -79,15 +119,15 @@ func (s *Store) ListTemplates(ctx context.Context, ownerID int64) ([]Template, e
 
 // GetTemplate returns one template.
 func (s *Store) GetTemplate(ctx context.Context, id int64) (*Template, error) {
-	return scanTemplate(s.DB.QueryRowContext(ctx, `SELECT `+templateCols+` FROM templates t LEFT JOIN categories c ON c.id = t.category_id LEFT JOIN accounts a ON a.id = t.account_id WHERE t.id = ?`, id))
+	return scanTemplate(s.DB.QueryRowContext(ctx, `SELECT `+templateCols+templateFrom+` WHERE t.id = ?`, id))
 }
 
 // CreateTemplate inserts a template.
 func (s *Store) CreateTemplate(ctx context.Context, t *Template) error {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO templates (owner_id, name, aliases, kind, amount, currency, account_id, to_account_id, category_id, tags, description, payee, notes, pinned, use_count, sort_order, external_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO templates (owner_id, name, aliases, kind, amount, currency, account_id, to_account_id, category_id, tags, description, payee, notes, pinned, use_count, sort_order, external_id, shared)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.OwnerID, t.Name, t.Aliases, t.Kind, nullI(t.Amount), t.Currency, nullI(t.AccountID), nullI(t.ToAccountID), nullI(t.CategoryID), jsonList(t.Tags),
-		t.Description, t.Payee, t.Notes, boolInt(t.Pinned), t.UseCount, t.SortOrder, t.ExternalID)
+		t.Description, t.Payee, t.Notes, boolInt(t.Pinned), t.UseCount, t.SortOrder, t.ExternalID, boolInt(t.Shared))
 	if err != nil {
 		return err
 	}
@@ -98,9 +138,9 @@ func (s *Store) CreateTemplate(ctx context.Context, t *Template) error {
 // UpdateTemplate saves a template.
 func (s *Store) UpdateTemplate(ctx context.Context, t *Template) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE templates SET name = ?, aliases = ?, kind = ?, amount = ?, currency = ?, account_id = ?, to_account_id = ?, category_id = ?, tags = ?,
-		description = ?, payee = ?, notes = ?, pinned = ?, sort_order = ?, external_id = ? WHERE id = ?`,
+		description = ?, payee = ?, notes = ?, pinned = ?, sort_order = ?, external_id = ?, shared = ? WHERE id = ?`,
 		t.Name, t.Aliases, t.Kind, nullI(t.Amount), t.Currency, nullI(t.AccountID), nullI(t.ToAccountID), nullI(t.CategoryID), jsonList(t.Tags),
-		t.Description, t.Payee, t.Notes, boolInt(t.Pinned), t.SortOrder, t.ExternalID, t.ID)
+		t.Description, t.Payee, t.Notes, boolInt(t.Pinned), t.SortOrder, t.ExternalID, boolInt(t.Shared), t.ID)
 	return err
 }
 

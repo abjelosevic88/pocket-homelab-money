@@ -127,7 +127,14 @@ func (s *Server) applySplits(ctx context.Context, in *[]splitIn, t *store.Transa
 	if len(parts) < 2 {
 		t.Splits = nil
 		if len(parts) == 1 && parts[0].CategoryID != nil && *parts[0].CategoryID > 0 {
-			t.CategoryID = parts[0].CategoryID
+			id := *parts[0].CategoryID
+			if !keep[id] {
+				var ok bool
+				if id, ok = s.bookingCategory(ctx, t.UserID, id); !ok {
+					return "unknown category"
+				}
+			}
+			t.CategoryID = &id
 		}
 		return ""
 	}
@@ -841,6 +848,9 @@ func (s *Server) quickContext(ctx context.Context) (quick.Context, []store.Accou
 		}
 	}
 	tpls, _ := s.store.ListTemplates(ctx, uid)
+	// other people's shared templates resolve by name too; own ones win ties
+	// because they come first
+	tpls = append(tpls, s.sharedTemplates(ctx)...)
 	for _, t := range tpls {
 		names := []string{t.Name}
 		for _, a := range strings.Split(t.Aliases, ",") {
@@ -915,6 +925,13 @@ func (s *Server) preview(ctx context.Context, d quick.Draft, accts []store.Accou
 	if d.CategoryID > 0 {
 		if c, err := s.store.GetCategory(ctx, actorID(ctx), d.CategoryID); err == nil {
 			p.CategoryName, p.CategoryIcon = c.Name, c.Icon
+		} else if a, err := s.store.GetAccount(ctx, d.AccountID); err == nil && s.canWrite(ctx, a.ID) {
+			// a shared account's owner category (e.g. from a shared template)
+			if id, ok := s.bookingCategory(ctx, a.OwnerID, d.CategoryID); ok {
+				if c, err := s.store.GetCategory(ctx, a.OwnerID, id); err == nil {
+					p.CategoryName, p.CategoryIcon = c.Name, c.Icon
+				}
+			}
 		}
 	}
 	if p.Currency == "" {
@@ -1036,12 +1053,17 @@ func (s *Server) handleQuickAdd(w http.ResponseWriter, r *http.Request) {
 // bookingCategory resolves a category for a transaction on an account owned by
 // ownerID. Every account books in its owner's categories, so a shared
 // household account keeps one list. A category of the caller's own maps onto
-// the owner's category with the same name (quick entry, suggestions).
+// the owner's category with the same name (quick entry, suggestions). A
+// category the owner hid from sharing is only for the owner.
 func (s *Server) bookingCategory(ctx context.Context, ownerID, id int64) (int64, bool) {
-	if _, err := s.store.GetCategory(ctx, ownerID, id); err == nil {
+	actor := actorID(ctx)
+	if c, err := s.store.GetCategory(ctx, ownerID, id); err == nil {
+		// the owner may keep a category out of shared accounts
+		if c.ShareHidden && actor != ownerID {
+			return 0, false
+		}
 		return id, true
 	}
-	actor := actorID(ctx)
 	if actor == ownerID {
 		return 0, false
 	}
@@ -1051,7 +1073,7 @@ func (s *Server) bookingCategory(ctx context.Context, ownerID, id int64) (int64,
 	}
 	theirs, _ := s.store.ListCategories(ctx, ownerID)
 	for _, c := range theirs {
-		if !c.Archived && strings.EqualFold(c.Name, mine.Name) && (c.Kind == mine.Kind || c.Kind == "both" || mine.Kind == "both") {
+		if !c.Archived && !c.ShareHidden && strings.EqualFold(c.Name, mine.Name) && (c.Kind == mine.Kind || c.Kind == "both" || mine.Kind == "both") {
 			return c.ID, true
 		}
 	}

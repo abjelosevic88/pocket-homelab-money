@@ -12,7 +12,7 @@ import (
 // ListCategories returns a person's categories with usage counts and full
 // names ("Food › Bakery"), parents first.
 func (s *Store) ListCategories(ctx context.Context, userID int64) ([]Category, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT c.id, c.user_id, c.parent_id, c.name, c.kind, c.icon, c.color, c.archived, c.sort_order, c.external_id,
+	rows, err := s.DB.QueryContext(ctx, `SELECT c.id, c.user_id, c.parent_id, c.name, c.kind, c.icon, c.color, c.archived, c.sort_order, c.external_id, c.share_hidden,
 		(SELECT COUNT(1) FROM transactions t WHERE t.category_id = c.id) FROM categories c WHERE c.user_id = ? ORDER BY c.sort_order, lower(c.name)`, userID)
 	if err != nil {
 		return nil, err
@@ -20,12 +20,12 @@ func (s *Store) ListCategories(ctx context.Context, userID int64) ([]Category, e
 	out := []Category{}
 	for rows.Next() {
 		var c Category
-		var arch int
-		if err := rows.Scan(&c.ID, &c.UserID, &c.ParentID, &c.Name, &c.Kind, &c.Icon, &c.Color, &arch, &c.SortOrder, &c.ExternalID, &c.TxCount); err != nil {
+		var arch, hidden int
+		if err := rows.Scan(&c.ID, &c.UserID, &c.ParentID, &c.Name, &c.Kind, &c.Icon, &c.Color, &arch, &c.SortOrder, &c.ExternalID, &hidden, &c.TxCount); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		c.Archived = arch == 1
+		c.Archived, c.ShareHidden = arch == 1, hidden == 1
 		out = append(out, c)
 	}
 	rows.Close()
@@ -71,13 +71,13 @@ func pad(n int) string {
 // GetCategory returns one of a person's categories.
 func (s *Store) GetCategory(ctx context.Context, userID, id int64) (*Category, error) {
 	var c Category
-	var arch int
-	err := s.DB.QueryRowContext(ctx, `SELECT id, user_id, parent_id, name, kind, icon, color, archived, sort_order, external_id FROM categories WHERE id = ? AND user_id = ?`, id, userID).
-		Scan(&c.ID, &c.UserID, &c.ParentID, &c.Name, &c.Kind, &c.Icon, &c.Color, &arch, &c.SortOrder, &c.ExternalID)
+	var arch, hidden int
+	err := s.DB.QueryRowContext(ctx, `SELECT id, user_id, parent_id, name, kind, icon, color, archived, sort_order, external_id, share_hidden FROM categories WHERE id = ? AND user_id = ?`, id, userID).
+		Scan(&c.ID, &c.UserID, &c.ParentID, &c.Name, &c.Kind, &c.Icon, &c.Color, &arch, &c.SortOrder, &c.ExternalID, &hidden)
 	if err != nil {
 		return nil, notFound(err)
 	}
-	c.Archived = arch == 1
+	c.Archived, c.ShareHidden = arch == 1, hidden == 1
 	c.FullName = c.Name
 	return &c, nil
 }
@@ -87,8 +87,8 @@ func (s *Store) CreateCategory(ctx context.Context, c *Category) error {
 	if c.Kind == "" {
 		c.Kind = "expense"
 	}
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO categories (user_id, parent_id, name, kind, icon, color, archived, sort_order, external_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.UserID, nullI(c.ParentID), strings.TrimSpace(c.Name), c.Kind, c.Icon, c.Color, boolInt(c.Archived), c.SortOrder, c.ExternalID)
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO categories (user_id, parent_id, name, kind, icon, color, archived, sort_order, external_id, share_hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.UserID, nullI(c.ParentID), strings.TrimSpace(c.Name), c.Kind, c.Icon, c.Color, boolInt(c.Archived), c.SortOrder, c.ExternalID, boolInt(c.ShareHidden))
 	if err != nil {
 		return conflict(err)
 	}
@@ -98,8 +98,8 @@ func (s *Store) CreateCategory(ctx context.Context, c *Category) error {
 
 // UpdateCategory saves a category (only its owner's row is touched).
 func (s *Store) UpdateCategory(ctx context.Context, c *Category) error {
-	res, err := s.DB.ExecContext(ctx, `UPDATE categories SET parent_id = ?, name = ?, kind = ?, icon = ?, color = ?, archived = ?, sort_order = ?, external_id = ? WHERE id = ? AND user_id = ?`,
-		nullI(c.ParentID), strings.TrimSpace(c.Name), c.Kind, c.Icon, c.Color, boolInt(c.Archived), c.SortOrder, c.ExternalID, c.ID, c.UserID)
+	res, err := s.DB.ExecContext(ctx, `UPDATE categories SET parent_id = ?, name = ?, kind = ?, icon = ?, color = ?, archived = ?, sort_order = ?, external_id = ?, share_hidden = ? WHERE id = ? AND user_id = ?`,
+		nullI(c.ParentID), strings.TrimSpace(c.Name), c.Kind, c.Icon, c.Color, boolInt(c.Archived), c.SortOrder, c.ExternalID, boolInt(c.ShareHidden), c.ID, c.UserID)
 	if err != nil {
 		return conflict(err)
 	}
