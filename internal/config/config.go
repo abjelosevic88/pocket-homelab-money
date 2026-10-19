@@ -188,8 +188,8 @@ func Load() (*Config, error) {
 	if c.OIDCIssuer != "" && (c.OIDCClientID == "" || c.BaseURL == "") {
 		return nil, fmt.Errorf("OIDC_ISSUER needs OIDC_CLIENT_ID and BASE_URL (the callback is BASE_URL/api/v1/auth/oidc/callback)")
 	}
-	if !c.PasswordLogin && c.OIDCIssuer == "" {
-		c.PasswordLogin = true // never lock everyone out
+	if !c.PasswordLogin && c.OIDCIssuer == "" && c.CoreURL == "" {
+		c.PasswordLogin = true // never lock everyone out; with Core, "Sign in with Pocket Core" is the way in
 	}
 	switch c.FXProvider {
 	case "auto", "frankfurter", "erapi", "none":

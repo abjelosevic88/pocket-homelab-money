@@ -19,7 +19,7 @@ Everything is read from environment variables; every value has a default so a ba
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | – | Sign in with an OpenID Connect provider (Pocket Core, PocketID, Authelia, Authentik, Keycloak…). Needs `BASE_URL`; the callback is `BASE_URL/api/v1/auth/oidc/callback`. On a box with Pocket Core none of these are needed — the app receives its client when it registers. |
 | `OIDC_NAME` | `single sign-on` | Button label: “Sign in with …” (“Pocket Core” for the client Core issued) |
 | `OIDC_AUTO_CREATE` | `false` | Give an unknown (verified) email a member account instead of refusing it; always on for the client Core issued, since Core already vouches for the person |
-| `PASSWORD_LOGIN` | `true` | `false` = only the provider. Ignored (stays on) without `OIDC_ISSUER`, so nobody gets locked out |
+| `PASSWORD_LOGIN` | `true` | `false` = only the provider. Ignored (stays on) when neither `OIDC_ISSUER` nor `CORE_URL` is set, so nobody gets locked out; with `CORE_URL` the Core-issued client ("Sign in with Pocket Core") is the way in |
 | `SECURE_COOKIES` | `false` | Set `true` behind HTTPS |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | – | Create the first admin on an empty database (otherwise the UI asks) |
 | `DEFAULT_CURRENCY` | `EUR` | Home currency: reports, budgets, net worth |
