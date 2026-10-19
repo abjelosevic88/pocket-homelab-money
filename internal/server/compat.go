@@ -672,6 +672,7 @@ func (s *Server) ffDeleteTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.DeleteTransaction(ctx, t.ID)
 	s.emitTx(ctx, "transaction.deleted", t)
+	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), txEvent(t))
 	w.WriteHeader(http.StatusNoContent)
 }
 

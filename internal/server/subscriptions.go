@@ -361,11 +361,13 @@ func (s *Server) bookDueSubscriptions(ctx context.Context) {
 			uctx := context.WithValue(ctx, userKey, owner)
 			due := dueOf(x)
 			before := x.NextDate
-			if _, msg, err := s.bookSubscription(uctx, x, due, nil, nil); msg != "" || err != nil {
+			t, msg, err := s.bookSubscription(uctx, x, due, nil, nil)
+			if msg != "" || err != nil {
 				s.log.Warn("auto-book subscription", "name", x.Name, "msg", msg, "err", err)
 				break
 			}
 			s.log.Info("subscription booked", "name", x.Name, "date", due)
+			s.publish("money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), subPaidEvent(x, t, true))
 			nx, err := s.store.GetSubscription(ctx, x.ID)
 			if err != nil || nx.NextDate == before {
 				break
@@ -742,7 +744,17 @@ func (s *Server) handlePaySubscription(w http.ResponseWriter, r *http.Request) {
 	if nx, err := s.store.GetSubscription(r.Context(), x.ID); err == nil && nx.NextDate == x.NextDate {
 		s.moveOn(r.Context(), nx, true)
 	}
+	s.publish("money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), subPaidEvent(x, t, false))
 	writeJSON(w, http.StatusCreated, t)
+}
+
+// subPaidEvent is the small payload a Pocket Core event carries about a paid subscription.
+func subPaidEvent(x *store.Subscription, t *store.Transaction, auto bool) map[string]any {
+	ev := map[string]any{"subscription_id": x.ID, "subscription": x.Name, "currency": x.Currency, "auto": auto}
+	if t != nil {
+		ev["transaction_id"], ev["date"], ev["amount"] = t.ID, t.Date, t.Amount
+	}
+	return ev
 }
 
 func (s *Server) handleSkipSubscription(w http.ResponseWriter, r *http.Request) {

@@ -32,6 +32,8 @@ Everything is read from environment variables; every value has a default so a ba
 | `FIREFLY_IMPORT_ON_START` | `true` | Import everything once when the database is still empty and a Firefly URL is set |
 | `FIREFLY_MIRROR` | `false` | Keep pulling Firefly every 30 minutes (parallel run) |
 | `USER_AGENT` | `PocketMoney/1.0 (…)` | Sent to the exchange-rate providers |
+| `CORE_URL` / `CORE_REGISTRATION_KEY` | – | [Pocket Core](https://git.bjelke.org/abjelosevic88/pocket-homelab-core): register on start (the key is needed once; the minted app token lives in `$DATA_DIR/core.token`), publish `money.transaction_created` / `money.transaction_deleted` / `money.subscription_paid`, accept the tokens Core hands to paired phones, and resolve Pocket Travel through Core when `TRAVEL_URL` is empty |
+| `CORE_APP_URL` | `BASE_URL` | How Core reaches this app for health checks (e.g. `http://host.docker.internal:8178`) |
 | `DEMO_DATA` | `false` | Seed half a year of a sample household on an empty database |
 
 ## Auth modes

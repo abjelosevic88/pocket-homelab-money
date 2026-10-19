@@ -24,6 +24,7 @@ import (
 
 	"github.com/abjelosevic88/pocket-homelab-money/internal/ai"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/config"
+	"github.com/abjelosevic88/pocket-homelab-money/internal/core"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/firefly"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/fx"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/notify"
@@ -55,11 +56,24 @@ type Server struct {
 	tripMu  sync.Mutex
 	trips   []pocket.Trip
 	tripsAt time.Time
+
+	core     *core.Client
+	coreMu   sync.Mutex
+	coreOK   bool
+	coreErr  string
+	resolved map[string]resolvedURL
+}
+
+type resolvedURL struct {
+	url string
+	at  time.Time
 }
 
 // New creates a server.
 func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Server {
-	return &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(), fx: fx.New(cfg.FXProvider, cfg.UserAgent, 8*time.Second), oidc: &oidcProvider{issuerURL: cfg.OIDCIssuer}}
+	return &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(), fx: fx.New(cfg.FXProvider, cfg.UserAgent, 8*time.Second), oidc: &oidcProvider{issuerURL: cfg.OIDCIssuer},
+		core:     core.New(cfg.CoreURL, core.Options{TokenFile: cfg.DataDir + "/core.token", UserAgent: cfg.UserAgent}),
+		resolved: map[string]resolvedURL{}}
 }
 
 // Bootstrap seeds the first admin (if configured), integration defaults,
@@ -152,6 +166,9 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	s.maintenance(ctx)
 	_ = s.store.PurgeSessions(ctx)
 	go s.janitor(ctx)
+	if s.core.Configured() {
+		go s.coreLoop(ctx)
+	}
 	return nil
 }
 
@@ -228,6 +245,9 @@ type clients struct {
 
 func (s *Server) clients(ctx context.Context) clients {
 	st, _ := s.store.GetSettings(ctx)
+	if st.TravelURL == "" && st.TravelToken != "" {
+		st.TravelURL = s.resolveSibling(ctx, "travel")
+	}
 	return clients{st: st,
 		firefly: firefly.New(st.FireflyURL, st.FireflyToken, 60*time.Second),
 		notify:  notify.New(st.NotifyURL, st.NotifyFormat),
@@ -539,6 +559,91 @@ func validDate(s string) bool {
 }
 
 // ---------- health / metrics ----------
+
+// ---- Pocket Core ----
+
+// coreLoop registers with Core on start (retrying until it answers) and
+// re-registers every 30 minutes so version and last-seen stay fresh.
+func (s *Server) coreLoop(ctx context.Context) {
+	wait := 5 * time.Second
+	for {
+		err := s.registerWithCore(ctx)
+		s.coreMu.Lock()
+		s.coreOK, s.coreErr = err == nil, ""
+		if err != nil {
+			s.coreErr = err.Error()
+		}
+		s.coreMu.Unlock()
+		if err != nil {
+			s.log.Warn("pocket core: registration failed, retrying", "err", err, "in", wait.String())
+		} else {
+			wait = 30 * time.Minute
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		if err != nil && wait < 5*time.Minute {
+			wait *= 2
+		}
+	}
+}
+
+func (s *Server) registerWithCore(ctx context.Context) error {
+	reg, err := s.core.Register(ctx, s.cfg.CoreRegistrationKey, core.Manifest{
+		Slug: "money", Name: "Pocket Money",
+		Description: "Personal finance for a homelab: accounts in any currency, quick entry, subscriptions, budgets, savings goals, a forecast and reports.",
+		Icon:        "/favicon.svg", Version: Version,
+		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "MONEY",
+		Publishes: []string{"money.transaction_created", "money.transaction_deleted", "money.subscription_paid"},
+	})
+	if err != nil {
+		return err
+	}
+	if reg.Token != "" {
+		s.log.Info("pocket core: registered, app token stored", "core", s.cfg.CoreURL)
+	} else {
+		s.log.Debug("pocket core: re-registered", "core", s.cfg.CoreURL)
+	}
+	return nil
+}
+
+// publish sends an event to Core without blocking the request.
+func (s *Server) publish(topic, subject string, payload map[string]any) {
+	if !s.core.Configured() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.core.Publish(ctx, topic, subject, payload); err != nil {
+			s.log.Warn("pocket core: publish failed", "topic", topic, "err", err)
+		}
+	}()
+}
+
+// resolveSibling asks Core where a sibling app lives (cached a minute) so the
+// *_URL settings may stay empty on a box with Core.
+func (s *Server) resolveSibling(ctx context.Context, slug string) string {
+	if !s.core.Configured() {
+		return ""
+	}
+	s.coreMu.Lock()
+	if r, ok := s.resolved[slug]; ok && time.Since(r.at) < time.Minute {
+		s.coreMu.Unlock()
+		return r.url
+	}
+	s.coreMu.Unlock()
+	url := ""
+	if res, err := s.core.Resolve(ctx, slug); err == nil {
+		url = res.URL
+	}
+	s.coreMu.Lock()
+	s.resolved[slug] = resolvedURL{url: url, at: time.Now()}
+	s.coreMu.Unlock()
+	return url
+}
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": Version, "uptime": time.Since(s.started).Round(time.Second).String()})

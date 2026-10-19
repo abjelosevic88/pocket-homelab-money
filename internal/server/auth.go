@@ -8,6 +8,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/abjelosevic88/pocket-homelab-money/internal/core"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
 
@@ -44,11 +45,17 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 
 func (s *Server) resolveUser(r *http.Request) (*store.User, error) {
 	ctx := r.Context()
+	tok := ""
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(strings.ToLower(h), "bearer ") {
-		return s.store.GetUserByAPIToken(ctx, strings.TrimSpace(h[7:]))
+		tok = strings.TrimSpace(h[7:])
+	} else if t := r.Header.Get("X-API-Key"); t != "" {
+		tok = t
 	}
-	if t := r.Header.Get("X-API-Key"); t != "" {
-		return s.store.GetUserByAPIToken(ctx, t)
+	if tok != "" {
+		if s.core.Configured() && core.IsCoreToken(tok) {
+			return s.coreUser(ctx, tok)
+		}
+		return s.store.GetUserByAPIToken(ctx, tok)
 	}
 	switch s.cfg.AuthMode {
 	case "none":
@@ -72,6 +79,20 @@ func (s *Server) resolveUser(r *http.Request) (*store.User, error) {
 		return nil, err
 	}
 	return s.store.GetSessionUser(ctx, c.Value)
+}
+
+// coreUser validates a token Pocket Core issued to a paired phone (pcd_), a
+// person (pcu_) or an OIDC client (pco_) and maps it to the local account
+// with the same email, creating a member on first sight.
+func (s *Server) coreUser(ctx context.Context, tok string) (*store.User, error) {
+	in, err := s.core.Introspect(ctx, tok)
+	if err != nil {
+		return nil, err
+	}
+	if !in.Active || in.User == nil || in.User.Email == "" {
+		return nil, http.ErrNoCookie
+	}
+	return s.firstOrSystemUser(ctx, strings.ToLower(in.User.Email), in.User.Name)
 }
 
 // firstOrSystemUser returns the user with that email, creating it when missing.

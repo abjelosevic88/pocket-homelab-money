@@ -436,8 +436,18 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 	full, err := s.store.GetTransaction(ctx, t.ID)
 	if err == nil {
 		s.emitTx(ctx, "transaction.created", full)
+		s.publish("money.transaction_created", fmt.Sprintf("transaction:%d", full.ID), txEvent(full))
 	}
 	return full, "", err
+}
+
+// txEvent is the small payload a Pocket Core event carries about a transaction.
+func txEvent(t *store.Transaction) map[string]any {
+	return map[string]any{
+		"transaction_id": t.ID, "date": t.Date, "amount": t.Amount, "currency": t.Currency, "amount_home": t.AmountHome,
+		"description": t.Description, "payee": t.Payee, "account_id": t.AccountID, "account": t.AccountName,
+		"to_account_id": t.ToAccountID, "category_id": t.CategoryID, "subscription_id": t.SubscriptionID,
+	}
 }
 
 func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -577,6 +587,7 @@ func (s *Server) handleDeleteTransaction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.emitTx(ctx, "transaction.deleted", t)
+	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), txEvent(t))
 	w.WriteHeader(http.StatusNoContent)
 }
 
