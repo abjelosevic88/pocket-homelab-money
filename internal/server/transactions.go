@@ -141,9 +141,11 @@ func (s *Server) applySplits(ctx context.Context, in *[]splitIn, t *store.Transa
 			return "every part needs an amount"
 		}
 		if p.CategoryID != nil && *p.CategoryID > 0 && !keep[*p.CategoryID] {
-			if _, err := s.store.GetCategory(ctx, actorID(ctx), *p.CategoryID); err != nil {
+			id, ok := s.bookingCategory(ctx, t.UserID, *p.CategoryID)
+			if !ok {
 				return "unknown category in a part"
 			}
+			parts[i].CategoryID = &id
 		}
 		sum += p.Amount
 		w[i] = p.Amount
@@ -228,8 +230,8 @@ func idOrNil(p *int64) *int64 {
 // user-facing message when something is wrong.
 func (s *Server) build(ctx context.Context, in *txIn, t *store.Transaction) string {
 	// categories and the subscription already on it stay valid when someone
-	// else edits a transaction on a shared account; new ones must be the
-	// editor's own
+	// else edits a transaction on a shared account; new categories come from
+	// the account owner's list (bookingCategory)
 	keepCats := map[int64]bool{}
 	if t.CategoryID != nil {
 		keepCats[*t.CategoryID] = true
@@ -388,9 +390,11 @@ func (s *Server) build(ctx context.Context, in *txIn, t *store.Transaction) stri
 		t.ToAccountID, t.ToAmount = nil, 0
 	}
 	if t.CategoryID != nil && !keepCats[*t.CategoryID] {
-		if _, err := s.store.GetCategory(ctx, actorID(ctx), *t.CategoryID); err != nil {
+		id, ok := s.bookingCategory(ctx, acct.OwnerID, *t.CategoryID)
+		if !ok {
 			return "unknown category"
 		}
+		t.CategoryID = &id
 	}
 	if t.SubscriptionID != nil && *t.SubscriptionID != keepSub {
 		x, err := s.store.GetSubscription(ctx, *t.SubscriptionID)
@@ -680,7 +684,23 @@ func (s *Server) handleBulkTransactions(w http.ResponseWriter, r *http.Request) 
 			s.emitTx(ctx, "transaction.deleted", before[id])
 		}
 	case "category":
-		err = s.store.BulkUpdate(ctx, actorID(ctx), ids, idOrNil(in.CategoryID), in.CategoryID == nil || *in.CategoryID <= 0, nil, nil)
+		if in.CategoryID == nil || *in.CategoryID <= 0 {
+			err = s.store.BulkUpdate(ctx, actorID(ctx), ids, nil, true, nil, nil)
+			break
+		}
+		for _, id := range ids {
+			a, aerr := s.store.GetAccount(ctx, before[id].AccountID)
+			if aerr != nil {
+				continue
+			}
+			cid, ok := s.bookingCategory(ctx, a.OwnerID, *in.CategoryID)
+			if !ok {
+				continue // not a category this account can use
+			}
+			if err = s.store.BulkUpdate(ctx, actorID(ctx), []int64{id}, &cid, false, nil, nil); err != nil {
+				break
+			}
+		}
 	case "add_tags":
 		err = s.store.BulkUpdate(ctx, actorID(ctx), ids, nil, false, cleanTags(in.Tags), nil)
 	case "remove_tags":
@@ -1011,4 +1031,29 @@ func (s *Server) handleQuickAdd(w http.ResponseWriter, r *http.Request) {
 		created = append(created, t)
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+// bookingCategory resolves a category for a transaction on an account owned by
+// ownerID. Every account books in its owner's categories, so a shared
+// household account keeps one list. A category of the caller's own maps onto
+// the owner's category with the same name (quick entry, suggestions).
+func (s *Server) bookingCategory(ctx context.Context, ownerID, id int64) (int64, bool) {
+	if _, err := s.store.GetCategory(ctx, ownerID, id); err == nil {
+		return id, true
+	}
+	actor := actorID(ctx)
+	if actor == ownerID {
+		return 0, false
+	}
+	mine, err := s.store.GetCategory(ctx, actor, id)
+	if err != nil {
+		return 0, false
+	}
+	theirs, _ := s.store.ListCategories(ctx, ownerID)
+	for _, c := range theirs {
+		if !c.Archived && strings.EqualFold(c.Name, mine.Name) && (c.Kind == mine.Kind || c.Kind == "both" || mine.Kind == "both") {
+			return c.ID, true
+		}
+	}
+	return 0, false
 }

@@ -159,7 +159,7 @@ function Users() {
   const run = async (fn: () => Promise<unknown>, msg: string) => { try { await fn(); await reloadMeta(); toast(msg) } catch (e) { toast((e as Error).message, 'err') } }
   return (
     <Card title="Users" actions={isAdmin && <button className="btn primary sm" onClick={() => setEdit({ role: 'member' })}>+ Add user</button>}>
-      <p className="muted">Everyone has their own accounts, budgets, subscriptions and goals. Share an account from its page to let someone see it or book on it (a joint account, the household cash). Categories, tags, templates, rules, webhooks, settings and integrations are each person's own — nobody, admins included, sees anyone else's.</p>
+      <p className="muted">Everyone has their own accounts, budgets, subscriptions and goals. Share an account from its page to let someone see it or book on it (a joint account, the household cash); whoever books on it picks from the owner's categories. Categories, tags, templates, rules, webhooks, settings and integrations are each person's own — nobody, admins included, sees anyone else's.</p>
       <table className="table compact">
         <thead><tr><th /><th>Name</th><th>Email</th><th>Role</th><th /></tr></thead>
         <tbody>

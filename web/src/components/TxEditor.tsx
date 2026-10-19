@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, upload, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { addDays, decimalsOf, fmtBytes, fmtMoney, todayISO } from '../lib/format'
-import type { Attachment, Kind, Subscription, Transaction } from '../lib/types'
+import type { Attachment, Category, Kind, Subscription, Transaction } from '../lib/types'
 
 interface Part { category_id: number | null; amount: number | null; note: string }
 import { Field, Modal, useDebounce, useToast } from './ui'
@@ -21,7 +21,7 @@ function nowHM() { const d = new Date(); return `${String(d.getHours()).padStart
 
 /** The full transaction form. `tx` = edit, otherwise create from `seed`. */
 export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false }: { tx?: Transaction; seed?: TxSeed; onSaved: (t: Transaction, again?: boolean) => void; onCancel?: () => void; onDeleted?: () => void; page?: boolean }) {
-  const { accounts, settings, currencies, acctById, reloadCatalog, reloadAccounts } = useApp()
+  const { accounts, settings, currencies, acctById, reloadCatalog, reloadAccounts, users, catById } = useApp()
   const { toast } = useToast()
   const writable = accounts.filter(a => a.role !== 'viewer' && !a.archived)
   // the configured default, else the everyday account used most recently
@@ -54,6 +54,28 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
   const [sugg, setSugg] = useState<Suggestion[]>([])
   const [showSugg, setShowSugg] = useState(false)
   const touchedCat = useRef(Boolean(tx?.category_id || seed?.category_id))
+  // an account shared with you books in its owner's categories, so a household account keeps one list
+  const shared = acct && acct.role && acct.role !== 'owner' ? acct : undefined
+  const [sharedCats, setSharedCats] = useState<Category[] | undefined>(undefined)
+  const owner = shared ? users.find(u => u.id === shared.owner_id) : undefined
+  useEffect(() => {
+    if (!shared) { setSharedCats(undefined); return }
+    let live = true
+    api.get<Category[]>(`${V1}/accounts/${shared.id}/categories`).then(list => {
+      if (!live) return
+      setSharedCats(list)
+      // carry a picked category over by name, else clear it
+      const remap = (id: number | null) => {
+        if (!id || list.some(c => c.id === id)) return id
+        const mine = catById(id)
+        return (mine && list.find(c => !c.archived && c.name.toLowerCase() === mine.name.toLowerCase())?.id) || null
+      }
+      setCategoryId(remap)
+      setParts(ps => ps.map(p => ({ ...p, category_id: remap(p.category_id) })))
+    }).catch(() => live && setSharedCats([]))
+    return () => { live = false }
+  }, [shared?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const catList = shared ? sharedCats || [] : undefined
   const dq = useDebounce(description, 200)
   const toAcct = acctById(toAccountId)
   const foreign = acct && currency && currency !== acct.currency
@@ -101,7 +123,11 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
 
   const pick = (s: Suggestion) => {
     setDescription(s.text)
-    if (!touchedCat.current && s.category_id) setCategoryId(s.category_id)
+    if (!touchedCat.current && s.category_id) {
+      const mine = catById(s.category_id)
+      const id = !catList ? s.category_id : catList.some(c => c.id === s.category_id) ? s.category_id : catList.find(c => mine && c.name.toLowerCase() === mine.name.toLowerCase())?.id
+      if (id) setCategoryId(id)
+    }
     if (!payee && s.payee) setPayee(s.payee)
     setShowSugg(false)
   }
@@ -192,7 +218,7 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
           <div className="split-parts">
             {parts.map((p, i) => (
               <div key={i} className="split-part">
-                <CategorySelect value={p.category_id} kind={kind} onChange={id => setPart(i, { category_id: id })} />
+                <CategorySelect value={p.category_id} kind={kind} list={catList} onChange={id => setPart(i, { category_id: id })} />
                 <MoneyInput value={p.amount} code={currency} onChange={v => setPart(i, { amount: v })} ariaLabel={`Part ${i + 1} amount`} />
                 <input value={p.note} onChange={e => setPart(i, { note: e.target.value })} placeholder="Note" aria-label={`Part ${i + 1} note`} />
                 <button type="button" className="btn ghost icon" onClick={() => dropPart(i)} aria-label="Remove part">✕</button>
@@ -209,8 +235,9 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
       )}
       {kind !== 'transfer' && !splitting && (
         <Field label="Category" group>
-          {page ? <CategoryGrid value={categoryId} kind={kind} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />
-            : <CategorySelect value={categoryId} kind={kind} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />}
+          {page ? <CategoryGrid value={categoryId} kind={kind} list={catList} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />
+            : <CategorySelect value={categoryId} kind={kind} list={catList} onChange={id => { touchedCat.current = true; setCategoryId(id) }} />}
+          {shared && <span className="muted small">Shared account: {owner?.name || owner?.email || 'its owner'}'s categories</span>}
           <button type="button" className="btn ghost sm" style={{ alignSelf: 'flex-start', marginTop: 6 }} onClick={startSplit} disabled={!amount}>✂ Split across categories</button>
         </Field>
       )}

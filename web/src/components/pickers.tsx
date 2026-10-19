@@ -19,8 +19,10 @@ function catLabel(c: Category, all: Category[]) {
 }
 
 /** Category select with "create" — new categories get an emoji guessed from the name. */
-export function CategorySelect({ value, onChange, kind = 'expense', placeholder = 'Category…', clearLabel = 'No category' }: { value: number | null; onChange: (id: number | null) => void; kind?: Kind | 'any'; placeholder?: string; clearLabel?: string }) {
-  const { categories, reloadCatalog } = useApp()
+/** `list` replaces the person's own categories (a shared account books in its owner's); no "create" then. */
+export function CategorySelect({ value, onChange, kind = 'expense', placeholder = 'Category…', clearLabel = 'No category', list }: { value: number | null; onChange: (id: number | null) => void; kind?: Kind | 'any'; placeholder?: string; clearLabel?: string; list?: Category[] }) {
+  const { categories: own, reloadCatalog } = useApp()
+  const categories = list || own
   const opts = categories.filter(c => !c.archived || c.id === value).filter(c => kind === 'any' || kind === 'transfer' || c.kind === 'both' || c.kind === kind || c.id === value)
     .map(c => ({ value: String(c.id), label: catLabel(c, categories) }))
   const create = async (name: string) => {
@@ -28,12 +30,13 @@ export function CategorySelect({ value, onChange, kind = 'expense', placeholder 
     await reloadCatalog()
     return String(c.id)
   }
-  return <Select value={value ? String(value) : ''} onChange={v => onChange(v ? Number(v) : null)} options={opts} placeholder={placeholder} onCreate={create} createLabel="New category" clearLabel={clearLabel} ariaLabel="Category" />
+  return <Select value={value ? String(value) : ''} onChange={v => onChange(v ? Number(v) : null)} options={opts} placeholder={placeholder} onCreate={list ? undefined : create} createLabel="New category" clearLabel={clearLabel} ariaLabel="Category" />
 }
 
 /** Big tappable category buttons (fast on a phone), most used first. */
-export function CategoryGrid({ value, onChange, kind = 'expense' }: { value: number | null; onChange: (id: number | null) => void; kind?: Kind }) {
-  const { categories } = useApp()
+export function CategoryGrid({ value, onChange, kind = 'expense', list: only }: { value: number | null; onChange: (id: number | null) => void; kind?: Kind; list?: Category[] }) {
+  const { categories: own } = useApp()
+  const categories = only || own
   const [q, setQ] = useState('')
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()

@@ -357,6 +357,7 @@ func (s *Server) Router() http.Handler {
 			r.Put("/accounts/{id}", s.handleUpdateAccount)
 			r.Delete("/accounts/{id}", s.handleDeleteAccount)
 			r.Get("/accounts/{id}/history", s.handleAccountHistory)
+			r.Get("/accounts/{id}/categories", s.handleAccountCategories)
 			r.Put("/accounts/{id}/members", s.handleAccountMembers)
 			r.Post("/accounts/{id}/reconcile", s.handleReconcile)
 			r.Get("/accounts/{id}/payoff", s.handlePayoff)

@@ -425,3 +425,29 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "difference": diff, "transaction_id": t.ID})
 }
+
+// handleAccountCategories lists the categories bookings on this account use:
+// its owner's, so someone a household account is shared with categorises in
+// the same list as the owner.
+func (s *Server) handleAccountCategories(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := idParam(r, "id")
+	if !s.canSee(ctx, id) {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	a, err := s.store.GetAccount(ctx, id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	list, err := s.store.ListCategories(ctx, a.OwnerID)
+	if err != nil {
+		s.fail(w, err, "list categories")
+		return
+	}
+	if list == nil {
+		list = []store.Category{}
+	}
+	writeJSON(w, http.StatusOK, list)
+}

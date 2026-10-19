@@ -396,3 +396,67 @@ func TestAutoCreatedUsersAreMembers(t *testing.T) {
 		t.Errorf("admins = %d", n)
 	}
 }
+
+// A shared account books in its owner's categories, so a household account
+// keeps one category list whoever enters the spending.
+func TestSharedAccountUsesOwnerCategories(t *testing.T) {
+	_, a, b, bu := newPerUserServer(t)
+	var acct, bacct store.Account
+	a.call("POST", "/api/v1/accounts", map[string]any{"name": "Household", "currency": "BAM", "kind": "cash"}, &acct)
+	b.call("POST", "/api/v1/accounts", map[string]any{"name": "Moj novčanik", "currency": "BAM", "kind": "cash"}, &bacct)
+	var food, bfood, bmisc store.Category
+	a.call("POST", "/api/v1/categories", map[string]any{"name": "Groceries"}, &food)
+	b.call("POST", "/api/v1/categories", map[string]any{"name": "groceries"}, &bfood)
+	b.call("POST", "/api/v1/categories", map[string]any{"name": "Hobby"}, &bmisc)
+
+	// nobody can read the categories of an account they cannot see
+	if code := b.status("GET", "/api/v1/accounts/"+itoa(acct.ID)+"/categories", nil); code != 404 {
+		t.Fatalf("unshared account categories = %d, want 404", code)
+	}
+	if code := a.status("PUT", "/api/v1/accounts/"+itoa(acct.ID)+"/members", map[string]any{"members": []map[string]any{{"user_id": bu.ID, "role": "editor"}}}); code != 200 {
+		t.Fatal("share")
+	}
+	var cats []store.Category
+	if code, _ := b.call("GET", "/api/v1/accounts/"+itoa(acct.ID)+"/categories", nil, &cats); code != 200 || len(cats) != 1 || cats[0].ID != food.ID {
+		t.Fatalf("shared account categories %d %+v", code, cats)
+	}
+
+	// B books with A's category on the shared account
+	var tx store.Transaction
+	if code, raw := b.call("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": acct.ID, "amount": 900, "category_id": food.ID}, &tx); code != 201 || tx.CategoryID == nil || *tx.CategoryID != food.ID {
+		t.Fatalf("owner category on shared account: %d %s", code, raw)
+	}
+	// B's own "groceries" maps onto A's "Groceries" (quick entry, suggestions)
+	if code, raw := b.call("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": acct.ID, "amount": 500, "category_id": bfood.ID}, &tx); code != 201 || tx.CategoryID == nil || *tx.CategoryID != food.ID {
+		t.Fatalf("same-name category not mapped: %d %s", code, raw)
+	}
+	// a category A has no counterpart for is refused
+	if code := b.status("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": acct.ID, "amount": 500, "category_id": bmisc.ID}); code != 400 {
+		t.Fatalf("foreign category on shared account = %d, want 400", code)
+	}
+	// on B's own account A's category is still not usable
+	if code := b.status("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": bacct.ID, "amount": 500, "category_id": food.ID}); code != 400 {
+		t.Fatalf("owner's category on B's own account = %d, want 400", code)
+	}
+	// bulk recategorising follows the same rule
+	var own store.Transaction
+	b.call("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": bacct.ID, "amount": 100, "category_id": bmisc.ID}, &own)
+	b.call("POST", "/api/v1/transactions/bulk", map[string]any{"ids": []int64{own.ID, tx.ID}, "action": "category", "category_id": food.ID}, nil)
+	var got store.Transaction
+	b.call("GET", "/api/v1/transactions/"+itoa(own.ID), nil, &got)
+	if got.CategoryID == nil || *got.CategoryID != bmisc.ID {
+		t.Fatalf("bulk put A's category on B's own transaction: %+v", got.CategoryID)
+	}
+	b.call("GET", "/api/v1/transactions/"+itoa(tx.ID), nil, &got)
+	if got.CategoryID == nil || *got.CategoryID != food.ID {
+		t.Fatalf("bulk on shared account: %+v", got.CategoryID)
+	}
+	// B's own category list is untouched by the sharing
+	var bcats []store.Category
+	b.call("GET", "/api/v1/categories", nil, &bcats)
+	for _, c := range bcats {
+		if c.UserID != bu.ID {
+			t.Fatalf("A's category leaked into B's list: %+v", c)
+		}
+	}
+}

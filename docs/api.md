@@ -20,6 +20,7 @@ JSON over HTTP under `/api/v1`. Authenticate with the session cookie (the UI), a
 | `GET /accounts/{id}/history?from=&to=` | end-of-day balances |
 | `POST /accounts/{id}/reconcile` `{balance, date}` | books the difference as an adjustment |
 | `PUT /accounts/{id}/members` `{members:[{user_id, role: editor|viewer}]}` | share |
+| `GET /accounts/{id}/categories` | the categories bookings on this account use: the owner's (a shared account books in its owner's categories; a caller's own category with the same name is mapped onto it) |
 | `GET /accounts/{id}/payoff` | liabilities: `outstanding, principal, repaid, pct, payment (payment_estimated = 3-month average), month_interest, months_left, payoff_date, interest_left, total_left, never` and a 36-month `schedule` |
 | `POST /accounts/{id}/interest` | books this month's interest (expense when you owe it, income when it is owed to you); with `interest_auto` it happens on the payment day |
 | `PUT /accounts/reorder` `{ids}` | |
