@@ -64,7 +64,7 @@ function General() {
         <Field label="Home currency" help="Every report, budget and net worth is in this currency. Changing it re-values all transactions at their day's rate." group><CurrencySelect value={f.home_currency} onChange={c => setF({ ...f, home_currency: c })} disabled={!isAdmin} /></Field>
         <Field label="Default account" help="Quick add books here unless you say otherwise (@cash). Empty = the one used most recently." group><AccountSelect value={f.default_account_id || null} onChange={id => setF({ ...f, default_account_id: id })} clearLabel="Most recently used" /></Field>
         <div className="two-col tight">
-          <Field label="Month starts on day" help="Payday month: 25 = budgets and reports run 25th → 24th."><input type="number" min={1} max={28} value={f.month_start_day} onChange={e => setF({ ...f, month_start_day: Math.min(28, Math.max(1, Number(e.target.value))) })} disabled={!isAdmin} /></Field>
+          <Field label="Month starts on day" help="Payday month: 25 = budgets and reports run 25th → 24th."><input type="number" min={1} max={28} value={f.month_start_day} onChange={e => setF({ ...f, month_start_day: Math.min(28, Math.max(1, Number(e.target.value))) })} /></Field>
           <Field label="Week starts on" group><Segmented value={f.week_start} onChange={v => setF({ ...f, week_start: v })} options={[{ value: 1, label: 'Monday' }, { value: 0, label: 'Sunday' }]} /></Field>
         </div>
         <div className="two-col tight">
@@ -72,14 +72,15 @@ function General() {
           <Field label="Time format" group><Select value={f.time_format} onChange={v => setF({ ...f, time_format: v })} options={TIME_FORMATS.map(d => ({ value: d.id, label: d.label }))} /></Field>
         </div>
         <label className="row"><input type="checkbox" checked={f.fx_auto} onChange={e => setF({ ...f, fx_auto: e.target.checked })} style={{ width: 'auto' }} disabled={!isAdmin} /> Look exchange rates up automatically (ECB via Frankfurter, open.er-api.com; euro pegs like BAM are fixed)</label>
-        <div><button className="btn primary" onClick={() => save()} disabled={busy || !isAdmin}>Save</button></div>
+        <div><button className="btn primary" onClick={() => save()} disabled={busy}>Save</button></div>
+        {!isAdmin && <p className="muted small">The app title, home currency and automatic rates are the server's — an admin sets them. Everything else here is yours alone.</p>}
       </div>
     </Card>
   )
 }
 
 function Integrations() {
-  const { f, setF, save, busy, isAdmin } = useSettingsForm()
+  const { f, setF, save, busy } = useSettingsForm()
   const { toast } = useToast()
   const [test, setTest] = useState<Record<string, string>>({})
   if (!f) return <Loading />
@@ -97,28 +98,28 @@ function Integrations() {
       <Card title="🔔 Notifications" actions={badge(f.notify_configured)}>
         <p className="muted small">Payment reminders (each subscription says how many days ahead), budget warnings at your alert % and when over, and a weekly digest on Monday. Works with an Apprise gateway, ntfy or any JSON webhook.</p>
         <div className="grid" style={{ gap: 12 }}>
-          <Field label="URL"><input value={f.notify_url} onChange={e => setF({ ...f, notify_url: e.target.value })} placeholder="http://apprise:8000/notify/money" disabled={!isAdmin} /></Field>
+          <Field label="URL"><input value={f.notify_url} onChange={e => setF({ ...f, notify_url: e.target.value })} placeholder="http://apprise:8000/notify/money" /></Field>
           <div className="two-col tight">
             <Field label="Format" group><Segmented value={f.notify_format} onChange={v => setF({ ...f, notify_format: v })} options={[{ value: 'apprise', label: 'Apprise' }, { value: 'ntfy', label: 'ntfy' }, { value: 'json', label: 'JSON' }]} /></Field>
-            <Field label="Send at (hour)"><input type="number" min={0} max={23} value={f.notify_hour} onChange={e => setF({ ...f, notify_hour: Number(e.target.value) })} disabled={!isAdmin} /></Field>
+            <Field label="Send at (hour)"><input type="number" min={0} max={23} value={f.notify_hour} onChange={e => setF({ ...f, notify_hour: Number(e.target.value) })} /></Field>
           </div>
-          <label className="row"><input type="checkbox" checked={f.notify_digest} onChange={e => setF({ ...f, notify_digest: e.target.checked })} style={{ width: 'auto' }} disabled={!isAdmin} /> Weekly digest on Monday</label>
+          <label className="row"><input type="checkbox" checked={f.notify_digest} onChange={e => setF({ ...f, notify_digest: e.target.checked })} style={{ width: 'auto' }} /> Weekly digest on Monday</label>
           <div className="row"><button className="btn sm" onClick={() => run('notify', f.notify_url, '', { format: f.notify_format })} disabled={!f.notify_url}>Send a test</button><button className="btn sm" onClick={preview}>What would go out now?</button>{status('notify')}</div>
         </div>
       </Card>
       <Card title="✨ AI (optional)" actions={badge(f.ai_configured)}>
         <p className="muted small">Any OpenAI-compatible API. Turns free text and voice notes into transactions (several at once, in Bosnian or English), and answers questions about your money under Reports → Ask. Without a key every AI button stays hidden.</p>
         <div className="grid" style={{ gap: 12 }}>
-          <Field label="API key"><input value={f.ai_key} onChange={e => setF({ ...f, ai_key: e.target.value })} autoComplete="off" disabled={!isAdmin} /></Field>
+          <Field label="API key"><input value={f.ai_key} onChange={e => setF({ ...f, ai_key: e.target.value })} autoComplete="off" /></Field>
           <div className="two-col tight">
-            <Field label="Model" help={`Empty = ${f.ai_model_effective}`}><input value={f.ai_model} onChange={e => setF({ ...f, ai_model: e.target.value })} placeholder={f.ai_model_effective} disabled={!isAdmin} /></Field>
-            <Field label="Base URL" help="Empty = api.openai.com"><input value={f.ai_url} onChange={e => setF({ ...f, ai_url: e.target.value })} placeholder="https://api.openai.com/v1" disabled={!isAdmin} /></Field>
+            <Field label="Model" help={`Empty = ${f.ai_model_effective}`}><input value={f.ai_model} onChange={e => setF({ ...f, ai_model: e.target.value })} placeholder={f.ai_model_effective} /></Field>
+            <Field label="Base URL" help="Empty = api.openai.com"><input value={f.ai_url} onChange={e => setF({ ...f, ai_url: e.target.value })} placeholder="https://api.openai.com/v1" /></Field>
           </div>
           <div className="two-col tight">
-            <Field label="Dictation language" help="ISO code (bs, hr, sr, en); empty = detect"><input value={f.ai_language} onChange={e => setF({ ...f, ai_language: e.target.value })} disabled={!isAdmin} /></Field>
-            <Field label="Transcription model"><input value={f.ai_transcribe_model} onChange={e => setF({ ...f, ai_transcribe_model: e.target.value })} placeholder="gpt-4o-mini-transcribe" disabled={!isAdmin} /></Field>
+            <Field label="Dictation language" help="ISO code (bs, hr, sr, en); empty = detect"><input value={f.ai_language} onChange={e => setF({ ...f, ai_language: e.target.value })} /></Field>
+            <Field label="Transcription model"><input value={f.ai_transcribe_model} onChange={e => setF({ ...f, ai_transcribe_model: e.target.value })} placeholder="gpt-4o-mini-transcribe" /></Field>
           </div>
-          <Field label="Words the AI should know" help='e.g. "maraka = BAM; sa unicredit = account UniCredit; selo = trips to the village"'><textarea value={f.ai_context} onChange={e => setF({ ...f, ai_context: e.target.value })} rows={2} disabled={!isAdmin} /></Field>
+          <Field label="Words the AI should know" help='e.g. "maraka = BAM; sa unicredit = account UniCredit; selo = trips to the village"'><textarea value={f.ai_context} onChange={e => setF({ ...f, ai_context: e.target.value })} rows={2} /></Field>
           <div className="row"><button className="btn sm" onClick={() => run('ai', f.ai_url, f.ai_key, { model: f.ai_model })} disabled={!f.ai_key}>Test key</button>{status('ai')}</div>
         </div>
       </Card>
@@ -126,10 +127,10 @@ function Integrations() {
         <p className="muted small">While a trip is running, new expenses get the trip's tag automatically — Pocket Travel then shows them in the trip budget.</p>
         <div className="grid" style={{ gap: 12 }}>
           <div className="two-col tight">
-            <Field label="URL"><input value={f.travel_url} onChange={e => setF({ ...f, travel_url: e.target.value })} placeholder="http://pocket-travel:8080" disabled={!isAdmin} /></Field>
-            <Field label="API token"><input value={f.travel_token} onChange={e => setF({ ...f, travel_token: e.target.value })} autoComplete="off" disabled={!isAdmin} /></Field>
+            <Field label="URL"><input value={f.travel_url} onChange={e => setF({ ...f, travel_url: e.target.value })} placeholder="http://pocket-travel:8080" /></Field>
+            <Field label="API token"><input value={f.travel_token} onChange={e => setF({ ...f, travel_token: e.target.value })} autoComplete="off" /></Field>
           </div>
-          <label className="row"><input type="checkbox" checked={f.travel_auto_tag} onChange={e => setF({ ...f, travel_auto_tag: e.target.checked })} style={{ width: 'auto' }} disabled={!isAdmin} /> Tag new expenses with the running trip</label>
+          <label className="row"><input type="checkbox" checked={f.travel_auto_tag} onChange={e => setF({ ...f, travel_auto_tag: e.target.checked })} style={{ width: 'auto' }} /> Tag new expenses with the running trip</label>
           <div className="row"><button className="btn sm" onClick={() => run('travel', f.travel_url, f.travel_token)} disabled={!f.travel_url}>Test connection</button>{status('travel')}</div>
         </div>
       </Card>
@@ -137,14 +138,14 @@ function Integrations() {
         <p className="muted small">Only needed to import (Settings → Import) or to keep mirroring while both run side by side.</p>
         <div className="grid" style={{ gap: 12 }}>
           <div className="two-col tight">
-            <Field label="URL"><input value={f.firefly_url} onChange={e => setF({ ...f, firefly_url: e.target.value })} placeholder="http://host.docker.internal:8083" disabled={!isAdmin} /></Field>
-            <Field label="Personal access token"><input value={f.firefly_token} onChange={e => setF({ ...f, firefly_token: e.target.value })} autoComplete="off" disabled={!isAdmin} /></Field>
+            <Field label="URL"><input value={f.firefly_url} onChange={e => setF({ ...f, firefly_url: e.target.value })} placeholder="http://host.docker.internal:8083" /></Field>
+            <Field label="Personal access token"><input value={f.firefly_token} onChange={e => setF({ ...f, firefly_token: e.target.value })} autoComplete="off" /></Field>
           </div>
-          <Field label="Firefly Pico URL (for templates)"><input value={f.pico_url} onChange={e => setF({ ...f, pico_url: e.target.value })} placeholder="http://host.docker.internal:6977" disabled={!isAdmin} /></Field>
+          <Field label="Firefly Pico URL (for templates)"><input value={f.pico_url} onChange={e => setF({ ...f, pico_url: e.target.value })} placeholder="http://host.docker.internal:6977" /></Field>
           <div className="row"><button className="btn sm" onClick={() => run('firefly', f.firefly_url, f.firefly_token)} disabled={!f.firefly_url}>Test Firefly</button>{status('firefly')}<button className="btn sm" onClick={() => run('pico', f.pico_url, '')} disabled={!f.pico_url}>Test Pico</button>{status('pico')}</div>
         </div>
       </Card>
-      <div><button className="btn primary" onClick={() => save()} disabled={busy || !isAdmin}>Save integrations</button></div>
+      <div><button className="btn primary" onClick={() => save()} disabled={busy}>Save integrations</button></div>
     </div>
   )
 }
@@ -158,7 +159,7 @@ function Users() {
   const run = async (fn: () => Promise<unknown>, msg: string) => { try { await fn(); await reloadMeta(); toast(msg) } catch (e) { toast((e as Error).message, 'err') } }
   return (
     <Card title="Users" actions={isAdmin && <button className="btn primary sm" onClick={() => setEdit({ role: 'member' })}>+ Add user</button>}>
-      <p className="muted">Everyone has their own accounts, budgets, subscriptions and goals. Share an account from its page to let someone see it or book on it (a joint account, the household cash). Categories and tags are shared by everyone.</p>
+      <p className="muted">Everyone has their own accounts, budgets, subscriptions and goals. Share an account from its page to let someone see it or book on it (a joint account, the household cash). Categories, tags, templates, rules, webhooks, settings and integrations are each person's own — nobody, admins included, sees anyone else's.</p>
       <table className="table compact">
         <thead><tr><th /><th>Name</th><th>Email</th><th>Role</th><th /></tr></thead>
         <tbody>
@@ -262,12 +263,14 @@ function Tokens() {
 }
 
 function Data() {
+  const { user } = useApp()
   return (
     <div className="two-col">
-      <Card title="Backup">
+      {user?.role === 'admin' && <Card title="Backup">
         <p className="muted">A consistent copy of the SQLite database (<code>VACUUM INTO</code>). Receipts live next to it under <code>files/</code>. Restore by stopping the app and replacing <code>pocket-money.db</code> in the data directory. The CLI does the same: <code>pocket-money backup</code>.</p>
+        <p className="muted small">The database holds everyone's money, so the download only works while you are the only person here; otherwise back the server up from the host and use Export for your own data.</p>
         <a className="btn primary" href={`${V1}/backup`}>Download database</a>
-      </Card>
+      </Card>}
       <Card title="Export">
         <p className="muted">Everything you can see as CSV (one row per transaction, with the home-currency value) or as one JSON file with accounts, categories, tags, transactions, subscriptions, budgets, goals, templates and rules.</p>
         <div className="row"><a className="btn" href={`${V1}/export/transactions.csv`}>Transactions CSV</a><a className="btn" href={`${V1}/export/money.json`}>Everything (JSON)</a></div>
@@ -291,10 +294,10 @@ function About() {
             <tr><th>Runtime</th><td className="mono">{String(data.go)} · {String(data.os)}/{String(data.arch)}</td></tr>
             <tr><th>Auth mode</th><td className="mono">{String(data.auth_mode)}</td></tr>
             <tr><th>Sign-in</th><td>{[status?.password_login !== false && 'password', status?.oidc && status.oidc_name].filter(Boolean).join(' + ')}{' · API tokens'}</td></tr>
-            <tr><th>Database</th><td className="mono">{String(data.db_path)} · {fmtBytes(Number(data.db_bytes))} · receipts {fmtBytes(Number(data.files_bytes))}</td></tr>
+            {data.db_path !== undefined && <tr><th>Database</th><td className="mono">{String(data.db_path)} · {fmtBytes(Number(data.db_bytes))} · receipts {fmtBytes(Number(data.files_bytes))}</td></tr>}
             <tr><th>Timezone</th><td className="mono">{String(data.timezone)}</td></tr>
             <tr><th>Uptime</th><td className="mono">{String(data.uptime)}</td></tr>
-            <tr><th>Rows</th><td className="mono">{counts.accounts} accounts · {counts.transactions} transactions · {counts.categories} categories · {counts.tags} tags · {counts.subscriptions} subscriptions · {counts.budgets} budgets · {counts.goals} goals · {counts.templates} templates · {counts.rules} rules</td></tr>
+            <tr><th>Your rows</th><td className="mono">{counts.accounts} accounts · {counts.transactions} transactions · {counts.categories} categories · {counts.tags} tags · {counts.subscriptions} subscriptions · {counts.budgets} budgets · {counts.goals} goals · {counts.templates} templates · {counts.rules} rules</td></tr>
           </tbody>
         </table>
       )}

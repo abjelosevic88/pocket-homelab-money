@@ -67,7 +67,7 @@ func (s *Server) handleAIParse(w http.ResponseWriter, r *http.Request) {
 	for _, cat := range qc.Categories {
 		fmt.Fprintf(&b, "- %d: %s\n", cat.ID, cat.Name)
 	}
-	tags, _ := s.store.ListTags(ctx)
+	tags, _ := s.store.ListTags(ctx, actorID(ctx))
 	var tn []string
 	for _, t := range tags {
 		if !t.Archived {
@@ -100,7 +100,7 @@ Pick the closest existing category; reuse existing tags only when clearly implie
 		Transactions []aiTx `json:"transactions"`
 	}
 	u, err := c.ai.JSON(ctx, system, b.String(), &out)
-	s.store.LogAI(ctx, "parse", u.Model, u.PromptTokens, u.CompletionTokens)
+	s.store.LogAI(ctx, actorID(ctx), "parse", u.Model, u.PromptTokens, u.CompletionTokens)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
@@ -174,7 +174,7 @@ func (s *Server) handleAITranscribe(w http.ResponseWriter, r *http.Request) {
 		name = "note.webm"
 	}
 	text, err := c.ai.Transcribe(r.Context(), data, name, c.st.AILanguage)
-	s.store.LogAI(r.Context(), "transcribe", c.ai.TranscribeModel, 0, 0)
+	s.store.LogAI(r.Context(), actorID(r.Context()), "transcribe", c.ai.TranscribeModel, 0, 0)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
@@ -184,7 +184,7 @@ func (s *Server) handleAITranscribe(w http.ResponseWriter, r *http.Request) {
 
 // moneyBrief is the plain-text picture of the user's finances the model sees.
 func (s *Server) moneyBrief(ctx context.Context) string {
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	ids := s.visibleIDs(ctx)
 	m := func(v int64) string { return majorString(v, st.HomeCurrency) }
 	var b strings.Builder
@@ -298,7 +298,7 @@ func (s *Server) handleAIAsk(w http.ResponseWriter, r *http.Request) {
 	system := `You answer questions about the user's personal finances using only the data given. Be concrete: name amounts, months and dates.
 Keep it short (a few sentences or a small list). If the data cannot answer it, say what is missing. Answer in the language of the question.`
 	txt, u, err := c.ai.Complete(ctx, system, user, false)
-	s.store.LogAI(ctx, "ask", u.Model, u.PromptTokens, u.CompletionTokens)
+	s.store.LogAI(ctx, actorID(ctx), "ask", u.Model, u.PromptTokens, u.CompletionTokens)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
@@ -307,7 +307,7 @@ Keep it short (a few sentences or a small list). If the data cannot answer it, s
 }
 
 func (s *Server) handleAIUsage(w http.ResponseWriter, r *http.Request) {
-	out, err := s.store.AIUsage(r.Context())
+	out, err := s.store.AIUsage(r.Context(), actorID(r.Context()))
 	if err != nil {
 		s.fail(w, err, "usage")
 		return

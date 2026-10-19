@@ -142,7 +142,7 @@ func (s *Server) bookInterest(ctx context.Context, a *store.Account, month strin
 	if a.Direction == "owed" {
 		kind, catKind = "income", "income"
 	}
-	cat, _ := s.store.EnsureCategory(ctx, "Interest", catKind)
+	cat, _ := s.store.EnsureCategory(ctx, a.OwnerID, "Interest", catKind)
 	date := store.Today()
 	desc := "Interest · " + a.Name
 	empty := ""
@@ -189,8 +189,8 @@ func (s *Server) bookDueInterest(ctx context.Context) {
 func (s *Server) handleBookInterest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := idParam(r, "id")
-	if !s.canWrite(ctx, id) {
-		writeErr(w, http.StatusForbidden, "read-only account")
+	if role := s.store.AccountRole(ctx, id, actorID(ctx)); role != "owner" && role != "editor" {
+		accessDenied(w, role, "read-only account")
 		return
 	}
 	a, err := s.store.GetAccount(ctx, id)

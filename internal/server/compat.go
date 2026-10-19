@@ -205,7 +205,7 @@ func (s *Server) ffAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ffCategories(w http.ResponseWriter, r *http.Request) {
-	cats, err := s.store.ListCategories(r.Context())
+	cats, err := s.store.ListCategories(r.Context(), actorID(r.Context()))
 	if err != nil {
 		ffError(w, 500, err.Error())
 		return
@@ -218,7 +218,7 @@ func (s *Server) ffCategories(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ffCategory(w http.ResponseWriter, r *http.Request) {
-	c, err := s.store.GetCategory(r.Context(), idParam(r, "id"))
+	c, err := s.store.GetCategory(r.Context(), actorID(r.Context()), idParam(r, "id"))
 	if err != nil {
 		ffError(w, 404, "Resource not found")
 		return
@@ -227,7 +227,7 @@ func (s *Server) ffCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ffTags(w http.ResponseWriter, r *http.Request) {
-	tags, err := s.store.ListTags(r.Context())
+	tags, err := s.store.ListTags(r.Context(), actorID(r.Context()))
 	if err != nil {
 		ffError(w, 500, err.Error())
 		return
@@ -243,11 +243,11 @@ func (s *Server) ffTags(w http.ResponseWriter, r *http.Request) {
 func (s *Server) tagParam(r *http.Request) (*store.Tag, error) {
 	v := chi.URLParam(r, "tag")
 	if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-		if t, err := s.store.GetTag(r.Context(), id); err == nil {
+		if t, err := s.store.GetTag(r.Context(), actorID(r.Context()), id); err == nil {
 			return t, nil
 		}
 	}
-	return s.store.GetTagByName(r.Context(), v)
+	return s.store.GetTagByName(r.Context(), actorID(r.Context()), v)
 }
 
 func (s *Server) ffTag(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +326,7 @@ func ffDate(date, hm string) string {
 // ffGroup renders a transaction as a Firefly transaction group with one split.
 func (s *Server) ffGroup(t *store.Transaction) ffItem {
 	id := strconv.FormatInt(t.ID, 10)
+	owner := strconv.FormatInt(t.UserID, 10)
 	acct := map[string]any{"id": strconv.FormatInt(t.AccountID, 10), "name": t.AccountName, "type": "Asset account"}
 	other := map[string]any{"id": nil, "name": firstNonEmpty(t.Payee, "(cash)"), "type": "Expense account"}
 	var src, dst map[string]any
@@ -367,7 +368,7 @@ func (s *Server) ffGroup(t *store.Transaction) ffItem {
 		tags = []string{}
 	}
 	split := map[string]any{
-		"user": "1", "transaction_journal_id": id, "type": typ, "date": ffDate(t.Date, t.Time), "order": 0,
+		"user": owner, "transaction_journal_id": id, "type": typ, "date": ffDate(t.Date, t.Time), "order": 0,
 		"currency_id": t.Currency, "currency_code": t.Currency, "currency_symbol": t.Currency, "currency_name": t.Currency, "currency_decimal_places": currency.Decimals(t.Currency),
 		"foreign_currency_id": fc, "foreign_currency_code": fc, "foreign_currency_decimal_places": nil, "amount": ffNum(t.Amount, t.Currency), "foreign_amount": fa,
 		"description": t.Description, "source_id": src["id"], "source_name": src["name"], "source_type": src["type"], "source_iban": nil,
@@ -408,7 +409,7 @@ func (s *Server) ffGroup(t *store.Transaction) ffItem {
 			splits = append(splits, p)
 		}
 	}
-	return ffItem{Type: "transactions", ID: id, Attributes: map[string]any{"created_at": t.CreatedAt, "updated_at": t.UpdatedAt, "user": "1", "group_title": title, "transactions": splits},
+	return ffItem{Type: "transactions", ID: id, Attributes: map[string]any{"created_at": t.CreatedAt, "updated_at": t.UpdatedAt, "user": owner, "group_title": title, "transactions": splits},
 		Links: map[string]any{"self": "/api/v1/transactions/" + id}}
 }
 
@@ -538,7 +539,7 @@ func (s *Server) ffToIn(ctx context.Context, sp ffSplitIn, accts []store.Account
 			in.CategoryID = &n
 		}
 	} else if sp.CategoryName != "" {
-		if id, err := s.store.EnsureCategory(ctx, sp.CategoryName, "expense"); err == nil {
+		if id, err := s.store.EnsureCategory(ctx, actorID(ctx), sp.CategoryName, "expense"); err == nil {
 			in.CategoryID = &id
 		}
 	}
@@ -651,7 +652,7 @@ func (s *Server) ffUpdateTransaction(w http.ResponseWriter, r *http.Request) {
 		ffError(w, http.StatusUnprocessableEntity, msg)
 		return
 	}
-	if err := s.store.UpdateTransaction(ctx, t); err != nil {
+	if err := s.store.UpdateTransaction(ctx, actorID(ctx), t); err != nil {
 		ffError(w, 500, err.Error())
 		return
 	}
@@ -672,7 +673,7 @@ func (s *Server) ffDeleteTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.DeleteTransaction(ctx, t.ID)
 	s.emitTx(ctx, "transaction.deleted", t)
-	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), txEvent(t))
+	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), s.txEvent(ctx, t))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -747,7 +748,7 @@ func nilIfEmpty(s string) any {
 
 // usedCurrencies are the home currency plus every account currency.
 func (s *Server) usedCurrencies(ctx context.Context) []string {
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	seen := map[string]bool{st.HomeCurrency: true}
 	out := []string{st.HomeCurrency}
 	accts, _ := s.store.ListAccounts(ctx, actorID(ctx), true)
@@ -757,7 +758,8 @@ func (s *Server) usedCurrencies(ctx context.Context) []string {
 			out = append(out, a.Currency)
 		}
 	}
-	rows, err := s.store.DB.QueryContext(ctx, `SELECT DISTINCT foreign_currency FROM transactions WHERE foreign_currency != ''`)
+	in, args := visibleIn(s.visibleIDs(ctx))
+	rows, err := s.store.DB.QueryContext(ctx, `SELECT DISTINCT foreign_currency FROM transactions WHERE foreign_currency != '' AND account_id IN `+in, args...)
 	if err == nil {
 		var extra []string
 		for rows.Next() {
@@ -778,7 +780,7 @@ func (s *Server) usedCurrencies(ctx context.Context) []string {
 }
 
 func (s *Server) ffCurrencies(w http.ResponseWriter, r *http.Request) {
-	st, _ := s.store.GetSettings(r.Context())
+	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
 	items := []ffItem{}
 	for _, c := range s.usedCurrencies(r.Context()) {
 		cur, _ := currency.Lookup(c)
@@ -869,7 +871,7 @@ func (s *Server) ffTemplates(w http.ResponseWriter, r *http.Request) {
 		}
 		tags := []map[string]any{}
 		for _, name := range t.Tags {
-			if tg, err := s.store.GetTagByName(ctx, name); err == nil {
+			if tg, err := s.store.GetTagByName(ctx, actorID(ctx), name); err == nil {
 				tags = append(tags, map[string]any{"tag_id": tg.ID, "transaction_template_id": t.ID})
 			}
 		}
@@ -918,7 +920,7 @@ func (s *Server) ffMergeSplits(ctx context.Context, sps []ffSplitIn, accts []sto
 				p.CategoryID = &n
 			}
 		} else if sp.CategoryName != "" {
-			if id, err := s.store.EnsureCategory(ctx, sp.CategoryName, "expense"); err == nil {
+			if id, err := s.store.EnsureCategory(ctx, actorID(ctx), sp.CategoryName, "expense"); err == nil {
 				p.CategoryID = &id
 			}
 		}
@@ -952,6 +954,19 @@ func (s *Server) ffMergeSplits(ctx context.Context, sps []ffSplitIn, accts []sto
 		in.Description = &g
 	}
 	return in, true
+}
+
+// visibleIn renders account ids as an SQL IN list ("(NULL)" when empty).
+func visibleIn(ids []int64) (string, []any) {
+	if len(ids) == 0 {
+		return "(NULL)", nil
+	}
+	ph := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		ph[i], args[i] = "?", id
+	}
+	return "(" + strings.Join(ph, ",") + ")", args
 }
 
 func liabType(a store.Account) any {

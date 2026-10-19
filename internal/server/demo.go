@@ -21,9 +21,9 @@ func (s *Server) seedDemo(ctx context.Context) error {
 		}
 	}
 	ctx = context.WithValue(ctx, userKey, owner)
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	st.HomeCurrency, st.Title = "EUR", store.DefaultTitle
-	_ = s.store.SaveSettings(ctx, st)
+	_ = s.store.SaveSettings(ctx, owner.ID, st, true)
 	rng := rand.New(rand.NewSource(42))
 	today := time.Now()
 	start := today.AddDate(0, -6, 0)
@@ -41,7 +41,7 @@ func (s *Server) seedDemo(ctx context.Context) error {
 	usd := acct("USD account", "checking", "USD", "💵", 650_00)
 
 	cat := func(name, icon, kind string) int64 {
-		c := &store.Category{Name: name, Icon: icon, Kind: kind}
+		c := &store.Category{UserID: owner.ID, Name: name, Icon: icon, Kind: kind}
 		_ = s.store.CreateCategory(ctx, c)
 		return c.ID
 	}
@@ -60,7 +60,7 @@ func (s *Server) seedDemo(ctx context.Context) error {
 	gifts := cat("Gifts", "🎁", "expense")
 	salary := cat("Salary", "💰", "income")
 	side := cat("Side income", "💼", "income")
-	_ = s.store.UpdateCategory(ctx, &store.Category{ID: bakery, Name: "Bakery", Icon: "🥐", Kind: "expense", ParentID: &groceries})
+	_ = s.store.UpdateCategory(ctx, &store.Category{ID: bakery, UserID: owner.ID, Name: "Bakery", Icon: "🥐", Kind: "expense", ParentID: &groceries})
 
 	add := func(kind, date, tm string, account int64, amount int64, cur string, desc, payee string, category int64, tags ...string) {
 		in := txIn{Kind: &kind, Date: &date, Time: &tm, AccountID: &account, Amount: &amount, Description: &desc, Payee: &payee, Tags: &tags, Source: "manual", SkipRules: true}

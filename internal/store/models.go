@@ -106,6 +106,7 @@ type AccountMember struct {
 // Category groups transactions.
 type Category struct {
 	ID         int64  `json:"id"`
+	UserID     int64  `json:"user_id"`
 	ParentID   *int64 `json:"parent_id"`
 	Name       string `json:"name"`
 	Kind       string `json:"kind"`
@@ -121,6 +122,7 @@ type Category struct {
 // Tag is a free label ("lustica 2026", "skoda").
 type Tag struct {
 	ID         int64  `json:"id"`
+	UserID     int64  `json:"user_id"`
 	Name       string `json:"name"`
 	Color      string `json:"color"`
 	Archived   bool   `json:"archived"`
@@ -133,6 +135,7 @@ type Tag struct {
 // Transaction is one money movement.
 type Transaction struct {
 	ID              int64    `json:"id"`
+	UserID          int64    `json:"user_id"` // the ledger owner: the owner of the account it is booked on
 	Kind            string   `json:"kind"`
 	Date            string   `json:"date"`
 	Time            string   `json:"time"`

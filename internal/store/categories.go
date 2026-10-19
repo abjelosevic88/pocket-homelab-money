@@ -6,11 +6,14 @@ import (
 	"strings"
 )
 
-// ListCategories returns all categories with usage counts and full names
-// ("Food › Bakery"), parents first.
-func (s *Store) ListCategories(ctx context.Context) ([]Category, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT c.id, c.parent_id, c.name, c.kind, c.icon, c.color, c.archived, c.sort_order, c.external_id,
-		(SELECT COUNT(1) FROM transactions t WHERE t.category_id = c.id) FROM categories c ORDER BY c.sort_order, lower(c.name)`)
+// Categories and tags belong to one person each: every query here is
+// scoped by userID, and another person's id behaves like a missing one.
+
+// ListCategories returns a person's categories with usage counts and full
+// names ("Food › Bakery"), parents first.
+func (s *Store) ListCategories(ctx context.Context, userID int64) ([]Category, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT c.id, c.user_id, c.parent_id, c.name, c.kind, c.icon, c.color, c.archived, c.sort_order, c.external_id,
+		(SELECT COUNT(1) FROM transactions t WHERE t.category_id = c.id) FROM categories c WHERE c.user_id = ? ORDER BY c.sort_order, lower(c.name)`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -18,7 +21,7 @@ func (s *Store) ListCategories(ctx context.Context) ([]Category, error) {
 	for rows.Next() {
 		var c Category
 		var arch int
-		if err := rows.Scan(&c.ID, &c.ParentID, &c.Name, &c.Kind, &c.Icon, &c.Color, &arch, &c.SortOrder, &c.ExternalID, &c.TxCount); err != nil {
+		if err := rows.Scan(&c.ID, &c.UserID, &c.ParentID, &c.Name, &c.Kind, &c.Icon, &c.Color, &arch, &c.SortOrder, &c.ExternalID, &c.TxCount); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -65,12 +68,12 @@ func pad(n int) string {
 	return string(v)
 }
 
-// GetCategory returns one category.
-func (s *Store) GetCategory(ctx context.Context, id int64) (*Category, error) {
+// GetCategory returns one of a person's categories.
+func (s *Store) GetCategory(ctx context.Context, userID, id int64) (*Category, error) {
 	var c Category
 	var arch int
-	err := s.DB.QueryRowContext(ctx, `SELECT id, parent_id, name, kind, icon, color, archived, sort_order, external_id FROM categories WHERE id = ?`, id).
-		Scan(&c.ID, &c.ParentID, &c.Name, &c.Kind, &c.Icon, &c.Color, &arch, &c.SortOrder, &c.ExternalID)
+	err := s.DB.QueryRowContext(ctx, `SELECT id, user_id, parent_id, name, kind, icon, color, archived, sort_order, external_id FROM categories WHERE id = ? AND user_id = ?`, id, userID).
+		Scan(&c.ID, &c.UserID, &c.ParentID, &c.Name, &c.Kind, &c.Icon, &c.Color, &arch, &c.SortOrder, &c.ExternalID)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -79,13 +82,13 @@ func (s *Store) GetCategory(ctx context.Context, id int64) (*Category, error) {
 	return &c, nil
 }
 
-// CreateCategory inserts a category.
+// CreateCategory inserts a category for c.UserID.
 func (s *Store) CreateCategory(ctx context.Context, c *Category) error {
 	if c.Kind == "" {
 		c.Kind = "expense"
 	}
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO categories (parent_id, name, kind, icon, color, archived, sort_order, external_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		nullI(c.ParentID), strings.TrimSpace(c.Name), c.Kind, c.Icon, c.Color, boolInt(c.Archived), c.SortOrder, c.ExternalID)
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO categories (user_id, parent_id, name, kind, icon, color, archived, sort_order, external_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.UserID, nullI(c.ParentID), strings.TrimSpace(c.Name), c.Kind, c.Icon, c.Color, boolInt(c.Archived), c.SortOrder, c.ExternalID)
 	if err != nil {
 		return conflict(err)
 	}
@@ -93,15 +96,30 @@ func (s *Store) CreateCategory(ctx context.Context, c *Category) error {
 	return nil
 }
 
-// UpdateCategory saves a category.
+// UpdateCategory saves a category (only its owner's row is touched).
 func (s *Store) UpdateCategory(ctx context.Context, c *Category) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE categories SET parent_id = ?, name = ?, kind = ?, icon = ?, color = ?, archived = ?, sort_order = ?, external_id = ? WHERE id = ?`,
-		nullI(c.ParentID), strings.TrimSpace(c.Name), c.Kind, c.Icon, c.Color, boolInt(c.Archived), c.SortOrder, c.ExternalID, c.ID)
-	return conflict(err)
+	res, err := s.DB.ExecContext(ctx, `UPDATE categories SET parent_id = ?, name = ?, kind = ?, icon = ?, color = ?, archived = ?, sort_order = ?, external_id = ? WHERE id = ? AND user_id = ?`,
+		nullI(c.ParentID), strings.TrimSpace(c.Name), c.Kind, c.Icon, c.Color, boolInt(c.Archived), c.SortOrder, c.ExternalID, c.ID, c.UserID)
+	if err != nil {
+		return conflict(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
-// DeleteCategory removes a category; its transactions move to moveTo (or none).
-func (s *Store) DeleteCategory(ctx context.Context, id int64, moveTo *int64) error {
+// DeleteCategory removes one of a person's categories; what used it moves
+// to moveTo (another of their categories) or to none.
+func (s *Store) DeleteCategory(ctx context.Context, userID, id int64, moveTo *int64) error {
+	if _, err := s.GetCategory(ctx, userID, id); err != nil {
+		return err
+	}
+	if moveTo != nil {
+		if _, err := s.GetCategory(ctx, userID, *moveTo); err != nil {
+			return err
+		}
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -111,10 +129,11 @@ func (s *Store) DeleteCategory(ctx context.Context, id int64, moveTo *int64) err
 		args []any
 	}{
 		{`UPDATE transactions SET category_id = ? WHERE category_id = ?`, []any{nullI(moveTo), id}},
-		{`UPDATE templates SET category_id = ? WHERE category_id = ?`, []any{nullI(moveTo), id}},
-		{`UPDATE subscriptions SET category_id = ? WHERE category_id = ?`, []any{nullI(moveTo), id}},
-		{`UPDATE categories SET parent_id = NULL WHERE parent_id = ?`, []any{id}},
-		{`DELETE FROM categories WHERE id = ?`, []any{id}},
+		{`UPDATE transaction_splits SET category_id = ? WHERE category_id = ?`, []any{nullI(moveTo), id}},
+		{`UPDATE templates SET category_id = ? WHERE category_id = ? AND owner_id = ?`, []any{nullI(moveTo), id, userID}},
+		{`UPDATE subscriptions SET category_id = ? WHERE category_id = ? AND owner_id = ?`, []any{nullI(moveTo), id, userID}},
+		{`UPDATE categories SET parent_id = NULL WHERE parent_id = ? AND user_id = ?`, []any{id, userID}},
+		{`DELETE FROM categories WHERE id = ? AND user_id = ?`, []any{id, userID}},
 	}
 	for _, st := range stmts {
 		if _, err := tx.ExecContext(ctx, st.q, st.args...); err != nil {
@@ -125,23 +144,34 @@ func (s *Store) DeleteCategory(ctx context.Context, id int64, moveTo *int64) err
 	return tx.Commit()
 }
 
-// EnsureCategory returns the id of the category with that name, creating it.
-func (s *Store) EnsureCategory(ctx context.Context, name, kind string) (int64, error) {
+// EnsureCategory returns the id of a person's category with that name, creating it.
+func (s *Store) EnsureCategory(ctx context.Context, userID int64, name, kind string) (int64, error) {
 	name = strings.TrimSpace(name)
 	var id int64
-	err := s.DB.QueryRowContext(ctx, `SELECT id FROM categories WHERE lower(name) = lower(?) ORDER BY parent_id IS NOT NULL, id LIMIT 1`, name).Scan(&id)
+	err := s.DB.QueryRowContext(ctx, `SELECT id FROM categories WHERE user_id = ? AND lower(name) = lower(?) ORDER BY parent_id IS NOT NULL, id LIMIT 1`, userID, name).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
-	c := &Category{Name: name, Kind: kind}
+	c := &Category{UserID: userID, Name: name, Kind: kind}
 	if err := s.CreateCategory(ctx, c); err != nil {
 		return 0, err
 	}
 	return c.ID, nil
 }
 
-// CategoryChildren returns ids plus the ids of their children.
-func (s *Store) CategoryChildren(ctx context.Context, ids []int64) ([]int64, error) {
+// OwnsCategories reports whether every id is one of the person's categories.
+func (s *Store) OwnsCategories(ctx context.Context, userID int64, ids []int64) bool {
+	for _, id := range ids {
+		var n int
+		if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM categories WHERE id = ? AND user_id = ?`, id, userID).Scan(&n); err != nil || n == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// CategoryChildren returns ids plus the ids of their children (the person's own).
+func (s *Store) CategoryChildren(ctx context.Context, userID int64, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -149,7 +179,7 @@ func (s *Store) CategoryChildren(ctx context.Context, ids []int64) ([]int64, err
 	for _, id := range ids {
 		seen[id] = true
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, parent_id FROM categories WHERE parent_id IS NOT NULL`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, parent_id FROM categories WHERE parent_id IS NOT NULL AND user_id = ?`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -171,12 +201,12 @@ func (s *Store) CategoryChildren(ctx context.Context, ids []int64) ([]int64, err
 
 // ---- tags ----
 
-// ListTags returns all tags with usage.
-func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT g.id, g.name, g.color, g.archived, g.external_id, g.created_at,
+// ListTags returns a person's tags with usage.
+func (s *Store) ListTags(ctx context.Context, userID int64) ([]Tag, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT g.id, g.user_id, g.name, g.color, g.archived, g.external_id, g.created_at,
 		(SELECT COUNT(1) FROM transaction_tags x WHERE x.tag_id = g.id),
 		COALESCE((SELECT MAX(t.date) FROM transaction_tags x JOIN transactions t ON t.id = x.transaction_id WHERE x.tag_id = g.id), '')
-		FROM tags g ORDER BY g.archived, lower(g.name)`)
+		FROM tags g WHERE g.user_id = ? ORDER BY g.archived, lower(g.name)`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +215,7 @@ func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
 	for rows.Next() {
 		var t Tag
 		var arch int
-		if err := rows.Scan(&t.ID, &t.Name, &t.Color, &arch, &t.ExternalID, &t.CreatedAt, &t.TxCount, &t.LastUsed); err != nil {
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.Color, &arch, &t.ExternalID, &t.CreatedAt, &t.TxCount, &t.LastUsed); err != nil {
 			return nil, err
 		}
 		t.Archived = arch == 1
@@ -194,11 +224,12 @@ func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
 	return out, rows.Err()
 }
 
-// GetTag finds a tag by id.
-func (s *Store) GetTag(ctx context.Context, id int64) (*Tag, error) {
+// GetTag finds one of a person's tags by id.
+func (s *Store) GetTag(ctx context.Context, userID, id int64) (*Tag, error) {
 	var t Tag
 	var arch int
-	err := s.DB.QueryRowContext(ctx, `SELECT id, name, color, archived, external_id, created_at FROM tags WHERE id = ?`, id).Scan(&t.ID, &t.Name, &t.Color, &arch, &t.ExternalID, &t.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id, user_id, name, color, archived, external_id, created_at FROM tags WHERE id = ? AND user_id = ?`, id, userID).
+		Scan(&t.ID, &t.UserID, &t.Name, &t.Color, &arch, &t.ExternalID, &t.CreatedAt)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -206,43 +237,62 @@ func (s *Store) GetTag(ctx context.Context, id int64) (*Tag, error) {
 	return &t, nil
 }
 
-// GetTagByName finds a tag by name (case-insensitive).
-func (s *Store) GetTagByName(ctx context.Context, name string) (*Tag, error) {
+// GetTagByName finds one of a person's tags by name (case-insensitive).
+func (s *Store) GetTagByName(ctx context.Context, userID int64, name string) (*Tag, error) {
 	var id int64
-	if err := s.DB.QueryRowContext(ctx, `SELECT id FROM tags WHERE name = ? COLLATE NOCASE`, strings.TrimSpace(name)).Scan(&id); err != nil {
+	if err := s.DB.QueryRowContext(ctx, `SELECT id FROM tags WHERE user_id = ? AND name = ? COLLATE NOCASE`, userID, strings.TrimSpace(name)).Scan(&id); err != nil {
 		return nil, notFound(err)
 	}
-	return s.GetTag(ctx, id)
+	return s.GetTag(ctx, userID, id)
 }
 
-// EnsureTag returns the id of a tag, creating it.
-func (s *Store) EnsureTag(ctx context.Context, name string) (int64, error) {
+// EnsureTag returns the id of a person's tag, creating it.
+func (s *Store) EnsureTag(ctx context.Context, userID int64, name string) (int64, error) {
 	name = strings.TrimSpace(name)
 	var id int64
-	if err := s.DB.QueryRowContext(ctx, `SELECT id FROM tags WHERE name = ? COLLATE NOCASE`, name).Scan(&id); err == nil {
+	if err := s.DB.QueryRowContext(ctx, `SELECT id FROM tags WHERE user_id = ? AND name = ? COLLATE NOCASE`, userID, name).Scan(&id); err == nil {
 		return id, nil
 	}
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO tags (name) VALUES (?)`, name)
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO tags (user_id, name) VALUES (?, ?)`, userID, name)
 	if err != nil {
 		return 0, conflict(err)
 	}
 	return res.LastInsertId()
 }
 
-// UpdateTag renames / recolours a tag.
+// UpdateTag renames / recolours a person's tag.
 func (s *Store) UpdateTag(ctx context.Context, t *Tag) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE tags SET name = ?, color = ?, archived = ?, external_id = ? WHERE id = ?`, strings.TrimSpace(t.Name), t.Color, boolInt(t.Archived), t.ExternalID, t.ID)
-	return conflict(err)
+	res, err := s.DB.ExecContext(ctx, `UPDATE tags SET name = ?, color = ?, archived = ?, external_id = ? WHERE id = ? AND user_id = ?`,
+		strings.TrimSpace(t.Name), t.Color, boolInt(t.Archived), t.ExternalID, t.ID, t.UserID)
+	if err != nil {
+		return conflict(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
-// DeleteTag removes a tag from everything.
-func (s *Store) DeleteTag(ctx context.Context, id int64) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM tags WHERE id = ?`, id)
-	return err
+// DeleteTag removes a person's tag from everything.
+func (s *Store) DeleteTag(ctx context.Context, userID, id int64) error {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM tags WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
-// MergeTags moves every use of from onto into and deletes from.
-func (s *Store) MergeTags(ctx context.Context, from, into int64) error {
+// MergeTags moves every use of from onto into (both the person's) and deletes from.
+func (s *Store) MergeTags(ctx context.Context, userID, from, into int64) error {
+	if _, err := s.GetTag(ctx, userID, from); err != nil {
+		return err
+	}
+	if _, err := s.GetTag(ctx, userID, into); err != nil {
+		return err
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -251,7 +301,7 @@ func (s *Store) MergeTags(ctx context.Context, from, into int64) error {
 		_ = tx.Rollback()
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE id = ?`, from); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE id = ? AND user_id = ?`, from, userID); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

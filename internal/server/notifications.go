@@ -12,47 +12,44 @@ import (
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
 
-// maybeNotify runs the daily checks once the configured hour has passed.
-func (s *Server) maybeNotify(ctx context.Context, st store.Settings) {
+// maybeNotify runs the daily checks for the person in ctx once their
+// notify hour has passed: their reminders go to their own notification URL
+// and webhooks only.
+func (s *Server) maybeNotify(ctx context.Context) {
+	uid := actorID(ctx)
+	if uid == 0 {
+		return
+	}
+	st, _ := s.store.GetSettings(ctx, uid)
 	if st.NotifyURL == "" {
-		if hooks, _ := s.store.ListWebhooks(ctx, 0); len(hooks) == 0 {
+		if hooks, _ := s.store.ListWebhooks(ctx, uid); len(hooks) == 0 {
 			return
 		}
 	}
 	now := time.Now()
 	day := now.Format("2006-01-02")
-	if s.notifyDay == "" {
-		if v, _, ok := s.store.CacheGet(ctx, "notify:last_day"); ok {
-			s.notifyDay = v
-		}
-	}
-	if s.notifyDay != day && now.Hour() >= st.NotifyHour {
-		s.notifyDay = day
-		_ = s.store.CachePut(ctx, "notify:last_day", day)
+	lastKey, digestKey := fmt.Sprintf("notify:last_day:%d", uid), fmt.Sprintf("notify:digest_day:%d", uid)
+	if last, _, _ := s.store.CacheGet(ctx, lastKey); last != day && now.Hour() >= st.NotifyHour {
+		_ = s.store.CachePut(ctx, lastKey, day)
 		if _, err := s.runNotifications(ctx, false); err != nil {
-			s.log.Warn("notifications", "err", err)
+			s.log.Warn("notifications", "user", uid, "err", err)
 		}
 	}
 	// weekly digest: Monday at the notify hour, about the week that ended
 	if st.NotifyDigest && now.Weekday() == time.Monday && now.Hour() >= st.NotifyHour {
-		if s.digestDay == "" {
-			if v, _, ok := s.store.CacheGet(ctx, "notify:digest_day"); ok {
-				s.digestDay = v
-			}
-		}
-		if s.digestDay != day {
-			s.digestDay = day
-			_ = s.store.CachePut(ctx, "notify:digest_day", day)
+		if last, _, _ := s.store.CacheGet(ctx, digestKey); last != day {
+			_ = s.store.CachePut(ctx, digestKey, day)
 			if err := s.sendDigest(ctx); err != nil {
-				s.log.Warn("weekly digest", "err", err)
+				s.log.Warn("weekly digest", "user", uid, "err", err)
 			}
 		}
 	}
 }
 
-// runNotifications pushes due subscriptions and budget alerts. With dry it
-// only reports what it would send.
+// runNotifications pushes the due subscriptions and budget alerts of the
+// person in ctx. With dry it only reports what it would send.
 func (s *Server) runNotifications(ctx context.Context, dry bool) ([]notify.Message, error) {
+	uid := actorID(ctx)
 	c := s.clients(ctx)
 	st := c.st
 	var msgs []notify.Message
@@ -62,7 +59,10 @@ func (s *Server) runNotifications(ctx context.Context, dry bool) ([]notify.Messa
 		}
 		return s.cfg.BaseURL + p
 	}
-	subs, err := s.store.ListSubscriptions(ctx, 0)
+	if uid == 0 {
+		return nil, nil
+	}
+	subs, err := s.store.ListSubscriptions(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func (s *Server) runNotifications(ctx context.Context, dry bool) ([]notify.Messa
 			s.emit(ctx, x.OwnerID, "subscription.due", x.Name, map[string]any{"subscription": x, "message": m.Title + " — " + m.Body})
 		}
 	}
-	budgets, _ := s.store.ListBudgets(ctx, 0)
+	budgets, _ := s.store.ListBudgets(ctx, uid)
 	for i := range budgets {
 		b := &budgets[i]
 		if b.Archived {
@@ -144,17 +144,12 @@ func (s *Server) runNotifications(ctx context.Context, dry bool) ([]notify.Messa
 	return msgs, nil
 }
 
-// sendDigest pushes last week's numbers.
+// sendDigest pushes last week's numbers to the person in ctx.
 func (s *Server) sendDigest(ctx context.Context) error {
 	c := s.clients(ctx)
-	if !c.notify.Configured() {
+	if !c.notify.Configured() || actorID(ctx) == 0 {
 		return nil
 	}
-	owner, err := s.importOwner(ctx)
-	if err != nil {
-		return err
-	}
-	ctx = context.WithValue(ctx, userKey, owner)
 	m, ok := s.digest(ctx)
 	if !ok {
 		return nil
@@ -163,7 +158,7 @@ func (s *Server) sendDigest(ctx context.Context) error {
 }
 
 func (s *Server) digest(ctx context.Context) (notify.Message, bool) {
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	ids := s.visibleIDs(ctx)
 	end := addDays(store.Today(), -1)
 	start := addDays(end, -6)
@@ -241,11 +236,8 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleNotifyRun previews (dry=1) or sends the reminder check now.
+// handleNotifyRun previews (dry=1) or sends the caller's reminder check now.
 func (s *Server) handleNotifyRun(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	dry := queryBool(r, "dry")
 	msgs, err := s.runNotifications(r.Context(), dry)
 	if queryBool(r, "digest") {

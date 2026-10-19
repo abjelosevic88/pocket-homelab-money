@@ -36,7 +36,7 @@ func majorString(minor int64, code string) string {
 	return strconv.FormatFloat(float64(minor)/math.Pow10(dec), 'f', dec, 64) + " " + code
 }
 
-func (s *Server) publicSettings(st store.Settings) map[string]any {
+func (s *Server) publicSettings(st store.Settings, admin bool) map[string]any {
 	model := st.AIModel
 	if model == "" {
 		model = ai.DefaultModel
@@ -53,24 +53,31 @@ func (s *Server) publicSettings(st store.Settings) map[string]any {
 		"travel_url": st.TravelURL, "travel_public_url": st.TravelPublicURL, "travel_token": mask(st.TravelToken), "travel_configured": st.TravelURL != "" && st.TravelToken != "",
 		"travel_auto_tag":  st.TravelAutoTag,
 		"max_upload_bytes": s.cfg.MaxUploadBytes, "setup_complete": st.SetupComplete, "base_url": s.cfg.BaseURL,
+		// title, home_currency and fx_auto are the server's; everything else is the caller's own
+		"can_edit_server": admin,
 	}
 }
 
+func isAdmin(ctx context.Context) bool {
+	u := userFrom(ctx)
+	return u != nil && u.Role == "admin"
+}
+
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	st, err := s.store.GetSettings(r.Context())
+	st, err := s.store.GetSettings(r.Context(), actorID(r.Context()))
 	if err != nil {
 		s.fail(w, err, "settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.publicSettings(st))
+	writeJSON(w, http.StatusOK, s.publicSettings(st, isAdmin(r.Context())))
 }
 
+// handlePutSettings saves the caller's own settings; the server-wide ones
+// (title, home currency, automatic rates) only change for an admin.
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	cur, err := s.store.GetSettings(ctx)
+	admin := isAdmin(ctx)
+	cur, err := s.store.GetSettings(ctx, actorID(ctx))
 	if err != nil {
 		s.fail(w, err, "settings")
 		return
@@ -81,6 +88,11 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	if !admin {
+		delete(keys, "title")
+		delete(keys, "home_currency")
+		delete(keys, "fx_auto")
 	}
 	if keys["title"] {
 		cur.Title = strings.TrimSpace(in.Title)
@@ -124,7 +136,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if keys["month_start_day"] && in.MonthStartDay >= 1 && in.MonthStartDay <= 28 {
 		cur.MonthStartDay = in.MonthStartDay
 	}
-	if keys["default_account_id"] {
+	if keys["default_account_id"] && (in.DefaultAcct == 0 || s.canWrite(ctx, in.DefaultAcct)) {
 		cur.DefaultAcct = in.DefaultAcct
 	}
 	flag("fx_auto", &cur.FXAuto, in.FXAuto)
@@ -152,18 +164,19 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	url("travel_public_url", &cur.TravelPublicURL, in.TravelPublicURL)
 	secret("travel_token", &cur.TravelToken, in.TravelToken)
 	flag("travel_auto_tag", &cur.TravelAutoTag, in.TravelAutoTag)
-	if err := s.store.SaveSettings(ctx, cur); err != nil {
+	if err := s.store.SaveSettings(ctx, actorID(ctx), cur, admin); err != nil {
 		s.fail(w, err, "save settings")
 		return
 	}
-	_ = s.store.CacheDelete(ctx, "travel:")
-	if cur.HomeCurrency != oldHome {
+	_ = s.store.CacheDelete(ctx, tripCacheKey(actorID(ctx)))
+	if admin && cur.HomeCurrency != oldHome {
 		go s.recomputeHome(context.Background())
 	}
-	writeJSON(w, http.StatusOK, s.publicSettings(cur))
+	writeJSON(w, http.StatusOK, s.publicSettings(cur, admin))
 }
 
-// recomputeHome re-values every transaction in a new home currency.
+// recomputeHome re-values every transaction in a new home currency (the
+// home currency is server-wide, so this is a server-wide pass).
 func (s *Server) recomputeHome(ctx context.Context) {
 	ids, err := s.store.AllTransactionIDs(ctx)
 	if err != nil {
@@ -180,10 +193,8 @@ func (s *Server) recomputeHome(ctx context.Context) {
 	s.log.Info("home currency changed, transactions re-valued", "count", len(ids))
 }
 
+// handleIntegrationTest checks the caller's own integration settings (or the values typed in).
 func (s *Server) handleIntegrationTest(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	var in struct {
 		Which  string `json:"which"`
 		URL    string `json:"url"`
@@ -195,7 +206,7 @@ func (s *Server) handleIntegrationTest(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	st, _ := s.store.GetSettings(r.Context())
+	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 	keyOr := func(saved string) string {
@@ -271,17 +282,30 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"version": Version, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH,
-		"core":      s.coreStatus(),
-		"auth_mode": s.cfg.AuthMode, "data_dir": s.cfg.DataDir, "db_path": s.cfg.DBPath, "db_bytes": size, "files_bytes": files,
-		"uptime": time.Since(s.started).Round(time.Second).String(), "timezone": time.Now().Location().String(),
-		"counts": s.store.Counts(r.Context()),
-	})
+		"auth_mode": s.cfg.AuthMode,
+		"uptime":    time.Since(s.started).Round(time.Second).String(), "timezone": time.Now().Location().String(),
+		"counts": s.store.CountsFor(r.Context(), actorID(r.Context())), // the caller's own rows
+	}
+	if isAdmin(r.Context()) {
+		// where the server keeps its data: for the admin who runs it, no content
+		out["core"] = s.coreStatus()
+		out["data_dir"], out["db_path"], out["db_bytes"], out["files_bytes"] = s.cfg.DataDir, s.cfg.DBPath, size, files
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
+// handleBackup downloads the whole database. It holds everyone's money, so
+// an admin only gets it while they are the only person on the server;
+// otherwise each person exports their own data (export/money.json) and the
+// server is backed up from the host (pocket-money backup / the data dir).
 func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
+		return
+	}
+	if n, _ := s.store.CountUsers(r.Context()); n > 1 {
+		writeErr(w, http.StatusForbidden, "the database holds other people's money too — use Export for your own data; back the server up from the host")
 		return
 	}
 	dir := filepath.Join(s.cfg.DataDir, "backups")
@@ -321,7 +345,7 @@ func (s *Server) handleFX(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
-	out, err := s.store.ListActivity(r.Context(), 100)
+	out, err := s.store.ListActivity(r.Context(), actorID(r.Context()), 100)
 	if err != nil {
 		s.fail(w, err, "activity")
 		return
@@ -336,7 +360,8 @@ func (s *Server) tripList(ctx context.Context) []pocket.Trip {
 	if !c.travel.Configured() {
 		return nil
 	}
-	if val, at, ok := s.store.CacheGet(ctx, "travel:trips"); ok {
+	key := tripCacheKey(actorID(ctx))
+	if val, at, ok := s.store.CacheGet(ctx, key); ok {
 		if t, err := time.Parse(time.RFC3339Nano, at); err == nil && time.Since(t) < 30*time.Minute {
 			var out []pocket.Trip
 			if json.Unmarshal([]byte(val), &out) == nil {
@@ -350,12 +375,15 @@ func (s *Server) tripList(ctx context.Context) []pocket.Trip {
 		return nil
 	}
 	b, _ := json.Marshal(trips)
-	_ = s.store.CachePut(ctx, "travel:trips", string(b))
+	_ = s.store.CachePut(ctx, key, string(b))
 	return trips
 }
 
+// tripCacheKey is per person: each has their own Pocket Travel token.
+func tripCacheKey(uid int64) string { return fmt.Sprintf("travel:trips:%d", uid) }
+
 func (s *Server) addTripTag(ctx context.Context, t *store.Transaction) {
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	if !st.TravelAutoTag || st.TravelURL == "" {
 		return
 	}
@@ -369,7 +397,7 @@ func (s *Server) handleTravelTrips(w http.ResponseWriter, r *http.Request) {
 	if trips == nil {
 		trips = []pocket.Trip{}
 	}
-	st, _ := s.store.GetSettings(r.Context())
+	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
 	writeJSON(w, http.StatusOK, map[string]any{"trips": trips, "public_url": firstNonEmpty(st.TravelPublicURL, st.TravelURL), "running": pocket.TripOn(trips, store.Today())})
 }
 
@@ -378,7 +406,7 @@ func (s *Server) handleTravelTrips(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	uid := actorID(ctx)
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	accts, home, err := s.accountsWithHome(ctx, false)
 	if err != nil {
 		s.fail(w, err, "accounts")
@@ -452,7 +480,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 // handleDashboard is the flat shape a Homepage customapi widget reads.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	accts, home, err := s.accountsWithHome(ctx, false)
 	if err != nil {
 		s.fail(w, err, "accounts")

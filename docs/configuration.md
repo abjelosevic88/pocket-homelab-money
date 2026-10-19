@@ -36,6 +36,8 @@ Everything is read from environment variables; every value has a default so a ba
 | `CORE_APP_URL` | `BASE_URL` | How Core reaches this app for health checks (e.g. `http://host.docker.internal:8178`) |
 | `DEMO_DATA` | `false` | Seed half a year of a sample household on an empty database |
 
+The integration variables (`NOTIFY_*`, `OPENAI_*`, `TRAVEL_*`, `FIREFLY_*`, `PICO_URL`, `FIREFLY_MIRROR`) are the **owner's** (the first admin's) defaults: they fill that person's own settings, and the first Firefly import and the mirror go into that person's books. Everyone else starts with none and sets their own under Settings. Core events carry `user_id` / `user_email` of the ledger they come from, native webhook deliveries a `user` object.
+
 ## Auth modes
 
 - **local** — accounts with email + password. The first account created becomes admin.

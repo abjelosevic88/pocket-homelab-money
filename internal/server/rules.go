@@ -184,6 +184,10 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
+	if c := rule.Actions.CategoryID; c != nil && !s.store.OwnsCategories(r.Context(), rule.OwnerID, []int64{*c}) {
+		writeErr(w, http.StatusBadRequest, "unknown category")
+		return
+	}
 	if err := s.store.CreateRule(r.Context(), &rule); err != nil {
 		s.fail(w, err, "create rule")
 		return
@@ -216,6 +220,10 @@ func (s *Server) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := validRule(&rule); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+	if c := rule.Actions.CategoryID; c != nil && !s.store.OwnsCategories(r.Context(), rule.OwnerID, []int64{*c}) {
+		writeErr(w, http.StatusBadRequest, "unknown category")
 		return
 	}
 	if err := s.store.UpdateRule(r.Context(), &rule); err != nil {
@@ -316,7 +324,7 @@ func (s *Server) handleApplyRule(w http.ResponseWriter, r *http.Request) {
 	for i := range txs {
 		t := &txs[i]
 		if applyActions(rule.Actions, t, in.Force) {
-			if err := s.store.UpdateTransaction(ctx, t); err == nil {
+			if err := s.store.UpdateTransaction(ctx, actorID(ctx), t); err == nil {
 				n++
 				if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
 					s.emitTx(ctx, "transaction.updated", full)

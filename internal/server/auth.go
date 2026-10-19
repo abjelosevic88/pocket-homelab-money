@@ -96,7 +96,9 @@ func (s *Server) coreUser(ctx context.Context, tok string) (*store.User, error) 
 }
 
 // firstOrSystemUser returns the user with that email, creating it when missing.
-// The very first account becomes admin, later ones are members.
+// The very first account becomes admin (and adopts the integration defaults
+// seeded from the environment); later ones are members and start with an
+// empty ledger: no accounts, categories, tags, settings or tokens of anyone else.
 func (s *Server) firstOrSystemUser(ctx context.Context, email, name string) (*store.User, error) {
 	if u, err := s.store.GetUserByEmail(ctx, email); err == nil {
 		return u, nil
@@ -108,6 +110,9 @@ func (s *Server) firstOrSystemUser(ctx context.Context, email, name string) (*st
 	u := &store.User{Email: email, Name: name, Role: role}
 	if err := s.store.CreateUser(ctx, u); err != nil {
 		return nil, err
+	}
+	if role == "admin" {
+		_ = s.store.AdoptSettings(ctx, u.ID)
 	}
 	s.log.Info("auto-provisioned user", "email", email, "mode", s.cfg.AuthMode, "role", role)
 	return u, nil
@@ -126,7 +131,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "count users")
 		return
 	}
-	st, _ := s.store.GetSettings(r.Context())
+	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
 	u, _ := s.resolveUser(r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"needs_setup":    n == 0 && s.cfg.AuthMode == "local",
@@ -172,9 +177,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "create user")
 		return
 	}
-	st, _ := s.store.GetSettings(ctx)
+	_ = s.store.AdoptSettings(ctx, u.ID)
+	st, _ := s.store.GetSettings(ctx, u.ID)
 	st.SetupComplete = true
-	_ = s.store.SaveSettings(ctx, st)
+	_ = s.store.SaveSettings(ctx, u.ID, st, true)
 	id, err := s.store.CreateSession(ctx, u.ID, s.cfg.SessionTTL)
 	if err != nil {
 		s.fail(w, err, "create session")

@@ -135,7 +135,7 @@ func (s *Store) VisibleAccountIDs(ctx context.Context, userID int64) ([]int64, e
 // CreateAccount inserts an account.
 func (s *Store) CreateAccount(ctx context.Context, a *Account) error {
 	if a.SortOrder == 0 {
-		_ = s.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order), 0) + 1 FROM accounts`).Scan(&a.SortOrder)
+		_ = s.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order), 0) + 1 FROM accounts WHERE owner_id = ?`, a.OwnerID).Scan(&a.SortOrder)
 	}
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO accounts (owner_id, name, kind, currency, opening_balance, opening_date, institution, number, color, icon,
 		credit_limit, include_net_worth, everyday, direction, interest_rate, interest_auto, principal, payment, payment_day, interest_booked,

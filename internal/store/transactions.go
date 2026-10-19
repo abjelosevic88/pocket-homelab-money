@@ -28,7 +28,7 @@ type TxFilter struct {
 	Oldest         bool
 }
 
-const txSelect = `SELECT t.id, t.kind, t.date, t.time, t.account_id, t.amount, t.to_account_id, t.to_amount, t.foreign_amount, t.foreign_currency,
+const txSelect = `SELECT t.id, COALESCE(t.user_id, 0), t.kind, t.date, t.time, t.account_id, t.amount, t.to_account_id, t.to_amount, t.foreign_amount, t.foreign_currency,
 	t.amount_home, t.fx_rate, t.description, t.payee, t.category_id, t.notes, t.subscription_id, t.source, t.external_id, t.lat, t.lng,
 	t.created_by, t.created_at, t.updated_at,
 	a.name, a.currency, COALESCE(b.name, ''), COALESCE(b.currency, ''), COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(c.color, ''),
@@ -42,7 +42,7 @@ const txSelect = `SELECT t.id, t.kind, t.date, t.time, t.account_id, t.amount, t
 
 func scanTx(row interface{ Scan(...any) error }) (*Transaction, error) {
 	var t Transaction
-	err := row.Scan(&t.ID, &t.Kind, &t.Date, &t.Time, &t.AccountID, &t.Amount, &t.ToAccountID, &t.ToAmount, &t.ForeignAmount, &t.ForeignCurrency,
+	err := row.Scan(&t.ID, &t.UserID, &t.Kind, &t.Date, &t.Time, &t.AccountID, &t.Amount, &t.ToAccountID, &t.ToAmount, &t.ForeignAmount, &t.ForeignCurrency,
 		&t.AmountHome, &t.FXRate, &t.Description, &t.Payee, &t.CategoryID, &t.Notes, &t.SubscriptionID, &t.Source, &t.ExternalID, &t.Lat, &t.Lng,
 		&t.CreatedBy, &t.CreatedAt, &t.UpdatedAt,
 		&t.AccountName, &t.Currency, &t.ToAccountName, &t.ToCurrency, &t.CategoryName, &t.CategoryIcon, &t.CategoryColor,
@@ -324,15 +324,23 @@ func (s *Store) GetTransaction(ctx context.Context, id int64) (*Transaction, err
 	return t, err
 }
 
-// TransactionByExternalID finds an imported transaction.
-func (s *Store) TransactionByExternalID(ctx context.Context, ext string) (int64, error) {
+// TransactionByExternalID finds a transaction a person imported.
+func (s *Store) TransactionByExternalID(ctx context.Context, userID int64, ext string) (int64, error) {
 	var id int64
-	err := s.DB.QueryRowContext(ctx, `SELECT id FROM transactions WHERE external_id = ? LIMIT 1`, ext).Scan(&id)
+	err := s.DB.QueryRowContext(ctx, `SELECT id FROM transactions WHERE external_id = ? AND user_id = ? LIMIT 1`, ext, userID).Scan(&id)
 	return id, notFound(err)
 }
 
-// CreateTransaction inserts a transaction and its tags.
+// CreateTransaction inserts a transaction and its tags. Tags are looked up
+// (or created) among the tags of whoever booked it (CreatedBy), else of the
+// account's owner; user_id is filled from the account by a trigger.
 func (s *Store) CreateTransaction(ctx context.Context, t *Transaction) error {
+	var tagOwner int64
+	if t.CreatedBy != nil {
+		tagOwner = *t.CreatedBy
+	} else {
+		_ = s.DB.QueryRowContext(ctx, `SELECT owner_id FROM accounts WHERE id = ?`, t.AccountID).Scan(&tagOwner)
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -347,7 +355,7 @@ func (s *Store) CreateTransaction(ctx context.Context, t *Transaction) error {
 		return err
 	}
 	t.ID, _ = res.LastInsertId()
-	if err := setTags(ctx, tx, t.ID, t.Tags); err != nil {
+	if err := setTags(ctx, tx, tagOwner, t.ID, t.Tags); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -358,8 +366,9 @@ func (s *Store) CreateTransaction(ctx context.Context, t *Transaction) error {
 	return tx.Commit()
 }
 
-// UpdateTransaction saves a transaction and replaces its tags.
-func (s *Store) UpdateTransaction(ctx context.Context, t *Transaction) error {
+// UpdateTransaction saves a transaction and replaces its tags; new tag names
+// become tags of userID (the person editing it).
+func (s *Store) UpdateTransaction(ctx context.Context, userID int64, t *Transaction) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -373,11 +382,7 @@ func (s *Store) UpdateTransaction(ctx context.Context, t *Transaction) error {
 		_ = tx.Rollback()
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM transaction_tags WHERE transaction_id = ?`, t.ID); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := setTags(ctx, tx, t.ID, t.Tags); err != nil {
+	if err := replaceTags(ctx, tx, userID, t.ID, t.Tags); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -388,7 +393,52 @@ func (s *Store) UpdateTransaction(ctx context.Context, t *Transaction) error {
 	return tx.Commit()
 }
 
-func setTags(ctx context.Context, tx *sql.Tx, txID int64, tags []string) error {
+// replaceTags makes the transaction carry exactly these tag names. A name
+// it already carries keeps its tag (on a shared account that may be the
+// other person's); a new one is userID's tag, created when missing.
+func replaceTags(ctx context.Context, tx *sql.Tx, userID, txID int64, tags []string) error {
+	want := map[string]bool{}
+	for _, name := range tags {
+		if name = strings.TrimSpace(name); name != "" {
+			want[strings.ToLower(name)] = true
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT g.id, g.name FROM transaction_tags x JOIN tags g ON g.id = x.tag_id WHERE x.transaction_id = ?`, txID)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	var drop []int64
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		if want[strings.ToLower(name)] {
+			have[strings.ToLower(name)] = true
+		} else {
+			drop = append(drop, id)
+		}
+	}
+	rows.Close()
+	for _, id := range drop {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?`, txID, id); err != nil {
+			return err
+		}
+	}
+	var add []string
+	for _, name := range tags {
+		if n := strings.TrimSpace(name); n != "" && !have[strings.ToLower(n)] {
+			add = append(add, n)
+		}
+	}
+	return setTags(ctx, tx, userID, txID, add)
+}
+
+// setTags links tag names (userID's tags, created when missing) to a transaction.
+func setTags(ctx context.Context, tx *sql.Tx, userID, txID int64, tags []string) error {
 	seen := map[string]bool{}
 	for _, name := range tags {
 		name = strings.TrimSpace(name)
@@ -398,8 +448,8 @@ func setTags(ctx context.Context, tx *sql.Tx, txID int64, tags []string) error {
 		}
 		seen[k] = true
 		var id int64
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name = ? COLLATE NOCASE`, name).Scan(&id); err != nil {
-			res, err := tx.ExecContext(ctx, `INSERT INTO tags (name) VALUES (?)`, name)
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE user_id = ? AND name = ? COLLATE NOCASE`, userID, name).Scan(&id); err != nil {
+			res, err := tx.ExecContext(ctx, `INSERT INTO tags (user_id, name) VALUES (?, ?)`, userID, name)
 			if err != nil {
 				return err
 			}
@@ -418,8 +468,8 @@ func (s *Store) DeleteTransaction(ctx context.Context, id int64) error {
 	return err
 }
 
-// BulkUpdate applies a category and/or tags to many transactions.
-func (s *Store) BulkUpdate(ctx context.Context, ids []int64, categoryID *int64, clearCategory bool, addTags, removeTags []string) error {
+// BulkUpdate applies a category and/or tags to many transactions (new tags are userID's).
+func (s *Store) BulkUpdate(ctx context.Context, userID int64, ids []int64, categoryID *int64, clearCategory bool, addTags, removeTags []string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -431,7 +481,7 @@ func (s *Store) BulkUpdate(ctx context.Context, ids []int64, categoryID *int64, 
 				return err
 			}
 		}
-		if err := setTags(ctx, tx, id, addTags); err != nil {
+		if err := setTags(ctx, tx, userID, id, addTags); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -529,7 +579,7 @@ type Suggestion struct {
 
 // DescriptionSuggestions returns past descriptions starting with / containing q,
 // most used first, each with the category it was filed under most often.
-func (s *Store) DescriptionSuggestions(ctx context.Context, accountIDs []int64, q string, limit int) ([]Suggestion, error) {
+func (s *Store) DescriptionSuggestions(ctx context.Context, userID int64, accountIDs []int64, q string, limit int) ([]Suggestion, error) {
 	in, args := inList(accountIDs)
 	like := "%" + strings.ToLower(strings.TrimSpace(q)) + "%"
 	args = append(args, like, strings.ToLower(strings.TrimSpace(q))+"%", limit)
@@ -550,10 +600,12 @@ func (s *Store) DescriptionSuggestions(ctx context.Context, accountIDs []int64, 
 		out = append(out, sg)
 	}
 	rows.Close()
+	in2, args2 := inList(accountIDs)
 	for i := range out {
-		_ = s.DB.QueryRowContext(ctx, `SELECT category_id, payee, amount, account_id, kind FROM transactions WHERE lower(description) = lower(?)
-			ORDER BY date DESC, id DESC LIMIT 1`, out[i].Text).Scan(&out[i].CategoryID, &out[i].Payee, &out[i].LastAmount, &out[i].AccountID, &out[i].Kind)
-		if c := s.LearnedCategory(ctx, out[i].Text); c != nil {
+		_ = s.DB.QueryRowContext(ctx, `SELECT CASE WHEN EXISTS (SELECT 1 FROM categories c WHERE c.id = t.category_id AND c.user_id = ?) THEN t.category_id END,
+			t.payee, t.amount, t.account_id, t.kind FROM transactions t WHERE t.account_id IN `+in2+` AND lower(t.description) = lower(?)
+			ORDER BY t.date DESC, t.id DESC LIMIT 1`, append(append([]any{userID}, args2...), out[i].Text)...).Scan(&out[i].CategoryID, &out[i].Payee, &out[i].LastAmount, &out[i].AccountID, &out[i].Kind)
+		if c := s.LearnedCategory(ctx, userID, out[i].Text); c != nil {
 			out[i].CategoryID = c
 		}
 	}
@@ -563,15 +615,16 @@ func (s *Store) DescriptionSuggestions(ctx context.Context, accountIDs []int64, 
 	return out, nil
 }
 
-// LearnedCategory is the category most often used for this description (or payee).
-func (s *Store) LearnedCategory(ctx context.Context, text string) *int64 {
+// LearnedCategory is the person's category most often used for this description (or payee).
+func (s *Store) LearnedCategory(ctx context.Context, userID int64, text string) *int64 {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
 	}
 	var id sql.NullInt64
-	_ = s.DB.QueryRowContext(ctx, `SELECT category_id FROM transactions WHERE category_id IS NOT NULL AND (lower(description) = lower(?) OR lower(payee) = lower(?))
-		GROUP BY category_id ORDER BY COUNT(1) DESC, MAX(date) DESC LIMIT 1`, text, text).Scan(&id)
+	_ = s.DB.QueryRowContext(ctx, `SELECT t.category_id FROM transactions t JOIN categories c ON c.id = t.category_id AND c.user_id = ?
+		WHERE (lower(t.description) = lower(?) OR lower(t.payee) = lower(?))
+		GROUP BY t.category_id ORDER BY COUNT(1) DESC, MAX(t.date) DESC LIMIT 1`, userID, text, text).Scan(&id)
 	if !id.Valid {
 		return nil
 	}

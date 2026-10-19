@@ -8,14 +8,63 @@ import (
 // DefaultTitle is the app title until someone changes it.
 const DefaultTitle = "Pocket Money"
 
-// GetSettings loads all settings with defaults applied.
-func (s *Store) GetSettings(ctx context.Context) (Settings, error) {
+// PersonalSettings are the keys every person keeps for themselves:
+// preferences, integration URLs/tokens/keys and reminders. Everything else
+// (title, home_currency, fx_auto, setup_complete) is server-wide.
+var PersonalSettings = map[string]bool{
+	"date_format": true, "time_format": true, "week_start": true, "month_start_day": true, "default_account_id": true, "quick_lang": true,
+	"firefly_url": true, "firefly_token": true, "firefly_mirror": true, "pico_url": true,
+	"notify_url": true, "notify_format": true, "notify_hour": true, "notify_digest": true,
+	"ai_url": true, "ai_key": true, "ai_model": true, "ai_transcribe_model": true, "ai_language": true, "ai_context": true,
+	"travel_url": true, "travel_token": true, "travel_public_url": true, "travel_auto_tag": true,
+}
+
+// GetSettings loads the server-wide settings plus one person's own, with
+// defaults applied. userID 0 reads only what is not owned by anyone (the
+// server-wide keys and integration defaults from the environment that have
+// no owner yet).
+func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error) {
 	st := Settings{Title: DefaultTitle, HomeCurrency: "EUR", DateFormat: "auto", TimeFormat: "auto", WeekStart: 1, MonthStartDay: 1, FXAuto: true, QuickLang: "auto", NotifyFormat: "apprise", NotifyHour: 9, NotifyDigest: true, TravelAutoTag: true}
+	kv := map[string]string{}
 	rows, err := s.DB.QueryContext(ctx, `SELECT key, value FROM settings`)
 	if err != nil {
 		return st, err
 	}
-	defer rows.Close()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			rows.Close()
+			return st, err
+		}
+		if userID > 0 && PersonalSettings[k] {
+			continue // an unowned leftover is nobody's personal setting
+		}
+		kv[k] = v
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return st, err
+	}
+	if userID > 0 {
+		rows, err := s.DB.QueryContext(ctx, `SELECT key, value FROM user_settings WHERE user_id = ?`, userID)
+		if err != nil {
+			return st, err
+		}
+		for rows.Next() {
+			var k, v string
+			if err := rows.Scan(&k, &v); err != nil {
+				rows.Close()
+				return st, err
+			}
+			if PersonalSettings[k] {
+				kv[k] = v
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return st, err
+		}
+	}
 	str := map[string]*string{
 		"firefly_url": &st.FireflyURL, "firefly_token": &st.FireflyToken, "pico_url": &st.PicoURL,
 		"notify_url": &st.NotifyURL, "ai_url": &st.AIURL, "ai_key": &st.AIKey, "ai_model": &st.AIModel,
@@ -30,11 +79,7 @@ func (s *Store) GetSettings(ctx context.Context) (Settings, error) {
 		"fx_auto": &st.FXAuto, "firefly_mirror": &st.FireflyMirror, "notify_digest": &st.NotifyDigest,
 		"travel_auto_tag": &st.TravelAutoTag, "setup_complete": &st.SetupComplete,
 	}
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			return st, err
-		}
+	for k, v := range kv {
 		if p, ok := str[k]; ok {
 			*p = v
 			continue
@@ -66,13 +111,12 @@ func (s *Store) GetSettings(ctx context.Context) (Settings, error) {
 			}
 		}
 	}
-	return st, rows.Err()
+	return st, nil
 }
 
-// SaveSettings persists all settings.
-func (s *Store) SaveSettings(ctx context.Context, st Settings) error {
+func settingsKV(st Settings) map[string]string {
 	b := map[bool]string{true: "1", false: "0"}
-	kv := map[string]string{
+	return map[string]string{
 		"title":               st.Title,
 		"home_currency":       st.HomeCurrency,
 		"date_format":         st.DateFormat,
@@ -102,12 +146,51 @@ func (s *Store) SaveSettings(ctx context.Context, st Settings) error {
 		"travel_auto_tag":     b[st.TravelAutoTag],
 		"setup_complete":      b[st.SetupComplete],
 	}
+}
+
+// SaveSettings persists a person's own settings and, with box, the
+// server-wide ones too (callers only pass box for an admin). userID 0 stores
+// the personal keys unowned, to be adopted by the first admin.
+func (s *Store) SaveSettings(ctx context.Context, userID int64, st Settings, box bool) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	for k, v := range kv {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
+	for k, v := range settingsKV(st) {
+		var q string
+		var args []any
+		switch {
+		case PersonalSettings[k] && userID > 0:
+			q, args = `INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`, []any{userID, k, v}
+		case PersonalSettings[k] || box:
+			q, args = `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, []any{k, v}
+		default:
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// AdoptSettings hands unowned personal settings (integration defaults seeded
+// from the environment before anyone signed up) to the first admin.
+func (s *Store) AdoptSettings(ctx context.Context, userID int64) error {
+	if userID <= 0 {
+		return nil
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for k := range PersonalSettings {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_settings (user_id, key, value) SELECT ?, key, value FROM settings WHERE key = ?`, userID, k); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, k); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

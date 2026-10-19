@@ -63,7 +63,7 @@ func periodLabel(from, to, period string) string {
 // budgetStatus computes how a budget is doing in the period around date.
 func (s *Server) budgetStatus(ctx context.Context, b *store.Budget, date string, st store.Settings) *store.BudgetStatus {
 	accts, _ := s.store.VisibleAccountIDs(ctx, b.OwnerID)
-	cats, _ := s.store.CategoryChildren(ctx, b.CategoryIDs)
+	cats, _ := s.store.CategoryChildren(ctx, b.OwnerID, b.CategoryIDs)
 	from, to := periodBounds(date, b.Period, st.MonthStartDay, st.WeekStart)
 	spent, n, _ := s.store.SpentHome(ctx, accts, cats, b.TagNames, from, to)
 	bs := &store.BudgetStatus{From: from, To: to, Spent: spent, TxCount: n, PeriodLabel: periodLabel(from, to, b.Period)}
@@ -130,7 +130,7 @@ func (s *Server) handleListBudgets(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "budgets")
 		return
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	date := r.URL.Query().Get("date")
 	if date == "" {
 		date = store.Today()
@@ -169,13 +169,13 @@ func (s *Server) handleGetBudget(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		return
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	date := r.URL.Query().Get("date")
 	if date == "" {
 		date = store.Today()
 	}
 	b.Status = s.budgetStatus(ctx, b, date, st)
-	cats, _ := s.store.CategoryChildren(ctx, b.CategoryIDs)
+	cats, _ := s.store.CategoryChildren(ctx, b.OwnerID, b.CategoryIDs)
 	f := store.TxFilter{AccountIDs: s.visibleIDs(ctx), Kind: "expense", CategoryIDs: cats, From: b.Status.From, To: b.Status.To, Limit: 500}
 	if len(b.TagNames) == 1 {
 		f.Tag = b.TagNames[0]
@@ -284,8 +284,12 @@ func (s *Server) handleCreateBudget(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
+	if !s.store.OwnsCategories(ctx, b.OwnerID, b.CategoryIDs) {
+		writeErr(w, http.StatusBadRequest, "unknown category")
+		return
+	}
 	if b.StartDate == "" {
-		st, _ := s.store.GetSettings(ctx)
+		st, _ := s.store.GetSettings(ctx, actorID(ctx))
 		b.StartDate, _ = periodBounds(store.Today(), b.Period, st.MonthStartDay, st.WeekStart)
 	}
 	if err := s.store.CreateBudget(ctx, b); err != nil {
@@ -307,6 +311,10 @@ func (s *Server) handleUpdateBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := in.apply(b); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+	if !s.store.OwnsCategories(r.Context(), b.OwnerID, b.CategoryIDs) {
+		writeErr(w, http.StatusBadRequest, "unknown category")
 		return
 	}
 	if err := s.store.UpdateBudget(r.Context(), b); err != nil {
@@ -332,7 +340,7 @@ func (s *Server) handleDeleteBudget(w http.ResponseWriter, r *http.Request) {
 // months of spending, rounded up to a friendly number.
 func (s *Server) handleSuggestBudgets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	cur, _ := periodBounds(store.Today(), "monthly", st.MonthStartDay, st.WeekStart)
 	f1, _ := prevPeriod(cur, "monthly", st.MonthStartDay, st.WeekStart)
 	f2, _ := prevPeriod(f1, "monthly", st.MonthStartDay, st.WeekStart)
@@ -549,7 +557,7 @@ func (s *Server) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	g := &store.Goal{OwnerID: actorID(ctx), Currency: st.HomeCurrency, Icon: "🎯"}
 	if msg := s.applyGoal(ctx, &in, g); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)

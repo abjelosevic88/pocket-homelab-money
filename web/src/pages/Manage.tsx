@@ -13,7 +13,7 @@ import { TxList } from '../components/TxList'
 // ---------------- categories ----------------
 
 export function Categories() {
-  const { categories, reloadCatalog, user } = useApp()
+  const { categories, reloadCatalog } = useApp()
   const { toast } = useToast()
   const [edit, setEdit] = useState<Partial<Category> | null>(null)
   const [del, setDel] = useState<Category | null>(null)
@@ -36,7 +36,7 @@ export function Categories() {
                 <td style={{ paddingLeft: c.parent_id ? 34 : undefined }}>{c.icon || '•'} {c.name}{c.archived && <span className="badge" style={{ marginLeft: 6 }}>archived</span>}</td>
                 <td className="muted">{c.kind}</td>
                 <td className="num">{c.tx_count}</td>
-                <td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?category=${c.id}`}>Show</Link>{user?.role === 'admin' && <button className="btn ghost sm danger-text" onClick={() => setDel(c)}>Remove</button>}</td>
+                <td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?category=${c.id}`}>Show</Link><button className="btn ghost sm danger-text" onClick={() => setDel(c)}>Remove</button></td>
               </tr>
             ))}
           </tbody>

@@ -275,14 +275,27 @@ func (s *Server) amountFits(ctx context.Context, x *store.Subscription, t *store
 	return float64(v) >= float64(x.Amount)*0.8 && float64(v) <= float64(hi)*1.25
 }
 
-// matchSubscription links a new transaction to the subscription it pays.
+// matchSubscription links a new transaction to the subscription it pays:
+// one of the booker's own, or of the account owner's when booked on a shared
+// account.
 func (s *Server) matchSubscription(ctx context.Context, t *store.Transaction) {
 	if t.Kind == "transfer" && t.ToAccountID == nil {
 		return
 	}
-	subs, err := s.store.ListSubscriptions(ctx, 0)
-	if err != nil {
-		return
+	owners := []int64{actorID(ctx)}
+	if t.UserID > 0 && t.UserID != owners[0] {
+		owners = append(owners, t.UserID)
+	}
+	var subs []store.Subscription
+	for _, o := range owners {
+		if o <= 0 {
+			continue
+		}
+		list, err := s.store.ListSubscriptions(ctx, o)
+		if err != nil {
+			return
+		}
+		subs = append(subs, list...)
 	}
 	for i := range subs {
 		x := &subs[i]
@@ -344,8 +357,10 @@ func (s *Server) moveOn(ctx context.Context, x *store.Subscription, paid bool) {
 	_ = s.store.UpdateSubscription(ctx, x)
 }
 
-// bookDueSubscriptions creates the transactions of "auto" subscriptions that are due.
-func (s *Server) bookDueSubscriptions(ctx context.Context) {
+// bookDueSubscriptions creates the transactions of "auto" subscriptions that
+// are due, each booked as its owner. People whose Firefly III is still being
+// mirrored (mirrored[owner]) are skipped: Firefly's own recurrences book theirs.
+func (s *Server) bookDueSubscriptions(ctx context.Context, mirrored map[int64]bool) {
 	subs, err := s.store.ListSubscriptions(ctx, 0)
 	if err != nil {
 		return
@@ -353,6 +368,9 @@ func (s *Server) bookDueSubscriptions(ctx context.Context) {
 	today := store.Today()
 	for i := range subs {
 		x := &subs[i]
+		if mirrored[x.OwnerID] {
+			continue
+		}
 		for n := 0; n < 12 && x.Active && x.Mode == "auto" && x.NextDate != "" && !limitReached(x) && dueOf(x) <= today && (x.EndDate == "" || x.NextDate <= x.EndDate); n++ {
 			owner, err := s.store.GetUser(ctx, x.OwnerID)
 			if err != nil {
@@ -367,7 +385,7 @@ func (s *Server) bookDueSubscriptions(ctx context.Context) {
 				break
 			}
 			s.log.Info("subscription booked", "name", x.Name, "date", due)
-			s.publish("money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), subPaidEvent(x, t, true))
+			s.publish("money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), s.subPaidEvent(ctx, x, t, true))
 			nx, err := s.store.GetSubscription(ctx, x.ID)
 			if err != nil || nx.NextDate == before {
 				break
@@ -410,7 +428,7 @@ func (s *Server) handleListSubscriptions(w http.ResponseWriter, r *http.Request)
 		s.fail(w, err, "subscriptions")
 		return
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	var monthly, yearly, income int64
 	for i := range subs {
 		s.decorate(ctx, &subs[i], st.HomeCurrency)
@@ -471,7 +489,7 @@ func (s *Server) handleGetSubscription(w http.ResponseWriter, r *http.Request) {
 	if x == nil {
 		return
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	s.decorate(ctx, x, st.HomeCurrency)
 	txs, _, _ := s.store.ListTransactions(ctx, store.TxFilter{AccountIDs: s.visibleIDs(ctx), SubscriptionID: x.ID, Limit: 60})
 	writeJSON(w, http.StatusOK, map[string]any{"subscription": x, "payments": txs, "next": occurrences(x, time.Now().AddDate(1, 0, 0).Format("2006-01-02"), 14)})
@@ -614,6 +632,10 @@ func (s *Server) applySub(ctx context.Context, in *subIn, x *store.Subscription)
 		return "dates must be YYYY-MM-DD (the next due date is required)"
 	case x.AccountID != nil && !s.canWrite(ctx, *x.AccountID):
 		return "you cannot book on that account"
+	case x.ToAccountID != nil && !s.canWrite(ctx, *x.ToAccountID):
+		return "you cannot book on the destination account"
+	case in.CategoryID != nil && x.CategoryID != nil && !s.store.OwnsCategories(ctx, x.OwnerID, []int64{*x.CategoryID}):
+		return "unknown category"
 	case x.Mode == "auto" && x.AccountID == nil:
 		return "automatic booking needs an account"
 	case x.Kind == "transfer" && x.ToAccountID == nil:
@@ -629,14 +651,14 @@ func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	x := &store.Subscription{OwnerID: actorID(ctx), Kind: "expense", Currency: st.HomeCurrency, Freq: "monthly", Every: 1, Mode: "remind", NotifyDays: 2, Active: true, Tags: []string{}}
 	if msg := s.applySub(ctx, &in, x); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	if x.CategoryID == nil {
-		x.CategoryID = s.store.LearnedCategory(ctx, x.Name)
+		x.CategoryID = s.store.LearnedCategory(ctx, x.OwnerID, x.Name)
 	}
 	if err := s.store.CreateSubscription(ctx, x); err != nil {
 		s.fail(w, err, "create subscription")
@@ -664,7 +686,7 @@ func (s *Server) relinkSubscription(ctx context.Context, id int64) int {
 	n := 0
 	for i := range txs {
 		t := &txs[i]
-		if t.SubscriptionID != nil || (x.AccountID != nil && *x.AccountID != t.AccountID) {
+		if t.SubscriptionID != nil || (x.AccountID != nil && *x.AccountID != t.AccountID) || !s.canWrite(ctx, t.AccountID) {
 			continue
 		}
 		if textMatches(x, t) && s.amountFits(ctx, x, t) {
@@ -698,7 +720,7 @@ func (s *Server) handleUpdateSubscription(w http.ResponseWriter, r *http.Request
 		s.fail(w, err, "update subscription")
 		return
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	x, _ = s.store.GetSubscription(ctx, x.ID)
 	s.decorate(ctx, x, st.HomeCurrency)
 	writeJSON(w, http.StatusOK, x)
@@ -744,13 +766,17 @@ func (s *Server) handlePaySubscription(w http.ResponseWriter, r *http.Request) {
 	if nx, err := s.store.GetSubscription(r.Context(), x.ID); err == nil && nx.NextDate == x.NextDate {
 		s.moveOn(r.Context(), nx, true)
 	}
-	s.publish("money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), subPaidEvent(x, t, false))
+	s.publish("money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), s.subPaidEvent(r.Context(), x, t, false))
 	writeJSON(w, http.StatusCreated, t)
 }
 
 // subPaidEvent is the small payload a Pocket Core event carries about a paid subscription.
-func subPaidEvent(x *store.Subscription, t *store.Transaction, auto bool) map[string]any {
-	ev := map[string]any{"subscription_id": x.ID, "subscription": x.Name, "currency": x.Currency, "auto": auto}
+func (s *Server) subPaidEvent(ctx context.Context, x *store.Subscription, t *store.Transaction, auto bool) map[string]any {
+	email := ""
+	if u, err := s.store.GetUser(ctx, x.OwnerID); err == nil {
+		email = u.Email
+	}
+	ev := map[string]any{"user_id": x.OwnerID, "user_email": email, "subscription_id": x.ID, "subscription": x.Name, "currency": x.Currency, "auto": auto}
 	if t != nil {
 		ev["transaction_id"], ev["date"], ev["amount"] = t.ID, t.Date, t.Amount
 	}
@@ -825,7 +851,7 @@ func (s *Server) handleDetectSubscriptions(w http.ResponseWriter, r *http.Reques
 		s.fail(w, err, "detect")
 		return
 	}
-	subs, _ := s.store.ListSubscriptions(ctx, 0)
+	subs, _ := s.store.ListSubscriptions(ctx, actorID(ctx))
 	known := map[string]bool{}
 	for _, x := range subs {
 		known[normText(x.Name)] = true
@@ -844,7 +870,7 @@ func (s *Server) handleDetectSubscriptions(w http.ResponseWriter, r *http.Reques
 		}
 		groups[row.Kind+"|"+key] = append(groups[row.Kind+"|"+key], row)
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	out := []Detected{}
 	for _, g := range groups {
 		if len(g) < 3 {

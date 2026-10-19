@@ -48,8 +48,6 @@ type Server struct {
 
 	jobMu     sync.Mutex // one background pass (or import) at a time
 	importing atomic.Bool
-	notifyDay string
-	digestDay string
 
 	oidcMu sync.Mutex
 	oidc   *oidcProvider
@@ -96,14 +94,23 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		if err := s.store.CreateUser(ctx, u); err != nil {
 			return err
 		}
-		st, _ := s.store.GetSettings(ctx)
+		st, _ := s.store.GetSettings(ctx, u.ID)
 		st.SetupComplete = true
-		if err := s.store.SaveSettings(ctx, st); err != nil {
+		if err := s.store.SaveSettings(ctx, u.ID, st, true); err != nil {
 			return err
 		}
 		s.log.Info("admin user created from environment", "email", u.Email)
 	}
-	st, err := s.store.GetSettings(ctx)
+	// The integrations configured in the environment (Firefly, Pico, notify,
+	// OpenAI, Travel) are the owner's: they go into the owner's own settings,
+	// or stay unowned until the first admin signs up and adopts them.
+	ownerID := s.store.OwnerID(ctx)
+	if ownerID > 0 {
+		if err := s.store.AdoptSettings(ctx, ownerID); err != nil {
+			return err
+		}
+	}
+	st, err := s.store.GetSettings(ctx, ownerID)
 	if err != nil {
 		return err
 	}
@@ -137,7 +144,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		changed = true
 	}
 	if changed {
-		if err := s.store.SaveSettings(ctx, st); err != nil {
+		if err := s.store.SaveSettings(ctx, ownerID, st, true); err != nil {
 			return err
 		}
 	}
@@ -153,7 +160,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 			if owner, err := s.importOwner(ctx); err == nil {
 				if s.cfg.FireflyMirror && !st.FireflyMirror {
 					st.FireflyMirror = true
-					_ = s.store.SaveSettings(ctx, st)
+					_ = s.store.SaveSettings(ctx, owner.ID, st, false)
 				}
 				go func() {
 					res := s.importFirefly(context.Background(), owner.ID, importOptions{All: true})
@@ -173,7 +180,8 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-// importOwner picks the account that owns imported data: the first admin.
+// importOwner picks the account that owns the environment's Firefly import:
+// the first admin.
 func (s *Server) importOwner(ctx context.Context) (*store.User, error) {
 	users, err := s.store.ListUsers(ctx)
 	if err != nil {
@@ -212,26 +220,37 @@ func (s *Server) janitor(ctx context.Context) {
 	}
 }
 
+// runJobs does the background work person by person: each one's Firefly
+// mirror (their own Firefly settings into their own ledger), due
+// subscriptions, interest and reminders.
 func (s *Server) runJobs(ctx context.Context, mirror bool) {
 	s.jobMu.Lock()
 	defer s.jobMu.Unlock()
-	st, _ := s.store.GetSettings(ctx)
-	if mirror && st.FireflyMirror && st.FireflyURL != "" && !s.importing.Load() {
-		if owner, err := s.importOwner(ctx); err == nil {
-			res := s.importFirefly(ctx, owner.ID, importOptions{Transactions: true, Since: time.Now().AddDate(0, 0, -45).Format("2006-01-02"), Quiet: true})
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		s.log.Warn("jobs: list users", "err", err)
+		return
+	}
+	mirrored := map[int64]bool{}
+	for i := range users {
+		u := &users[i]
+		st, _ := s.store.GetSettings(ctx, u.ID)
+		mirrored[u.ID] = st.FireflyMirror
+		if mirror && st.FireflyMirror && st.FireflyURL != "" && !s.importing.Load() {
+			res := s.importFirefly(ctx, u.ID, importOptions{Transactions: true, Since: time.Now().AddDate(0, 0, -45).Format("2006-01-02"), Quiet: true})
 			if res.Error != "" {
-				s.log.Warn("firefly mirror", "err", res.Error)
+				s.log.Warn("firefly mirror", "user", u.ID, "err", res.Error)
 			} else if res.Created+res.Updated > 0 {
-				s.log.Info("firefly mirror", "summary", res.Summary())
+				s.log.Info("firefly mirror", "user", u.ID, "summary", res.Summary())
 			}
 		}
 	}
-	if !st.FireflyMirror {
-		// while Firefly is still the source, its own recurrences book these
-		s.bookDueSubscriptions(ctx)
-	}
+	// while someone's Firefly is still the source, its own recurrences book theirs
+	s.bookDueSubscriptions(ctx, mirrored)
 	s.bookDueInterest(ctx)
-	s.maybeNotify(ctx, st)
+	for i := range users {
+		s.maybeNotify(context.WithValue(ctx, userKey, &users[i]))
+	}
 }
 
 // ---- integration clients, built from the current settings ----
@@ -244,8 +263,10 @@ type clients struct {
 	ai      *ai.Client
 }
 
+// clients are built from the settings of the person in ctx (every
+// integration credential is personal).
 func (s *Server) clients(ctx context.Context) clients {
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	if st.TravelURL == "" && st.TravelToken != "" {
 		st.TravelURL = s.resolveSibling(ctx, "travel")
 	}
@@ -270,7 +291,7 @@ func (s *Server) rate(ctx context.Context, from, to, date string) (float64, stri
 	if r, src, ok := s.store.GetFXRate(ctx, from, to, date); ok {
 		return r, src
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	if !st.FXAuto {
 		if r, ok := fx.Pegged(from, to); ok {
 			return r, "fixed peg"
@@ -791,7 +812,7 @@ func (s *Server) maintenance(ctx context.Context) {
 		}
 		if len(ff) > 0 {
 			s.guessEveryday(ctx, ff)
-			s.seedTemplateUse(ctx)
+			s.seedTemplateUse(ctx, s.store.OwnerID(ctx))
 		}
 		_ = s.store.CachePut(ctx, "maint:everyday-v1", store.Now())
 	}

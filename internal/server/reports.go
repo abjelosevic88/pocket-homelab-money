@@ -39,7 +39,7 @@ func shiftRange(from, to string) (string, string) {
 
 func (s *Server) handleReportOverview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	from, to := s.rangeParams(r, st)
 	ids := s.visibleIDs(ctx)
 	if a := queryInt(r, "account"); a > 0 && s.canSee(ctx, int64(a)) {
@@ -128,7 +128,7 @@ func minStr(a, b string) string {
 // handleReportFlow returns income/expense per month for the last N months.
 func (s *Server) handleReportFlow(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	n := queryInt(r, "months")
 	if n <= 0 || n > 60 {
 		n = 12
@@ -180,7 +180,7 @@ func (s *Server) handleReportFlow(w http.ResponseWriter, r *http.Request) {
 // and a 3-period average for comparison; parents carry their children.
 func (s *Server) handleReportCategories(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	from, to := s.rangeParams(r, st)
 	kind := r.URL.Query().Get("kind")
 	if kind != "income" {
@@ -208,7 +208,7 @@ func (s *Server) handleReportCategories(w http.ResponseWriter, r *http.Request) 
 		cur[i].Average = am[cur[i].ID]
 	}
 	// roll children up into their parents for the top-level view
-	cats, _ := s.store.ListCategories(ctx)
+	cats, _ := s.store.ListCategories(ctx, actorID(ctx))
 	byID := map[int64]store.Category{}
 	for _, c := range cats {
 		byID[c.ID] = c
@@ -246,7 +246,7 @@ func (s *Server) handleReportCategories(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleReportTags(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	from, to := s.rangeParams(r, st)
 	if queryBool(r, "all") {
 		from, to = "1900-01-01", "2999-12-31"
@@ -263,7 +263,7 @@ func (s *Server) handleReportTags(w http.ResponseWriter, r *http.Request) {
 // every account converted at that date's rate.
 func (s *Server) handleReportNetWorth(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	n := queryInt(r, "months")
 	if n <= 0 || n > 60 {
 		n = 12
@@ -330,7 +330,7 @@ func (s *Server) handleReportNetWorth(w http.ResponseWriter, r *http.Request) {
 // handleReportCalendar returns spend per day for a year (heatmap).
 func (s *Server) handleReportCalendar(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	year := r.URL.Query().Get("year")
 	if len(year) != 4 {
 		year = time.Now().Format("2006")
@@ -374,7 +374,7 @@ type Forecast struct {
 }
 
 func (s *Server) forecast(ctx context.Context) Forecast {
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	today := store.Today()
 	from, to := periodBounds(today, "monthly", st.MonthStartDay, st.WeekStart)
 	fc := Forecast{From: from, To: to, Currency: st.HomeCurrency, DaysLeft: store.DaysBetween(today, to), Upcoming: []map[string]any{}}
@@ -501,7 +501,7 @@ type Insight struct {
 }
 
 func (s *Server) insights(ctx context.Context) []Insight {
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	ids := s.visibleIDs(ctx)
 	today := store.Today()
 	from, _ := periodBounds(today, "monthly", st.MonthStartDay, st.WeekStart)

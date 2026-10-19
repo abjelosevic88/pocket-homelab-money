@@ -88,24 +88,52 @@ func (s *Store) migrate() error {
 		if err != nil {
 			return err
 		}
-		tx, err := s.DB.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(string(body)); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("migration %s: %w", name, err)
-		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)`, name, Now()); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
+		if err := s.applyMigration(name, string(body)); err != nil {
 			return err
 		}
 		s.log.Info("applied migration", "name", name)
 	}
 	return nil
+}
+
+// applyMigration runs one file in a transaction with foreign keys switched
+// off (SQLite's way to rebuild a table: a DROP with them on would cascade),
+// checks the keys before committing and switches them back on.
+func (s *Store) applyMigration(name, body string) error {
+	ctx := context.Background()
+	conn, err := s.DB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`) //nolint:errcheck
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, body); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("migration %s: %w", name, err)
+	}
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	bad := rows.Next()
+	rows.Close()
+	if bad {
+		_ = tx.Rollback()
+		return fmt.Errorf("migration %s: foreign key check failed", name)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)`, name, Now()); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // Backup writes a consistent copy of the database to dst using VACUUM INTO.
@@ -131,6 +159,39 @@ func (s *Store) Counts(ctx context.Context) map[string]int {
 		}
 	}
 	return out
+}
+
+// CountsFor returns one person's row counts (what the About page shows them).
+func (s *Store) CountsFor(ctx context.Context, userID int64) map[string]int {
+	q := map[string]string{
+		"accounts":      `SELECT COUNT(1) FROM accounts WHERE owner_id = ?`,
+		"transactions":  `SELECT COUNT(1) FROM transactions WHERE user_id = ?`,
+		"categories":    `SELECT COUNT(1) FROM categories WHERE user_id = ?`,
+		"tags":          `SELECT COUNT(1) FROM tags WHERE user_id = ?`,
+		"subscriptions": `SELECT COUNT(1) FROM subscriptions WHERE owner_id = ?`,
+		"budgets":       `SELECT COUNT(1) FROM budgets WHERE owner_id = ?`,
+		"goals":         `SELECT COUNT(1) FROM goals WHERE owner_id = ?`,
+		"templates":     `SELECT COUNT(1) FROM templates WHERE owner_id = ?`,
+		"rules":         `SELECT COUNT(1) FROM rules WHERE owner_id = ?`,
+		"attachments":   `SELECT COUNT(1) FROM attachments x JOIN transactions t ON t.id = x.transaction_id WHERE t.user_id = ?`,
+		"api_tokens":    `SELECT COUNT(1) FROM api_tokens WHERE user_id = ?`,
+	}
+	out := map[string]int{}
+	for k, sq := range q {
+		var n int
+		if err := s.DB.QueryRowContext(ctx, sq, userID).Scan(&n); err == nil {
+			out[k] = n
+		}
+	}
+	return out
+}
+
+// OwnerID is the account that owns server-level imports: the first admin,
+// else the first user (0 when there are no users yet).
+func (s *Store) OwnerID(ctx context.Context) int64 {
+	var id int64
+	_ = s.DB.QueryRowContext(ctx, `SELECT id FROM users ORDER BY role != 'admin', id LIMIT 1`).Scan(&id)
+	return id
 }
 
 // Now returns the current UTC time formatted for storage.
@@ -194,13 +255,13 @@ func (s *Store) LogActivity(ctx context.Context, userID int64, action, subject s
 		uid = userID
 	}
 	_, _ = s.DB.ExecContext(ctx, `INSERT INTO activity (user_id, action, subject) VALUES (?, ?, ?)`, uid, action, subject)
-	_, _ = s.DB.ExecContext(ctx, `DELETE FROM activity WHERE id NOT IN (SELECT id FROM activity ORDER BY id DESC LIMIT 500)`)
+	_, _ = s.DB.ExecContext(ctx, `DELETE FROM activity WHERE user_id IS ? AND id NOT IN (SELECT id FROM activity WHERE user_id IS ? ORDER BY id DESC LIMIT 500)`, uid, uid)
 }
 
-// ListActivity returns the latest change-log lines.
-func (s *Store) ListActivity(ctx context.Context, limit int) ([]Activity, error) {
+// ListActivity returns a person's latest change-log lines.
+func (s *Store) ListActivity(ctx context.Context, userID int64, limit int) ([]Activity, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT a.id, a.user_id, COALESCE(u.name, u.email, ''), a.action, a.subject, a.created_at
-		FROM activity a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT ?`, limit)
+		FROM activity a LEFT JOIN users u ON u.id = a.user_id WHERE a.user_id = ? ORDER BY a.id DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -217,14 +278,14 @@ func (s *Store) ListActivity(ctx context.Context, limit int) ([]Activity, error)
 }
 
 // LogAI records the tokens one AI call used.
-func (s *Store) LogAI(ctx context.Context, feature, model string, prompt, completion int) {
-	_, _ = s.DB.ExecContext(ctx, `INSERT INTO ai_usage (feature, model, prompt_tokens, completion_tokens) VALUES (?, ?, ?, ?)`, feature, model, prompt, completion)
+func (s *Store) LogAI(ctx context.Context, userID int64, feature, model string, prompt, completion int) {
+	_, _ = s.DB.ExecContext(ctx, `INSERT INTO ai_usage (user_id, feature, model, prompt_tokens, completion_tokens) VALUES (?, ?, ?, ?, ?)`, userID, feature, model, prompt, completion)
 }
 
-// AIUsage sums tokens per feature for the last 30 days.
-func (s *Store) AIUsage(ctx context.Context) ([]map[string]any, error) {
+// AIUsage sums one person's tokens per feature for the last 30 days.
+func (s *Store) AIUsage(ctx context.Context, userID int64) ([]map[string]any, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT feature, COUNT(1), SUM(prompt_tokens), SUM(completion_tokens) FROM ai_usage
-		WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days') GROUP BY feature ORDER BY feature`)
+		WHERE user_id = ? AND created_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days') GROUP BY feature ORDER BY feature`, userID)
 	if err != nil {
 		return nil, err
 	}

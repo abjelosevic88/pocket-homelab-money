@@ -242,7 +242,7 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "map at least the date and an amount column")
 		return
 	}
-	cats, _ := s.store.ListCategories(ctx)
+	cats, _ := s.store.ListCategories(ctx, actorID(ctx))
 	catByName := map[string]int64{}
 	for _, c := range cats {
 		catByName[fold(c.Name)] = c.ID
@@ -309,7 +309,7 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		h := sha1.Sum([]byte(fmt.Sprintf("%d|%s|%d|%s|%s|%d", accountID, date, minor, desc, payee, i)))
 		ext := "csv:" + hex.EncodeToString(h[:8])
 		// same-day same-amount same-text = already there (or imported before)
-		if _, err := s.store.TransactionByExternalID(ctx, ext); err == nil || s.looksDuplicate(ctx, accountID, date, kind, minor, cur, desc) {
+		if _, err := s.store.TransactionByExternalID(ctx, acct.OwnerID, ext); err == nil || s.looksDuplicate(ctx, accountID, date, kind, minor, cur, desc) {
 			rr.Status = "duplicate"
 			dupes++
 			out = append(out, rr)
@@ -332,7 +332,7 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if in.CategoryID == nil {
-			in.CategoryID = s.store.LearnedCategory(ctx, firstNonEmpty(payee, desc))
+			in.CategoryID = s.store.LearnedCategory(ctx, actorID(ctx), firstNonEmpty(payee, desc))
 		}
 		t, msg, err := s.createTx(ctx, &in)
 		if msg != "" || err != nil {
@@ -342,7 +342,7 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		t.ExternalID = ext
-		_ = s.store.UpdateTransaction(ctx, t)
+		_ = s.store.UpdateTransaction(ctx, actorID(ctx), t)
 		rr.Status = "created"
 		created++
 		out = append(out, rr)
@@ -369,7 +369,7 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "export")
 		return
 	}
-	st, _ := s.store.GetSettings(r.Context())
+	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="pocket-money-%s.csv"`, store.Today()))
 	_, _ = io.WriteString(w, "\xef\xbb\xbf")
@@ -408,8 +408,8 @@ func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
 	uid := actorID(ctx)
 	accts, _ := s.store.ListAccounts(ctx, uid, true)
 	txs, _, _ := s.store.ListTransactions(ctx, store.TxFilter{AccountIDs: s.visibleIDs(ctx), Limit: 10000000, Oldest: true})
-	cats, _ := s.store.ListCategories(ctx)
-	tags, _ := s.store.ListTags(ctx)
+	cats, _ := s.store.ListCategories(ctx, actorID(ctx))
+	tags, _ := s.store.ListTags(ctx, actorID(ctx))
 	subs, _ := s.store.ListSubscriptions(ctx, uid)
 	budgets, _ := s.store.ListBudgets(ctx, uid)
 	goals, _ := s.store.ListGoals(ctx, uid)
@@ -418,7 +418,7 @@ func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	tpls, _ := s.store.ListTemplates(ctx, uid)
 	rules, _ := s.store.ListRules(ctx, uid)
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="pocket-money-%s.json"`, store.Today()))
 	writeJSON(w, http.StatusOK, map[string]any{"app": "pocket-money", "version": Version, "exported_at": store.Now(), "home_currency": st.HomeCurrency,
 		"accounts": accts, "categories": cats, "tags": tags, "transactions": txs, "subscriptions": subs, "budgets": budgets, "goals": goals, "templates": tpls, "rules": rules})

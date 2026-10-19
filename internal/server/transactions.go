@@ -18,7 +18,7 @@ import (
 
 // fillHome stores the transaction's value in the home currency at the day's rate.
 func (s *Server) fillHome(ctx context.Context, t *store.Transaction) {
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	cur := t.Currency
 	if cur == "" {
 		if a, err := s.store.GetAccount(ctx, t.AccountID); err == nil {
@@ -87,7 +87,7 @@ type splitIn struct {
 
 // applySplits validates the parts and fills their account-currency amounts.
 // in == nil keeps the existing parts, rescaled when the total changed.
-func (s *Server) applySplits(ctx context.Context, in *[]splitIn, t *store.Transaction) string {
+func (s *Server) applySplits(ctx context.Context, in *[]splitIn, t *store.Transaction, keep map[int64]bool) string {
 	display := t.Amount
 	if t.ForeignAmount > 0 {
 		display = t.ForeignAmount
@@ -140,8 +140,8 @@ func (s *Server) applySplits(ctx context.Context, in *[]splitIn, t *store.Transa
 		if p.Amount <= 0 {
 			return "every part needs an amount"
 		}
-		if p.CategoryID != nil && *p.CategoryID > 0 {
-			if _, err := s.store.GetCategory(ctx, *p.CategoryID); err != nil {
+		if p.CategoryID != nil && *p.CategoryID > 0 && !keep[*p.CategoryID] {
+			if _, err := s.store.GetCategory(ctx, actorID(ctx), *p.CategoryID); err != nil {
 				return "unknown category in a part"
 			}
 		}
@@ -227,6 +227,22 @@ func idOrNil(p *int64) *int64 {
 // build applies the input onto t and resolves currencies. It returns a
 // user-facing message when something is wrong.
 func (s *Server) build(ctx context.Context, in *txIn, t *store.Transaction) string {
+	// categories and the subscription already on it stay valid when someone
+	// else edits a transaction on a shared account; new ones must be the
+	// editor's own
+	keepCats := map[int64]bool{}
+	if t.CategoryID != nil {
+		keepCats[*t.CategoryID] = true
+	}
+	for _, sp := range t.Splits {
+		if sp.CategoryID != nil {
+			keepCats[*sp.CategoryID] = true
+		}
+	}
+	var keepSub int64
+	if t.SubscriptionID != nil {
+		keepSub = *t.SubscriptionID
+	}
 	if in.Kind != nil {
 		t.Kind = *in.Kind
 	}
@@ -288,6 +304,7 @@ func (s *Server) build(ctx context.Context, in *txIn, t *store.Transaction) stri
 		return "unknown account"
 	}
 	t.Currency = acct.Currency
+	t.UserID = acct.OwnerID
 
 	// amounts
 	if in.ForeignAmount != nil {
@@ -370,14 +387,20 @@ func (s *Server) build(ctx context.Context, in *txIn, t *store.Transaction) stri
 	} else {
 		t.ToAccountID, t.ToAmount = nil, 0
 	}
-	if t.CategoryID != nil {
-		if _, err := s.store.GetCategory(ctx, *t.CategoryID); err != nil {
+	if t.CategoryID != nil && !keepCats[*t.CategoryID] {
+		if _, err := s.store.GetCategory(ctx, actorID(ctx), *t.CategoryID); err != nil {
 			return "unknown category"
+		}
+	}
+	if t.SubscriptionID != nil && *t.SubscriptionID != keepSub {
+		x, err := s.store.GetSubscription(ctx, *t.SubscriptionID)
+		if err != nil || (x.OwnerID != actorID(ctx) && x.OwnerID != acct.OwnerID) {
+			return "unknown subscription"
 		}
 	}
 	if t.Kind == "transfer" {
 		t.Splits = nil
-	} else if msg := s.applySplits(ctx, in.Splits, t); msg != "" {
+	} else if msg := s.applySplits(ctx, in.Splits, t, keepCats); msg != "" {
 		return msg
 	}
 	s.fillHome(ctx, t)
@@ -431,19 +454,26 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 		s.advanceSubscription(ctx, *t.SubscriptionID, t.Date)
 	}
 	if in.TemplateID > 0 {
-		s.store.TouchTemplate(ctx, in.TemplateID)
+		s.store.TouchTemplate(ctx, uid, in.TemplateID)
 	}
 	full, err := s.store.GetTransaction(ctx, t.ID)
 	if err == nil {
 		s.emitTx(ctx, "transaction.created", full)
-		s.publish("money.transaction_created", fmt.Sprintf("transaction:%d", full.ID), txEvent(full))
+		s.publish("money.transaction_created", fmt.Sprintf("transaction:%d", full.ID), s.txEvent(ctx, full))
 	}
 	return full, "", err
 }
 
-// txEvent is the small payload a Pocket Core event carries about a transaction.
-func txEvent(t *store.Transaction) map[string]any {
+// txEvent is the small payload a Pocket Core event carries about a
+// transaction, including whose ledger it is in (user_id / user_email) so a
+// subscriber files it under that person only.
+func (s *Server) txEvent(ctx context.Context, t *store.Transaction) map[string]any {
+	email := ""
+	if u, err := s.store.GetUser(ctx, t.UserID); err == nil {
+		email = u.Email
+	}
 	return map[string]any{
+		"user_id": t.UserID, "user_email": email,
 		"transaction_id": t.ID, "date": t.Date, "amount": t.Amount, "currency": t.Currency, "amount_home": t.AmountHome,
 		"description": t.Description, "payee": t.Payee, "account_id": t.AccountID, "account": t.AccountName,
 		"to_account_id": t.ToAccountID, "category_id": t.CategoryID, "subscription_id": t.SubscriptionID,
@@ -484,7 +514,7 @@ func (s *Server) txFilter(r *http.Request) store.TxFilter {
 			}
 		}
 		if queryBool(r, "children") || q.Get("children") == "" {
-			ids, _ = s.store.CategoryChildren(r.Context(), ids)
+			ids, _ = s.store.CategoryChildren(r.Context(), actorID(r.Context()), ids)
 		}
 		f.CategoryIDs = ids
 		if len(ids) == 0 {
@@ -561,7 +591,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
-	if err := s.store.UpdateTransaction(ctx, t); err != nil {
+	if err := s.store.UpdateTransaction(ctx, actorID(ctx), t); err != nil {
 		s.fail(w, err, "update transaction")
 		return
 	}
@@ -587,7 +617,7 @@ func (s *Server) handleDeleteTransaction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.emitTx(ctx, "transaction.deleted", t)
-	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), txEvent(t))
+	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), s.txEvent(ctx, t))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -650,11 +680,11 @@ func (s *Server) handleBulkTransactions(w http.ResponseWriter, r *http.Request) 
 			s.emitTx(ctx, "transaction.deleted", before[id])
 		}
 	case "category":
-		err = s.store.BulkUpdate(ctx, ids, idOrNil(in.CategoryID), in.CategoryID == nil || *in.CategoryID <= 0, nil, nil)
+		err = s.store.BulkUpdate(ctx, actorID(ctx), ids, idOrNil(in.CategoryID), in.CategoryID == nil || *in.CategoryID <= 0, nil, nil)
 	case "add_tags":
-		err = s.store.BulkUpdate(ctx, ids, nil, false, cleanTags(in.Tags), nil)
+		err = s.store.BulkUpdate(ctx, actorID(ctx), ids, nil, false, cleanTags(in.Tags), nil)
 	case "remove_tags":
-		err = s.store.BulkUpdate(ctx, ids, nil, false, nil, in.Tags)
+		err = s.store.BulkUpdate(ctx, actorID(ctx), ids, nil, false, nil, in.Tags)
 	default:
 		writeErr(w, http.StatusBadRequest, "unknown action")
 		return
@@ -750,7 +780,7 @@ func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) 
 // ---- autocomplete ----
 
 func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
-	out, err := s.store.DescriptionSuggestions(r.Context(), s.visibleIDs(r.Context()), r.URL.Query().Get("q"), 8)
+	out, err := s.store.DescriptionSuggestions(r.Context(), actorID(r.Context()), s.visibleIDs(r.Context()), r.URL.Query().Get("q"), 8)
 	if err != nil {
 		s.fail(w, err, "suggest")
 		return
@@ -772,7 +802,7 @@ func (s *Server) handlePayees(w http.ResponseWriter, r *http.Request) {
 // quickContext gathers what the parser matches against for the current user.
 func (s *Server) quickContext(ctx context.Context) (quick.Context, []store.Account) {
 	uid := actorID(ctx)
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	accts, _ := s.store.ListAccounts(ctx, uid, false)
 	c := quick.Context{Today: time.Now()}
 	writable := []store.Account{}
@@ -784,7 +814,7 @@ func (s *Server) quickContext(ctx context.Context) (quick.Context, []store.Accou
 		c.Accounts = append(c.Accounts, quick.Account{ID: a.ID, Name: a.Name, Currency: a.Currency})
 	}
 	c.DefaultAccount = s.defaultAccount(ctx, st, writable)
-	cats, _ := s.store.ListCategories(ctx)
+	cats, _ := s.store.ListCategories(ctx, actorID(ctx))
 	for _, cat := range cats {
 		if !cat.Archived {
 			c.Categories = append(c.Categories, quick.Named{ID: cat.ID, Name: cat.Name})
@@ -811,7 +841,7 @@ func (s *Server) quickContext(ctx context.Context) (quick.Context, []store.Accou
 		c.Templates = append(c.Templates, qt)
 	}
 	c.Learn = func(text string) int64 {
-		if id := s.store.LearnedCategory(ctx, text); id != nil {
+		if id := s.store.LearnedCategory(ctx, uid, text); id != nil {
 			return *id
 		}
 		return 0
@@ -863,7 +893,7 @@ func (s *Server) preview(ctx context.Context, d quick.Draft, accts []store.Accou
 		}
 	}
 	if d.CategoryID > 0 {
-		if c, err := s.store.GetCategory(ctx, d.CategoryID); err == nil {
+		if c, err := s.store.GetCategory(ctx, actorID(ctx), d.CategoryID); err == nil {
 			p.CategoryName, p.CategoryIcon = c.Name, c.Icon
 		}
 	}

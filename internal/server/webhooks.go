@@ -37,7 +37,18 @@ func wants(h *store.Webhook, event string) bool {
 	return false
 }
 
-// emitTx tells every webhook whose owner can see the transaction.
+// hookUser says whose webhook a delivery belongs to, so the receiver (e.g.
+// Pocket Day) files it under that person only.
+func (s *Server) hookUser(ctx context.Context, ownerID int64) map[string]any {
+	out := map[string]any{"id": ownerID}
+	if u, err := s.store.GetUser(ctx, ownerID); err == nil {
+		out["email"], out["name"] = u.Email, u.Name
+	}
+	return out
+}
+
+// emitTx tells the webhooks of the people who can see the transaction: its
+// ledger owner's, and those of members of a shared account it is on.
 func (s *Server) emitTx(ctx context.Context, event string, t *store.Transaction) {
 	if t == nil {
 		return
@@ -63,7 +74,7 @@ func (s *Server) emitTx(ctx context.Context, event string, t *store.Transaction)
 			body = map[string]any{"uuid": store.RandomToken(16), "user_id": h.OwnerID, "trigger": ffTriggers[event], "response": "TRANSACTIONS",
 				"url": h.URL, "version": "v0", "content": s.ffGroup(t)}
 		} else {
-			body = map[string]any{"id": store.RandomToken(12), "event": event, "created_at": store.Now(), "data": map[string]any{"transaction": t}}
+			body = map[string]any{"id": store.RandomToken(12), "event": event, "created_at": store.Now(), "user": s.hookUser(ctx, h.OwnerID), "data": map[string]any{"transaction": t}}
 		}
 		s.dispatch(h, event, fmt.Sprintf("#%d %s", t.ID, t.Description), body)
 	}
@@ -80,7 +91,7 @@ func (s *Server) emit(ctx context.Context, ownerID int64, event, subject string,
 		if !wants(&h, event) || h.Format == "firefly" {
 			continue
 		}
-		s.dispatch(h, event, subject, map[string]any{"id": store.RandomToken(12), "event": event, "created_at": store.Now(), "data": data})
+		s.dispatch(h, event, subject, map[string]any{"id": store.RandomToken(12), "event": event, "created_at": store.Now(), "user": s.hookUser(ctx, ownerID), "data": data})
 	}
 }
 
@@ -274,7 +285,7 @@ func (s *Server) handleTestWebhook(w http.ResponseWriter, r *http.Request) {
 	if h == nil {
 		return
 	}
-	var body any = map[string]any{"id": store.RandomToken(12), "event": "ping", "created_at": store.Now(), "data": map[string]any{"message": "Pocket Money webhook test"}}
+	var body any = map[string]any{"id": store.RandomToken(12), "event": "ping", "created_at": store.Now(), "user": s.hookUser(ctx, h.OwnerID), "data": map[string]any{"message": "Pocket Money webhook test"}}
 	event := "ping"
 	if h.Format == "firefly" {
 		txs, _, _ := s.store.ListTransactions(ctx, store.TxFilter{AccountIDs: s.visibleIDs(ctx), Limit: 1})

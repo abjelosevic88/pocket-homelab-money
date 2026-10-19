@@ -51,7 +51,7 @@ func (r *ImportResult) Summary() string {
 
 var (
 	lastImportMu sync.Mutex
-	lastImport   *ImportResult
+	lastImport   = map[int64]*ImportResult{} // per person
 	reCurTag     = regexp.MustCompile(`\s*\[currency:[A-Za-z]{3}\]\s*`)
 	reCreatedRec = regexp.MustCompile(`(?m)^\s*Created from recurring transaction .*$`)
 	reNotify     = regexp.MustCompile(`(?im)^\s*notify:\s*(\d+)`)
@@ -113,7 +113,9 @@ func ffKind(role, typ string) string {
 	return "checking"
 }
 
-// importFirefly pulls a Firefly III (and optionally Firefly Pico) instance in.
+// importFirefly pulls a person's Firefly III (and optionally Firefly Pico)
+// in, using that person's own Firefly settings, into that person's ledger
+// only: their accounts, categories, tags, subscriptions, goals and templates.
 // Everything is keyed by the Firefly ids, so running it again updates
 // instead of duplicating.
 func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOptions) *ImportResult {
@@ -127,7 +129,7 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 		res.Finished = store.Now()
 		if !opt.Quiet || res.Error != "" || res.Created+res.Updated+res.Deleted > 0 {
 			lastImportMu.Lock()
-			lastImport = res
+			lastImport[ownerID] = res
 			lastImportMu.Unlock()
 		}
 	}()
@@ -151,9 +153,9 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 		return res
 	}
 	acctByFF := map[string]*store.Account{}
-	all, _ := s.store.AllAccounts(ctx)
+	all, _ := s.store.ListAccounts(ctx, ownerID, true)
 	for i := range all {
-		if strings.HasPrefix(all[i].ExternalID, "firefly:") {
+		if all[i].OwnerID == ownerID && strings.HasPrefix(all[i].ExternalID, "firefly:") {
 			acctByFF[strings.TrimPrefix(all[i].ExternalID, "firefly:")] = &all[i]
 		}
 	}
@@ -210,7 +212,7 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 	catByName := map[string]int64{}
 	catByFF := map[string]int64{}
 	if opt.All || opt.Transactions {
-		cats, _ := s.store.ListCategories(ctx)
+		cats, _ := s.store.ListCategories(ctx, actorID(ctx))
 		for _, cat := range cats {
 			catByName[strings.ToLower(cat.Name)] = cat.ID
 			if strings.HasPrefix(cat.ExternalID, "firefly:") {
@@ -223,7 +225,7 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 					catByFF[fc.ID] = id
 					continue
 				}
-				cat := &store.Category{Name: fc.Attr.Name, Kind: "expense", Icon: guessEmoji(fc.Attr.Name), ExternalID: "firefly:" + fc.ID}
+				cat := &store.Category{UserID: ownerID, Name: fc.Attr.Name, Kind: "expense", Icon: guessEmoji(fc.Attr.Name), ExternalID: "firefly:" + fc.ID}
 				if err := s.store.CreateCategory(ctx, cat); err != nil {
 					res.Warnings = append(res.Warnings, "category "+fc.Attr.Name+": "+err.Error())
 					continue
@@ -240,8 +242,8 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 	if fft, err := ff.Tags(ctx); err == nil {
 		for _, t := range fft {
 			tagByFF[t.ID] = t.Attr.Tag
-			if _, err := s.store.GetTagByName(ctx, t.Attr.Tag); err != nil {
-				if _, err := s.store.EnsureTag(ctx, t.Attr.Tag); err == nil {
+			if _, err := s.store.GetTagByName(ctx, ownerID, t.Attr.Tag); err != nil {
+				if _, err := s.store.EnsureTag(ctx, ownerID, t.Attr.Tag); err == nil {
 					res.Tags++
 				}
 			}
@@ -265,7 +267,7 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 		if id == nil || *id == "" || *id == "0" {
 			return nil
 		}
-		if sid, err := s.store.SubscriptionByExternalID(ctx, prefix+*id); err == nil {
+		if sid, err := s.store.SubscriptionByExternalID(ctx, ownerID, prefix+*id); err == nil {
 			return &sid
 		}
 		return nil
@@ -292,7 +294,7 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 			} else if sid := subByExt("firefly-bill:", sp.BillID); sid != nil {
 				t.SubscriptionID = sid
 			}
-			if id, err := s.store.TransactionByExternalID(ctx, ext); err == nil {
+			if id, err := s.store.TransactionByExternalID(ctx, ownerID, ext); err == nil {
 				old, err := s.store.GetTransaction(ctx, id)
 				if err != nil {
 					continue
@@ -306,7 +308,7 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 					t.SubscriptionID = old.SubscriptionID
 				}
 				if txChanged(old, t) {
-					if err := s.store.UpdateTransaction(ctx, t); err == nil {
+					if err := s.store.UpdateTransaction(ctx, ownerID, t); err == nil {
 						res.Updated++
 						if !opt.All {
 							if full, err := s.store.GetTransaction(ctx, t.ID); err == nil {
@@ -348,10 +350,10 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 	}
 	if opt.All {
 		_, _ = s.store.DB.ExecContext(ctx, `UPDATE subscriptions SET done_count = (SELECT COUNT(1) FROM transactions t WHERE t.subscription_id = subscriptions.id)
-			WHERE max_count > 0 AND done_count = 0`)
+			WHERE max_count > 0 AND done_count = 0 AND owner_id = ?`, ownerID)
 	}
 	if opt.All && res.Templates > 0 {
-		s.seedTemplateUse(ctx)
+		s.seedTemplateUse(ctx, ownerID)
 	}
 
 	// ---- opening balances: make every balance equal Firefly's ----
@@ -523,7 +525,7 @@ func (s *Server) importSubscriptions(ctx context.Context, ff *firefly.Client, ow
 	if err != nil {
 		res.Warnings = append(res.Warnings, "recurring transactions: "+err.Error())
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	type merged struct {
 		x   *store.Subscription
 		ext []string
@@ -693,7 +695,7 @@ func (s *Server) importSubscriptions(ctx context.Context, ff *firefly.Client, ow
 		}
 		found := false
 		for _, e := range m.ext {
-			if _, err := s.store.SubscriptionByExternalID(ctx, e); err == nil {
+			if _, err := s.store.SubscriptionByExternalID(ctx, ownerID, e); err == nil {
 				found = true
 			}
 		}
@@ -774,7 +776,7 @@ func (s *Server) importPico(ctx context.Context, ff *firefly.Client, picoURL str
 	}
 	for i, p := range tpls {
 		ext := "pico:" + strconv.FormatInt(p.ID, 10)
-		if _, err := s.store.TemplateByExternalID(ctx, ext); err == nil {
+		if _, err := s.store.TemplateByExternalID(ctx, ownerID, ext); err == nil {
 			continue
 		}
 		t := &store.Template{OwnerID: ownerID, Name: strings.TrimSpace(p.Name), Kind: "expense", Tags: []string{}, ExternalID: ext, SortOrder: i + 1}
@@ -854,10 +856,9 @@ func (s *Server) importPico(ctx context.Context, ff *firefly.Client, picoURL str
 
 // ---- handlers ----
 
+// handleImportFirefly imports the caller's own Firefly III (their settings)
+// into their own ledger.
 func (s *Server) handleImportFirefly(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	var in struct {
 		Mode  string `json:"mode"` // all | transactions
 		Since string `json:"since"`
@@ -888,7 +889,7 @@ func (s *Server) handleImportFirefly(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleImportStatus(w http.ResponseWriter, r *http.Request) {
 	lastImportMu.Lock()
 	defer lastImportMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"running": s.importing.Load(), "last": lastImport})
+	writeJSON(w, http.StatusOK, map[string]any{"running": s.importing.Load(), "last": lastImport[actorID(r.Context())]})
 }
 
 // guessEveryday marks as "everyday money" only the accounts that carry a real
@@ -916,11 +917,11 @@ func (s *Server) guessEveryday(ctx context.Context, acctByFF map[string]*store.A
 	}
 }
 
-// seedTemplateUse gives imported templates a use count from the transactions
-// they would have produced, so the ones used most come first.
-func (s *Server) seedTemplateUse(ctx context.Context) {
+// seedTemplateUse gives a person's imported templates a use count from the
+// transactions they would have produced, so the ones used most come first.
+func (s *Server) seedTemplateUse(ctx context.Context, ownerID int64) {
 	_, _ = s.store.DB.ExecContext(ctx, `UPDATE templates SET use_count = (
-		SELECT COUNT(1) FROM transactions t WHERE t.date >= date('now', '-180 days')
+		SELECT COUNT(1) FROM transactions t WHERE t.user_id = templates.owner_id AND t.date >= date('now', '-180 days')
 		AND lower(t.description) = lower(CASE WHEN templates.description != '' THEN templates.description ELSE templates.name END))
-		WHERE use_count = 0`)
+		WHERE use_count = 0 AND owner_id = ?`, ownerID)
 }

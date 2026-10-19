@@ -11,7 +11,7 @@ Everything lives in `DATA_DIR` (`/data` in the container):
 Never copy a live WAL database file. Use one of:
 
 - **UI**: Settings → Backup & data → *Download database*
-- **API**: `GET /api/v1/backup` with an admin bearer token
+- **API**: `GET /api/v1/backup` with an admin bearer token — only while the admin is the only person on the server (the file holds everyone's money); otherwise back up from the host and let each person use **Export** for their own data
 - **CLI**: `docker exec pocket-money pocket-money backup` → prints the path under `/data/backups/`
 - **sqlite3**: `sqlite3 data/pocket-money.db "VACUUM INTO 'snap.db'"`
 

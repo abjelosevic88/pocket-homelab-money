@@ -35,7 +35,7 @@ func (s *Server) accountsWithHome(ctx context.Context, withArchived bool) ([]sto
 	if err != nil {
 		return nil, "", err
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	today := store.Today()
 	for i := range accts {
 		r, _ := s.rate(ctx, accts[i].Currency, st.HomeCurrency, today)
@@ -170,7 +170,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	st, _ := s.store.GetSettings(r.Context())
+	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
 	a := &store.Account{OwnerID: actorID(r.Context()), Kind: "checking", Currency: st.HomeCurrency, IncludeNetWorth: true}
 	if msg := in.apply(a); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
@@ -209,17 +209,27 @@ func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 	if role == "owner" {
 		a.Members, _ = s.store.AccountMembers(ctx, id)
 	}
-	st, _ := s.store.GetSettings(ctx)
+	st, _ := s.store.GetSettings(ctx, actorID(ctx))
 	rt, _ := s.rate(ctx, a.Currency, st.HomeCurrency, store.Today())
 	a.BalanceHome = currency.Convert(a.Balance, a.Currency, st.HomeCurrency, rt)
 	writeJSON(w, http.StatusOK, a)
 }
 
+// accessDenied answers 404 for an account the user cannot see at all (so ids
+// cannot be probed) and 403 for one shared with them that only its owner may change.
+func accessDenied(w http.ResponseWriter, role, msg string) {
+	if role == "" {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	writeErr(w, http.StatusForbidden, msg)
+}
+
 func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := idParam(r, "id")
-	if s.store.AccountRole(ctx, id, actorID(ctx)) != "owner" {
-		writeErr(w, http.StatusForbidden, "only the owner can change this account")
+	if role := s.store.AccountRole(ctx, id, actorID(ctx)); role != "owner" {
+		accessDenied(w, role, "only the owner can change this account")
 		return
 	}
 	a, err := s.store.GetAccount(ctx, id)
@@ -253,8 +263,8 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := idParam(r, "id")
-	if s.store.AccountRole(ctx, id, actorID(ctx)) != "owner" {
-		writeErr(w, http.StatusForbidden, "only the owner can delete this account")
+	if role := s.store.AccountRole(ctx, id, actorID(ctx)); role != "owner" {
+		accessDenied(w, role, "only the owner can delete this account")
 		return
 	}
 	a, err := s.store.GetAccount(ctx, id)
@@ -289,7 +299,7 @@ func (s *Server) handleReorderAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	var mine []int64
 	for _, id := range in.IDs {
-		if s.canSee(r.Context(), id) {
+		if s.store.AccountRole(r.Context(), id, actorID(r.Context())) == "owner" {
 			mine = append(mine, id)
 		}
 	}
@@ -303,8 +313,8 @@ func (s *Server) handleReorderAccounts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAccountMembers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := idParam(r, "id")
-	if s.store.AccountRole(ctx, id, actorID(ctx)) != "owner" {
-		writeErr(w, http.StatusForbidden, "only the owner can share this account")
+	if role := s.store.AccountRole(ctx, id, actorID(ctx)); role != "owner" {
+		accessDenied(w, role, "only the owner can share this account")
 		return
 	}
 	var in struct {
@@ -370,8 +380,8 @@ func (s *Server) handleAccountHistory(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := idParam(r, "id")
-	if !s.canWrite(ctx, id) {
-		writeErr(w, http.StatusForbidden, "read-only account")
+	if role := s.store.AccountRole(ctx, id, actorID(ctx)); role != "owner" && role != "editor" {
+		accessDenied(w, role, "read-only account")
 		return
 	}
 	var in struct {

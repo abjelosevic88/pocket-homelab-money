@@ -110,15 +110,15 @@ func (s *Store) DeleteTemplate(ctx context.Context, id int64) error {
 	return err
 }
 
-// TouchTemplate counts one use (server-side, so every device sorts the same).
-func (s *Store) TouchTemplate(ctx context.Context, id int64) {
-	_, _ = s.DB.ExecContext(ctx, `UPDATE templates SET use_count = use_count + 1, last_used_at = ? WHERE id = ?`, Now(), id)
+// TouchTemplate counts one use of a person's template (server-side, so every device sorts the same).
+func (s *Store) TouchTemplate(ctx context.Context, ownerID, id int64) {
+	_, _ = s.DB.ExecContext(ctx, `UPDATE templates SET use_count = use_count + 1, last_used_at = ? WHERE id = ? AND owner_id = ?`, Now(), id, ownerID)
 }
 
-// TemplateByExternalID finds an imported template.
-func (s *Store) TemplateByExternalID(ctx context.Context, ext string) (int64, error) {
+// TemplateByExternalID finds a template a person imported.
+func (s *Store) TemplateByExternalID(ctx context.Context, ownerID int64, ext string) (int64, error) {
 	var id int64
-	err := s.DB.QueryRowContext(ctx, `SELECT id FROM templates WHERE external_id = ?`, ext).Scan(&id)
+	err := s.DB.QueryRowContext(ctx, `SELECT id FROM templates WHERE external_id = ? AND owner_id = ?`, ext, ownerID).Scan(&id)
 	return id, notFound(err)
 }
 
@@ -207,10 +207,10 @@ func (s *Store) DeleteSubscription(ctx context.Context, id int64) error {
 	return err
 }
 
-// SubscriptionByExternalID finds an imported subscription.
-func (s *Store) SubscriptionByExternalID(ctx context.Context, ext string) (int64, error) {
+// SubscriptionByExternalID finds a subscription a person imported.
+func (s *Store) SubscriptionByExternalID(ctx context.Context, ownerID int64, ext string) (int64, error) {
 	var id int64
-	err := s.DB.QueryRowContext(ctx, `SELECT id FROM subscriptions WHERE external_id = ? OR (',' || external_id || ',') LIKE ('%,' || ? || ',%') LIMIT 1`, ext, ext).Scan(&id)
+	err := s.DB.QueryRowContext(ctx, `SELECT id FROM subscriptions WHERE owner_id = ? AND (external_id = ? OR (',' || external_id || ',') LIKE ('%,' || ? || ',%')) LIMIT 1`, ownerID, ext, ext).Scan(&id)
 	return id, notFound(err)
 }
 
@@ -465,7 +465,7 @@ func (s *Store) CreateRule(ctx context.Context, r *Rule) error {
 	c, _ := json.Marshal(r.Conditions)
 	a, _ := json.Marshal(r.Actions)
 	if r.SortOrder == 0 {
-		_ = s.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order), 0) + 1 FROM rules`).Scan(&r.SortOrder)
+		_ = s.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order), 0) + 1 FROM rules WHERE owner_id = ?`, r.OwnerID).Scan(&r.SortOrder)
 	}
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO rules (owner_id, name, match, conditions, actions, active, stop, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.OwnerID, r.Name, r.Match, string(c), string(a), boolInt(r.Active), boolInt(r.Stop), r.SortOrder)

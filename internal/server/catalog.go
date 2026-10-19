@@ -8,10 +8,10 @@ import (
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
 
-// ---- categories (shared by everyone) ----
+// ---- categories (each person has their own) ----
 
 func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
-	out, err := s.store.ListCategories(r.Context())
+	out, err := s.store.ListCategories(r.Context(), actorID(r.Context()))
 	if err != nil {
 		s.fail(w, err, "categories")
 		return
@@ -68,7 +68,7 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	c := &store.Category{Kind: "expense"}
+	c := &store.Category{UserID: actorID(r.Context()), Kind: "expense"}
 	if msg := in.apply(c); msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
@@ -77,7 +77,7 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 		c.Icon = guessEmoji(c.Name)
 	}
 	if c.ParentID != nil {
-		if p, err := s.store.GetCategory(r.Context(), *c.ParentID); err != nil || p.ParentID != nil {
+		if p, err := s.store.GetCategory(r.Context(), c.UserID, *c.ParentID); err != nil || p.ParentID != nil {
 			writeErr(w, http.StatusBadRequest, "the parent must be a top-level category")
 			return
 		}
@@ -90,7 +90,7 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateCategory(w http.ResponseWriter, r *http.Request) {
-	c, err := s.store.GetCategory(r.Context(), idParam(r, "id"))
+	c, err := s.store.GetCategory(r.Context(), actorID(r.Context()), idParam(r, "id"))
 	if err != nil {
 		s.fail(w, err, "category")
 		return
@@ -104,6 +104,12 @@ func (s *Server) handleUpdateCategory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
+	if c.ParentID != nil {
+		if p, err := s.store.GetCategory(r.Context(), c.UserID, *c.ParentID); err != nil || p.ParentID != nil {
+			writeErr(w, http.StatusBadRequest, "the parent must be a top-level category")
+			return
+		}
+	}
 	if err := s.store.UpdateCategory(r.Context(), c); err != nil {
 		s.fail(w, err, "update category")
 		return
@@ -112,15 +118,12 @@ func (s *Server) handleUpdateCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	var moveTo *int64
 	if v := queryInt(r, "move_to"); v > 0 {
 		m := int64(v)
 		moveTo = &m
 	}
-	if err := s.store.DeleteCategory(r.Context(), idParam(r, "id"), moveTo); err != nil {
+	if err := s.store.DeleteCategory(r.Context(), actorID(r.Context()), idParam(r, "id"), moveTo); err != nil {
 		s.fail(w, err, "delete category")
 		return
 	}
@@ -130,7 +133,7 @@ func (s *Server) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
 // ---- tags ----
 
 func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
-	out, err := s.store.ListTags(r.Context())
+	out, err := s.store.ListTags(r.Context(), actorID(r.Context()))
 	if err != nil {
 		s.fail(w, err, "tags")
 		return
@@ -147,12 +150,13 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	id, err := s.store.EnsureTag(r.Context(), in.Name)
+	uid := actorID(r.Context())
+	id, err := s.store.EnsureTag(r.Context(), uid, in.Name)
 	if err != nil {
 		s.fail(w, err, "create tag")
 		return
 	}
-	t, _ := s.store.GetTag(r.Context(), id)
+	t, _ := s.store.GetTag(r.Context(), uid, id)
 	if in.Color != "" {
 		t.Color = in.Color
 		_ = s.store.UpdateTag(r.Context(), t)
@@ -161,7 +165,7 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
-	t, err := s.store.GetTag(r.Context(), idParam(r, "id"))
+	t, err := s.store.GetTag(r.Context(), actorID(r.Context()), idParam(r, "id"))
 	if err != nil {
 		s.fail(w, err, "tag")
 		return
@@ -192,7 +196,7 @@ func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteTag(r.Context(), idParam(r, "id")); err != nil {
+	if err := s.store.DeleteTag(r.Context(), actorID(r.Context()), idParam(r, "id")); err != nil {
 		s.fail(w, err, "delete tag")
 		return
 	}
@@ -212,7 +216,7 @@ func (s *Server) handleMergeTag(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "pick another tag")
 		return
 	}
-	if err := s.store.MergeTags(r.Context(), from, in.Into); err != nil {
+	if err := s.store.MergeTags(r.Context(), actorID(r.Context()), from, in.Into); err != nil {
 		s.fail(w, err, "merge tags")
 		return
 	}
@@ -306,6 +310,10 @@ func (s *Server) applyTemplate(r *http.Request, in *templateIn, t *store.Templat
 		return "unknown currency"
 	case t.AccountID != nil && !s.canWrite(r.Context(), *t.AccountID):
 		return "you cannot book on that account"
+	case t.ToAccountID != nil && !s.canWrite(r.Context(), *t.ToAccountID):
+		return "you cannot book on the destination account"
+	case in.CategoryID != nil && t.CategoryID != nil && !s.store.OwnsCategories(r.Context(), t.OwnerID, []int64{*t.CategoryID}):
+		return "unknown category"
 	case t.Kind == "transfer" && t.ToAccountID == nil:
 		return "a transfer template needs a destination account"
 	}
@@ -413,7 +421,7 @@ func (s *Server) handleUseTemplate(w http.ResponseWriter, r *http.Request) {
 		in.AccountID = over.AccountID
 	}
 	if in.AccountID == nil || *in.AccountID == 0 {
-		st, _ := s.store.GetSettings(ctx)
+		st, _ := s.store.GetSettings(ctx, actorID(ctx))
 		accts, _ := s.store.ListAccounts(ctx, actorID(ctx), false)
 		var wr []store.Account
 		for _, a := range accts {

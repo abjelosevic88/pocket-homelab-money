@@ -14,7 +14,7 @@ export function ImportTab() {
 }
 
 function FireflyImport() {
-  const { f, setF, save, isAdmin } = useSettingsForm()
+  const { f, setF, save } = useSettingsForm()
   const { reloadMeta } = useApp()
   const { toast } = useToast()
   const [st, setSt] = useState<{ running: boolean; last: ImportResult | null } | null>(null)
@@ -33,19 +33,19 @@ function FireflyImport() {
   const last = st?.last
   return (
     <Card title="🔥 From Firefly III (and Firefly Pico)">
-      <p className="muted small">Brings over asset accounts with their exact current balance, categories (with an emoji picked from the name), tags, every transaction (foreign amounts, notes and locations included), bills and recurring transactions merged into subscriptions (the <code>notify: N</code> note becomes the reminder), piggy banks as goals, and Firefly Pico's templates with their <code>[currency:XXX]</code>. Everything is keyed by its Firefly id: run it again and it updates instead of duplicating.</p>
+      <p className="muted small">Uses your own Firefly III and brings it into your own ledger. Brings over asset accounts with their exact current balance, categories (with an emoji picked from the name), tags, every transaction (foreign amounts, notes and locations included), bills and recurring transactions merged into subscriptions (the <code>notify: N</code> note becomes the reminder), piggy banks as goals, and Firefly Pico's templates with their <code>[currency:XXX]</code>. Everything is keyed by its Firefly id: run it again and it updates instead of duplicating.</p>
       <div className="grid" style={{ gap: 12 }}>
         <div className="two-col tight">
-          <Field label="Firefly III URL"><input value={f.firefly_url} onChange={e => setF({ ...f, firefly_url: e.target.value })} placeholder="http://host.docker.internal:8083" disabled={!isAdmin} /></Field>
-          <Field label="Personal access token"><input value={f.firefly_token} onChange={e => setF({ ...f, firefly_token: e.target.value })} autoComplete="off" disabled={!isAdmin} /></Field>
+          <Field label="Firefly III URL"><input value={f.firefly_url} onChange={e => setF({ ...f, firefly_url: e.target.value })} placeholder="http://host.docker.internal:8083" /></Field>
+          <Field label="Personal access token"><input value={f.firefly_token} onChange={e => setF({ ...f, firefly_token: e.target.value })} autoComplete="off" /></Field>
         </div>
-        <Field label="Firefly Pico URL (optional, for templates)"><input value={f.pico_url} onChange={e => setF({ ...f, pico_url: e.target.value })} placeholder="http://host.docker.internal:6977" disabled={!isAdmin} /></Field>
-        <label className="row"><input type="checkbox" checked={f.firefly_mirror} onChange={e => setF({ ...f, firefly_mirror: e.target.checked })} style={{ width: 'auto' }} disabled={!isAdmin} />
+        <Field label="Firefly Pico URL (optional, for templates)"><input value={f.pico_url} onChange={e => setF({ ...f, pico_url: e.target.value })} placeholder="http://host.docker.internal:6977" /></Field>
+        <label className="row"><input type="checkbox" checked={f.firefly_mirror} onChange={e => setF({ ...f, firefly_mirror: e.target.checked })} style={{ width: 'auto' }} />
           <span>Keep mirroring while Firefly is still in use — new and changed Firefly transactions of the last 45 days come over every 30 minutes, and automatic subscription booking waits (Firefly's recurring transactions still do it). Turn off on the day you switch.</span></label>
         <div className="row wrap">
-          <button className="btn" onClick={() => save()} disabled={!isAdmin}>Save</button>
-          <button className="btn primary" onClick={() => run('all')} disabled={!isAdmin || !f.firefly_configured || st?.running}>{st?.running ? 'Importing…' : 'Import everything'}</button>
-          <button className="btn" onClick={() => run('transactions')} disabled={!isAdmin || !f.firefly_configured || st?.running}>Transactions only</button>
+          <button className="btn" onClick={() => save()}>Save</button>
+          <button className="btn primary" onClick={() => run('all')} disabled={!f.firefly_configured || st?.running}>{st?.running ? 'Importing…' : 'Import everything'}</button>
+          <button className="btn" onClick={() => run('transactions')} disabled={!f.firefly_configured || st?.running}>Transactions only</button>
         </div>
         {last && (
           <div className={`callout ${last.error ? 'danger' : 'success'}`}>
