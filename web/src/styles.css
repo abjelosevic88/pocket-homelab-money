@@ -556,3 +556,14 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 .audit-main .s { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .audit-body { padding: 2px 6px 12px 38px; }
 .audit-diff dd s { text-decoration-thickness: 1px; }
+
+/* ---- a modal never grows past the screen: the title stays, the form scrolls ---- */
+.modal { display: flex; flex-direction: column; max-height: calc(100dvh - 96px); }
+.modal-head { flex-shrink: 0; }
+.modal-body { overflow-y: auto; min-height: 0; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+@media (max-width: 900px) {
+  .modal { max-height: calc(100dvh - 24px); }
+  /* iOS sizes date/time inputs by their content and ignores the grid column */
+  input[type="date"], input[type="time"], input[type="datetime-local"] { -webkit-appearance: none; appearance: none; min-width: 0; max-width: 100%; min-height: 42px; display: block; }
+  input::-webkit-date-and-time-value { text-align: left; }
+}
