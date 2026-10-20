@@ -111,7 +111,7 @@ func (s *Server) resolvePrincipalRaw(r *http.Request) (*principal, error) {
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.store.GetSessionUser(ctx, c.Value)
+	u, err := s.sessionUser(ctx, c.Value)
 	return &principal{User: u, Kind: "session", Source: "web"}, err
 }
 
@@ -126,7 +126,7 @@ func (s *Server) coreUser(ctx context.Context, tok string) (*principal, error) {
 	if !in.Active || in.User == nil || in.User.Email == "" {
 		return nil, http.ErrNoCookie
 	}
-	u, err := s.firstOrSystemUser(ctx, strings.ToLower(in.User.Email), in.User.Name)
+	u, err := s.coreIdentityUser(ctx, in)
 	if in.Delegated() {
 		if in.App == nil || in.App.Slug == "" {
 			return nil, http.ErrNoCookie

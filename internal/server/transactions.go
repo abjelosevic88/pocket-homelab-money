@@ -2,7 +2,12 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
+	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -452,6 +457,24 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 	} else if strings.HasPrefix(t.ExternalID, "firefly:") {
 		t.ExternalID = "" // reserved for the Firefly import and mirror
 	}
+	if t.ExternalID != "" {
+		// Hash the original request, before time defaults/rules mutate it.
+		body, err := json.Marshal(in)
+		if err != nil {
+			return nil, "", err
+		}
+		key, _ := json.Marshal([]any{uid, t.Source, t.ExternalID})
+		t.OperationKey = string(key)
+		t.RequestHash = fmt.Sprintf("%x", sha256.Sum256(body))
+		id, err := s.store.TransactionOperation(ctx, t.OperationKey, t.RequestHash)
+		if err != nil {
+			return nil, "", err
+		}
+		if id > 0 {
+			prior, err := s.replayedTransaction(ctx, id)
+			return prior, "", err
+		}
+	}
 	if uid > 0 {
 		t.CreatedBy = &uid
 	}
@@ -468,7 +491,22 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 	if t.Kind == "expense" && t.Source != "firefly" {
 		s.addTripTag(ctx, t)
 	}
-	if err := s.store.CreateTransaction(ctx, t); err != nil {
+	// The financial write and its Core publication are one local commit.
+	event := s.txEvent(ctx, t)
+	if acct, err := s.store.GetAccount(ctx, t.AccountID); err == nil {
+		event["account"] = acct.Name
+	}
+	if err := s.store.CreateTransaction(ctx, t, func(tx *sql.Tx) error {
+		if !s.core.Configured() {
+			return nil
+		}
+		event["transaction_id"] = t.ID
+		return core.QueueEvent(ctx, tx, "money.transaction_created", fmt.Sprintf("transaction:%d", t.ID), event)
+	}); err != nil {
+		if errors.Is(err, store.ErrReplayed) {
+			prior, e := s.replayedTransaction(ctx, t.ID)
+			return prior, "", e
+		}
 		return nil, "", err
 	}
 	if t.SubscriptionID == nil {
@@ -487,9 +525,20 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 		}
 		s.auditTx(actx, nil, snapTx(full))
 		s.emitTx(ctx, "transaction.created", full)
-		s.publish("money.transaction_created", fmt.Sprintf("transaction:%d", full.ID), s.txEvent(ctx, full))
 	}
 	return full, "", err
+}
+
+// Replays still require the caller's current account permissions.
+func (s *Server) replayedTransaction(ctx context.Context, id int64) (*store.Transaction, error) {
+	t, err := s.store.GetTransaction(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !s.canWrite(ctx, t.AccountID) || (t.ToAccountID != nil && !s.canWrite(ctx, *t.ToAccountID)) {
+		return nil, store.ErrNotFound
+	}
+	return t, nil
 }
 
 // txEvent is the small payload a Pocket Core event carries about a

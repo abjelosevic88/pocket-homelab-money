@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -334,7 +335,7 @@ func (s *Store) TransactionByExternalID(ctx context.Context, userID int64, ext s
 // CreateTransaction inserts a transaction and its tags. Tags are looked up
 // (or created) among the tags of whoever booked it (CreatedBy), else of the
 // account's owner; user_id is filled from the account by a trigger.
-func (s *Store) CreateTransaction(ctx context.Context, t *Transaction) error {
+func (s *Store) CreateTransaction(ctx context.Context, t *Transaction, after ...func(*sql.Tx) error) error {
 	var tagOwner int64
 	if t.CreatedBy != nil {
 		tagOwner = *t.CreatedBy
@@ -344,6 +345,39 @@ func (s *Store) CreateTransaction(ctx context.Context, t *Transaction) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
+	}
+	if t.OperationKey != "" {
+		var id sql.NullInt64
+		var hash string
+		err := tx.QueryRowContext(ctx, `SELECT transaction_id, request_hash FROM transaction_operations WHERE operation_key=?`, t.OperationKey).Scan(&id, &hash)
+		if err == nil {
+			tx.Rollback()
+			if hash != t.RequestHash {
+				return ErrConflict
+			}
+			if !id.Valid {
+				return ErrNotFound
+			}
+			t.ID = id.Int64
+			return ErrReplayed
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			tx.Rollback()
+			return err
+		}
+	}
+	// Old transactions predate operation receipts. Refuse ambiguous retries
+	// instead of booking them again; their original request cannot be proven.
+	if t.OperationKey != "" {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM transactions WHERE created_by = ? AND source = ? AND external_id = ?`, tagOwner, t.Source, t.ExternalID).Scan(&n); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if n > 0 {
+			tx.Rollback()
+			return ErrConflict
+		}
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO transactions (kind, date, time, account_id, amount, to_account_id, to_amount, foreign_amount, foreign_currency,
 		amount_home, fx_rate, description, payee, category_id, notes, subscription_id, source, external_id, lat, lng, created_by)
@@ -362,6 +396,18 @@ func (s *Store) CreateTransaction(ctx context.Context, t *Transaction) error {
 	if err := setSplits(ctx, tx, t.ID, t.Splits); err != nil {
 		_ = tx.Rollback()
 		return err
+	}
+	if t.OperationKey != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO transaction_operations (operation_key,request_hash,transaction_id) VALUES (?,?,?)`, t.OperationKey, t.RequestHash, t.ID); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	for _, fn := range after {
+		if err := fn(tx); err != nil {
+			tx.Rollback()
+			return err
+		}
 	}
 	return tx.Commit()
 }

@@ -138,6 +138,8 @@ type Tag struct {
 
 // Transaction is one money movement.
 type Transaction struct {
+	OperationKey    string   `json:"-"`
+	RequestHash     string   `json:"-"`
 	ID              int64    `json:"id"`
 	UserID          int64    `json:"user_id"` // the ledger owner: the owner of the account it is booked on
 	Kind            string   `json:"kind"`

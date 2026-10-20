@@ -1,0 +1,13 @@
+{
+  "source": "https://github.com/abjelosevic88/pocket-homelab-core",
+  "contract": "platform-v1",
+  "sha256": {
+    "sdk/files.go": "214a9ee704e9f8423b62dcbfff6c3d723ed6b3753ea42aef8309bc0a0fa7a9a4",
+    "sdk/middleware.go": "8a93bbf4dac90a5a04bc128d3fd0fbfe3cef035889a5ee36c4181166c3780f68",
+    "sdk/outbox.go": "21b6550fdd4c641cda9a79259c3ac57f86627c6a36b8cdfc8ec36b30d632b61b",
+    "sdk/platform.go": "f5de4cd93ecff4088b2f833a81a522420cd6e750464da9a0609478574017d0b2",
+    "sdk/sdk.go": "e91f4f7051b0fcbf595ad31b90e1dae1725e88223f96e5b658f6463b670ca833",
+    "go.mod": "02ee26d5d5845133f27b034689f2123a9763faab3324ca45d61094be42983e5c",
+    "LICENSE": "1ee9dcf9984f9334729d3763bf714b60bc380f995888cc6d998b1608320de185"
+  }
+}

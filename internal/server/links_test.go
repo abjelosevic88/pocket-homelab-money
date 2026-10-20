@@ -75,6 +75,9 @@ func TestCoreLinkScopes(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	s := New(cfg, st, log, nil)
+	if err := s.core.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Bootstrap(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +124,17 @@ func TestCoreLinkScopes(t *testing.T) {
 	if tx.Source != "garage" || tx.ExternalID != "garage:fuel:12" || tx.UserID != owner.ID {
 		t.Fatalf("a linked app's transaction carries its name: %+v", tx)
 	}
+	// Same operation is returned without booking or auditing twice.
+	request := map[string]any{"kind": "expense", "account_id": acct.ID, "amount": 8000, "currency": "BAM", "description": "Škoda Fabia fuel", "source": "manual", "external_id": "fuel:12"}
+	var retry store.Transaction
+	if code, raw := garage.call("POST", "/api/v1/transactions", request, &retry); code != 201 || retry.ID != tx.ID {
+		t.Fatalf("retry: %d %s", code, raw)
+	}
+	request["amount"] = 8001
+	if code := garage.status("POST", "/api/v1/transactions", request); code != 409 {
+		t.Fatalf("conflicting retry: %d", code)
+	}
+	request["amount"] = 8000
 	if code := garage.status("PUT", "/api/v1/transactions/"+itoa(tx.ID), map[string]any{"amount": 8500}); code != 200 {
 		t.Fatalf("linked update own %d", code)
 	}
@@ -166,6 +180,9 @@ func TestCoreLinkScopes(t *testing.T) {
 	if code := garage.status("DELETE", "/api/v1/transactions/"+itoa(tx.ID), nil); code != 204 {
 		t.Fatalf("linked delete own %d", code)
 	}
+	if code := garage.status("POST", "/api/v1/transactions", request); code != 404 {
+		t.Fatalf("deleted operation must not be recreated: %d", code)
+	}
 	// The owner's own transaction is still there.
 	if code := me.status("GET", "/api/v1/transactions/"+itoa(mine.ID), nil); code != 200 {
 		t.Fatalf("owner's transaction %d", code)
@@ -191,6 +208,9 @@ func newLinkServer(t *testing.T, fc http.Handler, tweak func(*config.Config)) (*
 	}
 	t.Cleanup(func() { st.Close() })
 	s := New(cfg, st, log, nil)
+	if err := s.core.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	owner, err := s.firstOrSystemUser(ctx, "owner@example.com", "Owner")
 	if err != nil {

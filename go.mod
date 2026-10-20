@@ -3,7 +3,7 @@ module github.com/abjelosevic88/pocket-homelab-money
 go 1.26.5
 
 require (
-	github.com/abjelosevic88/pocket-homelab-core v0.16.0
+	github.com/abjelosevic88/pocket-homelab-core v0.18.5
 	github.com/go-chi/chi/v5 v5.5.0
 	golang.org/x/crypto v0.58.0
 	modernc.org/sqlite v1.60.1
@@ -20,3 +20,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+// Reviewed SDK snapshot; see third_party/pocket-core/sdk.lock.json.
+replace github.com/abjelosevic88/pocket-homelab-core => ./third_party/pocket-core

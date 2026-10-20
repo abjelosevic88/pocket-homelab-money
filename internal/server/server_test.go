@@ -132,6 +132,9 @@ func newTestServer(t *testing.T) *tc {
 	}
 	t.Cleanup(func() { st.Close() })
 	s := New(cfg, st, log, nil)
+	if err := s.core.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Bootstrap(context.Background()); err != nil {
 		t.Fatal(err)
 	}
