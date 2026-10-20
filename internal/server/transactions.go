@@ -440,7 +440,7 @@ func cleanTags(in []string) []string {
 
 // createTx runs the full pipeline for a new transaction: rules, trip tag,
 // insert, subscription match, template counter.
-func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, string, error) {
+func (s *Server) createTx(ctx context.Context, in *txIn, after ...func(*sql.Tx, *store.Transaction) error) (*store.Transaction, string, error) {
 	uid := actorID(ctx)
 	t := &store.Transaction{Kind: "expense", Source: "manual", Tags: []string{}}
 	if in.Source != "" {
@@ -497,11 +497,18 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 		event["account"] = acct.Name
 	}
 	if err := s.store.CreateTransaction(ctx, t, func(tx *sql.Tx) error {
-		if !s.core.Configured() {
-			return nil
+		if s.core.Configured() {
+			event["transaction_id"] = t.ID
+			if err := core.QueueEvent(ctx, tx, "money.transaction_created", fmt.Sprintf("transaction:%d", t.ID), event); err != nil {
+				return err
+			}
 		}
-		event["transaction_id"] = t.ID
-		return core.QueueEvent(ctx, tx, "money.transaction_created", fmt.Sprintf("transaction:%d", t.ID), event)
+		for _, hook := range after {
+			if err := hook(tx, t); err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		if errors.Is(err, store.ErrReplayed) {
 			prior, e := s.replayedTransaction(ctx, t.ID)
@@ -511,7 +518,7 @@ func (s *Server) createTx(ctx context.Context, in *txIn) (*store.Transaction, st
 	}
 	if t.SubscriptionID == nil {
 		s.matchSubscription(ctx, t)
-	} else {
+	} else if len(after) == 0 {
 		s.advanceSubscription(ctx, *t.SubscriptionID, t.Date)
 	}
 	if in.TemplateID > 0 {
@@ -691,16 +698,19 @@ func (s *Server) handleDeleteTransaction(w http.ResponseWriter, r *http.Request)
 	if t == nil {
 		return
 	}
-	for _, p := range s.store.AttachmentPaths(ctx, t.ID) {
-		s.removeFile(p)
-	}
-	if err := s.store.DeleteTransaction(ctx, t.ID); err != nil {
+	event := s.txEvent(ctx, t)
+	paths := s.store.AttachmentPaths(ctx, t.ID)
+	if err := s.store.DeleteTransaction(ctx, t.ID, func(tx *sql.Tx) error {
+		return s.queueEvent(ctx, tx, "money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), event)
+	}); err != nil {
 		s.fail(w, err, "delete transaction")
 		return
 	}
+	for _, p := range paths {
+		s.removeFile(p)
+	}
 	s.auditTx(ctx, snapTx(t), nil)
 	s.emitTx(ctx, "transaction.deleted", t)
-	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), s.txEvent(ctx, t))
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"net/http"
@@ -342,6 +343,11 @@ func (s *Server) advanceSubscription(ctx context.Context, id int64, date string)
 // moveOn steps a subscription to its next due date; paid counts toward
 // "stop after N", a skip does not. Weekend-skipped dates are stepped over.
 func (s *Server) moveOn(ctx context.Context, x *store.Subscription, paid bool) {
+	advanceDue(x, paid)
+	_ = s.store.UpdateSubscription(ctx, x)
+}
+
+func advanceDue(x *store.Subscription, paid bool) {
 	for i := 0; x.Weekend == "skip" && isWeekend(x.NextDate) && i < 30; i++ {
 		x.NextDate = step(x, x.NextDate)
 	}
@@ -354,7 +360,6 @@ func (s *Server) moveOn(ctx context.Context, x *store.Subscription, paid bool) {
 		}
 	}
 	x.NotifiedFor = ""
-	_ = s.store.UpdateSubscription(ctx, x)
 }
 
 // bookDueSubscriptions creates the transactions of "auto" subscriptions that
@@ -380,13 +385,12 @@ func (s *Server) bookDueSubscriptions(ctx context.Context, mirrored map[int64]bo
 			uctx := context.WithValue(ctx, userKey, owner)
 			due := dueOf(x)
 			before := x.NextDate
-			t, msg, err := s.bookSubscription(uctx, x, due, nil, nil)
+			_, msg, err := s.bookSubscription(uctx, x, due, nil, nil, true)
 			if msg != "" || err != nil {
 				s.log.Warn("auto-book subscription", "name", x.Name, "msg", msg, "err", err)
 				break
 			}
 			s.log.Info("subscription booked", "name", x.Name, "date", due)
-			s.publish("money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), s.subPaidEvent(ctx, x, t, true))
 			nx, err := s.store.GetSubscription(ctx, x.ID)
 			if err != nil || nx.NextDate == before {
 				break
@@ -397,7 +401,7 @@ func (s *Server) bookDueSubscriptions(ctx context.Context, mirrored map[int64]bo
 }
 
 // bookSubscription creates the transaction for one due date.
-func (s *Server) bookSubscription(ctx context.Context, x *store.Subscription, date string, amount *int64, accountID *int64) (*store.Transaction, string, error) {
+func (s *Server) bookSubscription(ctx context.Context, x *store.Subscription, date string, amount *int64, accountID *int64, automatic ...bool) (*store.Transaction, string, error) {
 	desc := x.Description
 	if desc == "" {
 		desc = x.Name
@@ -417,7 +421,24 @@ func (s *Server) bookSubscription(ctx context.Context, x *store.Subscription, da
 	if in.AccountID == nil {
 		return nil, "the subscription has no account to pay from", nil
 	}
-	return s.createTx(ctx, &in)
+	// A scheduled occurrence has a stable receipt. The payment, recurrence
+	// advancement, and both events must either all commit or all roll back.
+	in.ExternalID = fmt.Sprintf("subscription:%d:%s", x.ID, x.NextDate)
+	next := *x
+	advanceDue(&next, true)
+	auto := len(automatic) > 0 && automatic[0]
+	event := s.subPaidEvent(ctx, x, nil, auto)
+	return s.createTx(ctx, &in, func(tx *sql.Tx, t *store.Transaction) error {
+		res, err := tx.ExecContext(ctx, `UPDATE subscriptions SET next_date=?, done_count=?, end_date=?, notified_for='', updated_at=? WHERE id=? AND next_date=?`, next.NextDate, next.DoneCount, next.EndDate, store.Now(), x.ID, x.NextDate)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return store.ErrConflict
+		}
+		event["transaction_id"], event["date"], event["amount"] = t.ID, t.Date, t.Amount
+		return s.queueEvent(ctx, tx, "money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), event)
+	})
 }
 
 // ---- handlers ----
@@ -763,11 +784,6 @@ func (s *Server) handlePaySubscription(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "pay")
 		return
 	}
-	// paying ahead of time still pays the next one
-	if nx, err := s.store.GetSubscription(r.Context(), x.ID); err == nil && nx.NextDate == x.NextDate {
-		s.moveOn(r.Context(), nx, true)
-	}
-	s.publish("money.subscription_paid", fmt.Sprintf("subscription:%d", x.ID), s.subPaidEvent(r.Context(), x, t, false))
 	writeJSON(w, http.StatusCreated, t)
 }
 

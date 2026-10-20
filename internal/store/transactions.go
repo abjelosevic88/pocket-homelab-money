@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 	"strings"
 )
 
@@ -509,9 +510,17 @@ func setTags(ctx context.Context, tx *sql.Tx, userID, txID int64, tags []string)
 }
 
 // DeleteTransaction removes a transaction (attachments cascade; files are the caller's).
-func (s *Store) DeleteTransaction(ctx context.Context, id int64) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM transactions WHERE id = ?`, id)
-	return err
+func (s *Store) DeleteTransaction(ctx context.Context, id int64, after ...core.CommitHook) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `DELETE FROM transactions WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	return core.Commit(tx, after...)
 }
 
 // BulkUpdate applies a category and/or tags to many transactions (new tags are userID's).

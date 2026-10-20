@@ -8,6 +8,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -685,16 +686,19 @@ func (s *Server) ffDeleteTransaction(w http.ResponseWriter, r *http.Request) {
 		ffError(w, 404, "Resource not found")
 		return
 	}
-	for _, p := range s.store.AttachmentPaths(ctx, t.ID) {
-		s.removeFile(p)
-	}
-	if err := s.store.DeleteTransaction(ctx, t.ID); err != nil {
+	event := s.txEvent(ctx, t)
+	paths := s.store.AttachmentPaths(ctx, t.ID)
+	if err := s.store.DeleteTransaction(ctx, t.ID, func(tx *sql.Tx) error {
+		return s.queueEvent(ctx, tx, "money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), event)
+	}); err != nil {
 		ffError(w, 500, err.Error())
 		return
 	}
+	for _, p := range paths {
+		s.removeFile(p)
+	}
 	s.auditTx(ctx, snapTx(t), nil)
 	s.emitTx(ctx, "transaction.deleted", t)
-	s.publish("money.transaction_deleted", fmt.Sprintf("transaction:%d", t.ID), s.txEvent(ctx, t))
 	w.WriteHeader(http.StatusNoContent)
 }
 
