@@ -85,6 +85,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	oldHome := cur.HomeCurrency
+	oldFireflyURL, oldFireflyToken := cur.FireflyURL, cur.FireflyToken
 	var in store.Settings
 	keys, err := decodeKeys(r, &in)
 	if err != nil {
@@ -145,6 +146,9 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	url("firefly_url", &cur.FireflyURL, in.FireflyURL)
 	secret("firefly_token", &cur.FireflyToken, in.FireflyToken)
 	flag("firefly_mirror", &cur.FireflyMirror, in.FireflyMirror)
+	if cur.FireflyURL == "" || cur.FireflyToken == "" {
+		cur.FireflyMirror = false
+	}
 	url("pico_url", &cur.PicoURL, in.PicoURL)
 	str("notify_url", &cur.NotifyURL, in.NotifyURL)
 	if keys["notify_format"] && in.NotifyFormat != "" {
@@ -172,6 +176,11 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SaveSettings(ctx, actorID(ctx), cur, admin); err != nil {
 		s.fail(w, err, "save settings")
 		return
+	}
+	if oldFireflyURL != cur.FireflyURL || oldFireflyToken != cur.FireflyToken || cur.FireflyURL == "" || cur.FireflyToken == "" {
+		s.lastImportMu.Lock()
+		delete(s.lastImport, actorID(ctx))
+		s.lastImportMu.Unlock()
 	}
 	_ = s.store.CacheDelete(ctx, tripCacheKey(actorID(ctx))) // the mode, URL or token may have changed
 	if keys["travel_mode"] || keys["travel_token"] {

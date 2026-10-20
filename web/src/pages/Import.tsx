@@ -19,7 +19,7 @@ function FireflyImport() {
   const { toast } = useToast()
   const [st, setSt] = useState<{ running: boolean; last: ImportResult | null } | null>(null)
   const poll = () => api.get<{ running: boolean; last: ImportResult | null }>(`${V1}/import/firefly/status`).then(setSt).catch(() => {})
-  useEffect(() => { poll() }, [])
+  useEffect(() => { poll() }, [f?.firefly_configured])
   useEffect(() => {
     if (!st?.running) return
     const t = setInterval(poll, 1500)
@@ -30,7 +30,7 @@ function FireflyImport() {
   const run = async (mode: 'all' | 'transactions') => {
     try { await api.post(`${V1}/import/firefly`, { mode }); toast('Import started'); setSt(s => ({ running: true, last: s?.last || null })); setTimeout(poll, 800) } catch (e) { toast((e as ApiError).message, 'err') }
   }
-  const last = st?.last
+  const last = f.firefly_configured ? st?.last : null
   return (
     <Card title="🔥 From Firefly III (and Firefly Pico)">
       <p className="muted small">Uses your own Firefly III and brings it into your own ledger. Brings over asset accounts with their exact current balance, categories (with an emoji picked from the name), tags, every transaction (foreign amounts, notes and locations included), bills and recurring transactions merged into subscriptions (the <code>notify: N</code> note becomes the reminder), piggy banks as goals, and Firefly Pico's templates with their <code>[currency:XXX]</code>. Everything is keyed by its Firefly id: run it again and it updates instead of duplicating.</p>
@@ -43,7 +43,7 @@ function FireflyImport() {
         <label className="row"><input type="checkbox" checked={f.firefly_mirror} onChange={e => setF({ ...f, firefly_mirror: e.target.checked })} style={{ width: 'auto' }} />
           <span>Keep mirroring while Firefly is still in use — new and changed Firefly transactions of the last 45 days come over every 30 minutes, and automatic subscription booking waits (Firefly's recurring transactions still do it). Turn off on the day you switch.</span></label>
         <div className="row wrap">
-          <button className="btn" onClick={() => save()}>Save</button>
+          <button className="btn" onClick={async () => { await save(); await poll() }}>Save</button>
           <button className="btn primary" onClick={() => run('all')} disabled={!f.firefly_configured || st?.running}>{st?.running ? 'Importing…' : 'Import everything'}</button>
           <button className="btn" onClick={() => run('transactions')} disabled={!f.firefly_configured || st?.running}>Transactions only</button>
         </div>

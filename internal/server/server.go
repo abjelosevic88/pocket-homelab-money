@@ -45,8 +45,11 @@ type Server struct {
 	errors   atomic.Int64
 	fx       *fx.Client
 
-	jobMu     sync.Mutex // one background pass (or import) at a time
-	importing atomic.Bool
+	jobMu         sync.Mutex // one background pass (or import) at a time
+	importing     atomic.Bool
+	importingUser atomic.Int64
+	lastImportMu  sync.Mutex
+	lastImport    map[int64]*ImportResult
 
 	oidcMu sync.Mutex
 	oidc   *oidcProvider
@@ -68,8 +71,8 @@ type resolvedURL struct {
 // New creates a server.
 func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Server {
 	return &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(), fx: fx.New(cfg.FXProvider, cfg.UserAgent, 8*time.Second), oidc: &oidcProvider{issuerURL: cfg.OIDCIssuer},
-		core:     core.New(cfg.CoreURL, core.Options{DB: st.DB, TokenFile: cfg.DataDir + "/core.token", UserAgent: cfg.UserAgent}),
-		resolved: map[string]resolvedURL{}, modesKick: make(chan struct{}, 1)}
+		core:       core.New(cfg.CoreURL, core.Options{DB: st.DB, TokenFile: cfg.DataDir + "/core.token", UserAgent: cfg.UserAgent}),
+		lastImport: map[int64]*ImportResult{}, resolved: map[string]resolvedURL{}, modesKick: make(chan struct{}, 1)}
 }
 
 // Bootstrap seeds the first admin (if configured), integration defaults,
@@ -262,8 +265,8 @@ func (s *Server) runJobs(ctx context.Context, mirror bool) {
 	for i := range users {
 		u := &users[i]
 		st, _ := s.store.GetSettings(ctx, u.ID)
-		mirrored[u.ID] = st.FireflyMirror
-		if mirror && st.FireflyMirror && st.FireflyURL != "" && !s.importing.Load() {
+		mirrored[u.ID] = st.FireflyMirror && st.FireflyURL != "" && st.FireflyToken != ""
+		if mirror && mirrored[u.ID] && !s.importing.Load() {
 			res := s.importFirefly(withAuditJob(ctx, "Firefly mirror", "mirror"), u.ID, importOptions{Transactions: true, Since: time.Now().AddDate(0, 0, -45).Format("2006-01-02"), Quiet: true})
 			if res.Error != "" {
 				s.log.Warn("firefly mirror", "user", u.ID, "err", res.Error)

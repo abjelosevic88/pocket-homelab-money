@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-money/internal/currency"
@@ -50,8 +49,6 @@ func (r *ImportResult) Summary() string {
 }
 
 var (
-	lastImportMu sync.Mutex
-	lastImport   = map[int64]*ImportResult{} // per person
 	reCurTag     = regexp.MustCompile(`\s*\[currency:[A-Za-z]{3}\]\s*`)
 	reCreatedRec = regexp.MustCompile(`(?m)^\s*Created from recurring transaction .*$`)
 	reNotify     = regexp.MustCompile(`(?im)^\s*notify:\s*(\d+)`)
@@ -124,15 +121,30 @@ func (s *Server) importFirefly(ctx context.Context, ownerID int64, opt importOpt
 		res.Error = "an import is already running"
 		return res
 	}
+	s.importingUser.Store(ownerID)
 	defer s.importing.Store(false)
+	defer s.importingUser.Store(0)
+	settings, err := s.store.GetSettings(ctx, ownerID)
+	if err != nil {
+		res.Error = "could not load Firefly connection"
+		return res
+	}
 	defer func() {
 		res.Finished = store.Now()
+		// A result belongs to the connection that started it. Disconnecting or
+		// replacing that connection must not resurrect an old error later.
+		s.lastImportMu.Lock()
+		defer s.lastImportMu.Unlock()
+		current, err := s.store.GetSettings(ctx, ownerID)
+		if err != nil || current.FireflyURL == "" || current.FireflyToken == "" ||
+			current.FireflyURL != settings.FireflyURL || current.FireflyToken != settings.FireflyToken {
+			return
+		}
 		if !opt.Quiet || res.Error != "" || res.Created+res.Updated+res.Deleted > 0 {
-			lastImportMu.Lock()
-			lastImport[ownerID] = res
-			lastImportMu.Unlock()
+			s.lastImport[ownerID] = res
 		}
 	}()
+
 	owner, err := s.store.GetUser(ctx, ownerID)
 	if err != nil {
 		res.Error = "no owner"
@@ -876,6 +888,15 @@ func (s *Server) handleImportFirefly(w http.ResponseWriter, r *http.Request) {
 	_ = decode(r, &in)
 	opt := importOptions{All: in.Mode != "transactions", Transactions: true, Since: in.Since}
 	uid := actorID(r.Context())
+	st, err := s.store.GetSettings(r.Context(), uid)
+	if err != nil {
+		s.fail(w, err, "Firefly connection")
+		return
+	}
+	if st.FireflyURL == "" || st.FireflyToken == "" {
+		writeErr(w, http.StatusBadRequest, "Connect Firefly III before importing")
+		return
+	}
 	// outlives the request, keeps who started it for the audit log
 	bg := withAuditSource(context.WithoutCancel(r.Context()), "import")
 	if s.importing.Load() {
@@ -898,9 +919,20 @@ func (s *Server) handleImportFirefly(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImportStatus(w http.ResponseWriter, r *http.Request) {
-	lastImportMu.Lock()
-	defer lastImportMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"running": s.importing.Load(), "last": lastImport[actorID(r.Context())]})
+	uid := actorID(r.Context())
+	s.lastImportMu.Lock()
+	defer s.lastImportMu.Unlock()
+	st, err := s.store.GetSettings(r.Context(), uid)
+	if err != nil {
+		s.fail(w, err, "Firefly connection")
+		return
+	}
+	if st.FireflyURL == "" || st.FireflyToken == "" {
+		delete(s.lastImport, uid)
+		writeJSON(w, http.StatusOK, map[string]any{"running": false, "last": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"running": s.importing.Load() && s.importingUser.Load() == uid, "last": s.lastImport[uid]})
 }
 
 // guessEveryday marks as "everyday money" only the accounts that carry a real
