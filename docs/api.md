@@ -165,7 +165,7 @@ Mounted at `/firefly/api/v1` with a Pocket Money bearer token, shaped like Firef
 | `GET /accounts?type=asset|liabilities|all`, `/accounts/{id}`, `/accounts/{id}/transactions` | `current_balance`, `account_role` |
 | `GET /categories`, `/categories/{id}`, `/tags`, `/tags/{id or name}`, `/tags/{tag}/transactions?type=&start=&end=` | |
 | `GET /transactions?type=&start=&end=&page=&limit=`, `/transactions/{id}` | one group = one split; `transaction_journal_id` = id |
-| `POST /transactions` `{transactions:[{type, date, amount, description, source_id/name, destination_id/name, category_id/name, tags, notes, foreign_amount, foreign_currency_code, currency_code, bill_id}]}` | rules apply unless `apply_rules:false`; Pico's `[currency:XXX]` note markers are dropped |
+| `POST /transactions` `{transactions:[{type, date, amount, description, source_id/name, destination_id/name, category_id/name, tags, notes, foreign_amount, foreign_currency_code, currency_code, bill_id}]}` | rules apply unless `apply_rules:false`; Pico's `[currency:XXX]` note markers are dropped; an optional top-level `template_id` (not Firefly's) counts one use of that template for the whole group |
 | `PUT /transactions/{id}`, `DELETE /transactions/{id}` | |
 | `GET /bills` (and `/subscriptions`) | `pay_dates`, `next_expected_match`, `repeat_freq`, a `notify: N` line in `notes` |
 | `GET /currencies`, `/exchange-rates`, `/insight/expense/total`, `/insight/income/total` | |
@@ -173,7 +173,7 @@ Mounted at `/firefly/api/v1` with a Pocket Money bearer token, shaped like Firef
 
 Each split carries `external_id` (Money's own: `firefly:<journal id>` for what came from Firefly, `<app>:…` for what a linked app booked; `null` otherwise) and `original_source: "pocket-money-<version>"`; `GET /about` has `php_version: "pocket-money <version>"`, which is how a client tells Money from a real Firefly III. A Pocket Core link token with `transactions:read` works here too (see [Pocket Core app links](#pocket-core-app-links)).
 
-Firefly Pico's template list is at `/firefly/api/transaction-templates` (Pico's shape, with `[currency:XXX]` in the notes when a template has its own currency).
+Firefly Pico's template list is at `/firefly/api/transaction-templates` (Pico's shape, with `[currency:XXX]` in the notes when a template has its own currency), most-used first: pinned, then `use_count`, then your own order. Each item also has `pinned`, `use_count` and `last_used_at`, which Pico doesn't send; a client that sees `use_count` should keep this order and send `template_id` when it books from a template.
 
 ## Health & metrics
 

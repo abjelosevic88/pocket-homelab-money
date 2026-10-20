@@ -567,14 +567,19 @@ func (s *Server) ffCreateTransaction(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ApplyRules   *bool       `json:"apply_rules"`
 		Transactions []ffSplitIn `json:"transactions"`
+		// Not Firefly's: the template the line came from, so a client on the
+		// compat API counts its use like the web app does (one use per group).
+		TemplateID json.RawMessage `json:"template_id"`
 	}
 	if err := decode(r, &body); err != nil || len(body.Transactions) == 0 {
 		ffError(w, http.StatusUnprocessableEntity, "The given data was invalid.")
 		return
 	}
+	templateID, _ := strconv.ParseInt(rawString(body.TemplateID), 10, 64)
 	accts, _ := s.store.ListAccounts(ctx, actorID(ctx), false)
 	if in, ok := s.ffMergeSplits(ctx, body.Transactions, accts); ok {
 		in.SkipRules = body.ApplyRules != nil && !*body.ApplyRules
+		in.TemplateID = templateID
 		t, msg, err := s.createTx(ctx, in)
 		if msg != "" {
 			ffError(w, http.StatusUnprocessableEntity, msg)
@@ -595,6 +600,9 @@ func (s *Server) ffCreateTransaction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.SkipRules = body.ApplyRules != nil && !*body.ApplyRules
+		if first == nil {
+			in.TemplateID = templateID
+		}
 		t, msg, err := s.createTx(ctx, in)
 		if msg != "" {
 			ffError(w, http.StatusUnprocessableEntity, msg)
@@ -896,7 +904,9 @@ func (s *Server) ffTemplates(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, map[string]any{"id": t.ID, "name": t.Name, "amount": amount, "account_source_id": src, "account_destination_id": dst, "category_id": t.CategoryID,
 			"type": typ, "notes": nilIfEmpty(notes), "description": nilIfEmpty(t.Description), "budget_id": nil, "tags": tags, "extra_names": extra,
-			"created_at": t.CreatedAt, "updated_at": t.CreatedAt})
+			"created_at": t.CreatedAt, "updated_at": t.CreatedAt,
+			// Not Pico's: the list is already most-used first; these let a client show or keep that order.
+			"pinned": t.Pinned, "use_count": t.UseCount, "last_used_at": nilIfEmpty(t.LastUsedAt)})
 	}
 	ffPage(w, r, items)
 }

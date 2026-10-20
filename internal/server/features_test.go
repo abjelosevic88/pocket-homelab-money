@@ -176,3 +176,49 @@ func TestSplitsBalanceLiabilityWebhook(t *testing.T) {
 		t.Errorf("firefly split post %d: %s", res.StatusCode, b)
 	}
 }
+
+// A compat client sees each template's use count and counts a use by sending
+// template_id with the transaction, so phone, web and Raycast sort alike.
+func TestCompatTemplateUseCount(t *testing.T) {
+	c := newTestServer(t)
+	var acct store.Account
+	c.do("POST", "/api/v1/accounts", map[string]any{"name": "UniCredit", "currency": "BAM"}, &acct)
+	var kafa, pekara store.Template
+	c.do("POST", "/api/v1/templates", map[string]any{"name": "Kafa", "amount": 350, "account_id": acct.ID}, &kafa)
+	c.do("POST", "/api/v1/templates", map[string]any{"name": "Pekara", "account_id": acct.ID}, &pekara)
+	var tok struct {
+		Token string `json:"token"`
+	}
+	c.do("POST", "/api/v1/tokens", map[string]any{"name": "phone"}, &tok)
+	ff := func(method, path, body string) []byte {
+		req, _ := http.NewRequest(method, c.ts.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+tok.Token)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil || res.StatusCode != 200 {
+			t.Fatalf("%s %s: %v %d", method, path, err, res.StatusCode)
+		}
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		return b
+	}
+	post := func(body string) { ff("POST", "/firefly/api/v1/transactions", body) }
+	line := `{"type":"withdrawal","date":"2026-10-01","amount":"2","description":"x","source_id":"` + itoa(acct.ID) + `"}`
+	post(`{"template_id":"` + itoa(pekara.ID) + `","transactions":[` + line + `]}`)
+	post(`{"template_id":` + itoa(pekara.ID) + `,"transactions":[` + line + `,` + line + `]}`) // a split group is one use
+	post(`{"transactions":[` + line + `]}`)                                                         // no template: no count
+	var list struct {
+		Data []struct {
+			ID       int64  `json:"id"`
+			Name     string `json:"name"`
+			UseCount int    `json:"use_count"`
+			LastUsed any    `json:"last_used_at"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(ff("GET", "/firefly/api/transaction-templates", ""), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Data) != 2 || list.Data[0].Name != "Pekara" || list.Data[0].UseCount != 2 || list.Data[0].LastUsed == nil || list.Data[1].UseCount != 0 {
+		t.Errorf("templates after uses: %+v", list.Data)
+	}
+}
