@@ -26,7 +26,7 @@ Everything is read from environment variables; every value has a default so a ba
 | `FX_PROVIDER` | `auto` | `auto`, `frankfurter`, `erapi`, `none`. Euro pegs (BAM, BGN, XOF…) are built in and also give dated cross rates (USD→BAM = USD→EUR × 1.95583). |
 | `NOTIFY_URL` / `NOTIFY_FORMAT` / `NOTIFY_HOUR` | – / guessed / `9` | Apprise `…/notify/<key>`, ntfy topic URL or JSON webhook; `apprise`, `ntfy`, `json`; hour of the daily check |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` / `OPENAI_BASE_URL` | – / `gpt-5.4-mini` / OpenAI | Optional AI: free text and voice entry, “Ask” |
-| `TRAVEL_URL` / `TRAVEL_TOKEN` / `TRAVEL_PUBLIC_URL` | – | Pocket Travel: new expenses during a running trip get its tag |
+| `TRAVEL_URL` / `TRAVEL_TOKEN` / `TRAVEL_PUBLIC_URL` | – | Pocket Travel, direct connection: new expenses during a running trip get its tag. Not needed with Pocket Core (each person connects through an app link) |
 | `FIREFLY_URL` / `FIREFLY_TOKEN` | – | Firefly III base URL and personal access token, for the import |
 | `PICO_URL` | – | Firefly Pico base URL, to import its templates (uses the Firefly token) |
 | `FIREFLY_IMPORT_ON_START` | `true` | Import everything once when the database is still empty and a Firefly URL is set |
@@ -36,7 +36,7 @@ Everything is read from environment variables; every value has a default so a ba
 | `CORE_APP_URL` | `BASE_URL` | How Core reaches this app for health checks (e.g. `http://host.docker.internal:8178`) |
 | `DEMO_DATA` | `false` | Seed half a year of a sample household on an empty database |
 
-The integration variables (`NOTIFY_*`, `OPENAI_*`, `TRAVEL_*`, `FIREFLY_*`, `PICO_URL`, `FIREFLY_MIRROR`) are the **owner's** (the first admin's) defaults: they fill that person's own settings, and the first Firefly import and the mirror go into that person's books. Everyone else starts with none and sets their own under Settings. Core events carry `user_id` / `user_email` of the ledger they come from, native webhook deliveries a `user` object.
+The integration variables (`NOTIFY_*`, `OPENAI_*`, `TRAVEL_*`, `FIREFLY_*`, `PICO_URL`, `FIREFLY_MIRROR`) are the **owner's** (the first admin's) defaults: they fill that person's own empty settings once (a value cleared in Settings stays cleared after a restart), and the first Firefly import and the mirror go into that person's books. Everyone else starts with none and sets their own under Settings. Core events carry `user_id` / `user_email` of the ledger they come from, native webhook deliveries a `user` object.
 
 ## Auth modes
 

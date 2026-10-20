@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import type { APIToken, Settings as SettingsT, User } from '../lib/types'
+import type { APIToken, ConnMode, Settings as SettingsT, User } from '../lib/types'
 import { DATE_FORMATS, TIME_FORMATS, fmtBytes, fmtDateTime } from '../lib/format'
 import { Card, Confirm, Field, Loading, Modal, PageHeader, Segmented, Tabs, useAsync, useToast } from '../components/ui'
 import { Select } from '../components/Select'
@@ -123,16 +123,19 @@ function Integrations() {
           <div className="row"><button className="btn sm" onClick={() => run('ai', f.ai_url, f.ai_key, { model: f.ai_model })} disabled={!f.ai_key}>Test key</button>{status('ai')}</div>
         </div>
       </Card>
-      <Card title="✈️ Pocket Travel" actions={badge(f.travel_configured)}>
+      <Card title="✈️ Pocket Travel" actions={connBadge(f.travel_mode, f.travel_via)}>
         <p className="muted small">While a trip is running, new expenses get the trip's tag automatically — Pocket Travel then shows them in the trip budget.</p>
-        <div className="grid" style={{ gap: 12 }}>
-          <div className="two-col tight">
-            <Field label="URL"><input value={f.travel_url} onChange={e => setF({ ...f, travel_url: e.target.value })} placeholder="http://pocket-travel:8080" /></Field>
-            <Field label="API token"><input value={f.travel_token} onChange={e => setF({ ...f, travel_token: e.target.value })} autoComplete="off" /></Field>
-          </div>
-          <label className="row"><input type="checkbox" checked={f.travel_auto_tag} onChange={e => setF({ ...f, travel_auto_tag: e.target.checked })} style={{ width: 'auto' }} /> Tag new expenses with the running trip</label>
-          <div className="row"><button className="btn sm" onClick={() => run('travel', f.travel_url, f.travel_token)} disabled={!f.travel_url}>Test connection</button>{status('travel')}</div>
-        </div>
+        <Connection app="Pocket Travel" mode={f.travel_mode} via={f.travel_via} detail={f.travel_detail} core={f.core_configured} hasToken={!!f.travel_token}
+          onMode={m => save({ travel_mode: m })} onDisconnect={() => save({ travel_url: '', travel_token: '', travel_public_url: '' })}
+          test={<><button className="btn sm" onClick={() => run('travel', f.travel_url, f.travel_token)}>Test connection</button>{status('travel')}</>}
+          direct={<>
+            <div className="two-col tight">
+              <Field label="URL" help="Empty = found through Pocket Core"><input value={f.travel_url} onChange={e => setF({ ...f, travel_url: e.target.value })} placeholder="http://pocket-travel:8080" /></Field>
+              <Field label="API token" help="Pocket Travel → Settings → API tokens"><input value={f.travel_token} onChange={e => setF({ ...f, travel_token: e.target.value })} autoComplete="off" /></Field>
+            </div>
+            <Field label="Public URL (optional)" help="What the browser opens for trip links when the URL above is internal."><input value={f.travel_public_url} onChange={e => setF({ ...f, travel_public_url: e.target.value })} placeholder="https://travel.example.com" /></Field>
+          </>} />
+        {f.travel_mode !== 'off' && <label className="row mt"><input type="checkbox" checked={f.travel_auto_tag} onChange={e => setF({ ...f, travel_auto_tag: e.target.checked })} style={{ width: 'auto' }} /> Tag new expenses with the running trip</label>}
       </Card>
       <Card title="🔥 Firefly III" actions={badge(f.firefly_configured)}>
         <p className="muted small">Only needed to import (Settings → Import) or to keep mirroring while both run side by side.</p>
@@ -149,6 +152,42 @@ function Integrations() {
     </div>
   )
 }
+
+/**
+ * One Pocket app connection: Pocket Core, Direct (URL + token) or Off, with
+ * what it actually is right now. The mode saves at once; Disconnect removes
+ * the saved URL and token.
+ */
+function Connection({ app, mode, via, detail, core, onMode, onDisconnect, hasToken, test, direct }: {
+  app: string; mode: ConnMode; via: string; detail: string; core: boolean; onMode: (m: ConnMode) => void; onDisconnect: () => void
+  hasToken: boolean; test: React.ReactNode; direct: React.ReactNode
+}) {
+  const ok = via !== ''
+  const line = mode === 'off' ? `Off: Money does not talk to ${app}.`
+    : mode === 'core' ? (ok ? `Connected through Pocket Core, as you. Nothing to fill in; switch it off for yourself in Pocket Core → Settings → Apps acting for me.` : `Not connected: ${detail}.`)
+    : (ok ? `Direct connection with your own ${app} URL and token; use Test connection to check it.` : `Not connected: ${detail || 'add the URL and a token'}.`)
+  return (
+    <div className="conn-block">
+      <div className="conn-mode">
+        <Segmented size="sm" value={mode} onChange={m => onMode(m)} options={[
+          { value: 'core' as ConnMode, label: 'Pocket Core', title: core ? 'Through Pocket Core: per person, nothing to paste' : 'There is no Pocket Core on this box' },
+          { value: 'direct' as ConnMode, label: 'Direct', title: 'Your own URL and API token' },
+          { value: 'off' as ConnMode, label: 'Off' },
+        ]} />
+      </div>
+      <div className={`conn-status ${mode === 'off' ? '' : ok ? 'ok' : 'bad'}`}><span className="dot" />{line}</div>
+      {mode === 'direct' && <>
+        {direct}
+        <div className="row wrap">{test}{hasToken && <button className="btn sm ghost danger-text" onClick={onDisconnect} title="Remove the saved URL and token">Disconnect</button>}</div>
+      </>}
+      {mode === 'core' && <div className="row wrap">{test}</div>}
+    </div>
+  )
+}
+
+const connBadge = (mode: ConnMode, via: string) => mode === 'off' ? <span className="badge">off</span>
+  : via ? <span className="badge cat">{via === 'core' ? 'Pocket Core' : 'direct'}</span>
+  : <span className="badge warn">not connected</span>
 
 function Users() {
   const { user, users, reloadMeta, status } = useApp()

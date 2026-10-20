@@ -16,7 +16,7 @@ var PersonalSettings = map[string]bool{
 	"firefly_url": true, "firefly_token": true, "firefly_mirror": true, "pico_url": true,
 	"notify_url": true, "notify_format": true, "notify_hour": true, "notify_digest": true,
 	"ai_url": true, "ai_key": true, "ai_model": true, "ai_transcribe_model": true, "ai_language": true, "ai_context": true,
-	"travel_url": true, "travel_token": true, "travel_public_url": true, "travel_auto_tag": true,
+	"travel_url": true, "travel_token": true, "travel_public_url": true, "travel_auto_tag": true, "travel_mode": true,
 }
 
 // GetSettings loads the server-wide settings plus one person's own, with
@@ -70,6 +70,7 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 		"notify_url": &st.NotifyURL, "ai_url": &st.AIURL, "ai_key": &st.AIKey, "ai_model": &st.AIModel,
 		"ai_transcribe_model": &st.AITranscribe, "ai_language": &st.AILanguage, "ai_context": &st.AIContext,
 		"travel_url": &st.TravelURL, "travel_token": &st.TravelToken, "travel_public_url": &st.TravelPublicURL,
+		"travel_mode": &st.TravelMode,
 	}
 	nonEmpty := map[string]*string{
 		"title": &st.Title, "home_currency": &st.HomeCurrency, "date_format": &st.DateFormat, "time_format": &st.TimeFormat,
@@ -144,6 +145,7 @@ func settingsKV(st Settings) map[string]string {
 		"travel_token":        st.TravelToken,
 		"travel_public_url":   st.TravelPublicURL,
 		"travel_auto_tag":     b[st.TravelAutoTag],
+		"travel_mode":         st.TravelMode,
 		"setup_complete":      b[st.SetupComplete],
 	}
 }

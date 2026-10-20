@@ -9,6 +9,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -63,6 +64,11 @@ func (s *Server) compatRoutes(r chi.Router) {
 func (s *Server) compatAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.resolvePrincipal(r)
+		if errors.Is(err, errLinkScope) {
+			// a Pocket Core link token: only transactions:read reaches the GET routes here
+			ffError(w, http.StatusForbidden, "This Pocket Core link does not cover "+r.Method+" "+r.URL.Path+".")
+			return
+		}
 		if err != nil || p == nil || p.User == nil {
 			ffError(w, http.StatusUnauthorized, "Unauthenticated.")
 			return
@@ -376,7 +382,7 @@ func (s *Server) ffGroup(t *store.Transaction) ffItem {
 		"destination_id": dst["id"], "destination_name": dst["name"], "destination_type": dst["type"], "destination_iban": nil,
 		"budget_id": nil, "budget_name": nil, "category_id": catID, "category_name": catName,
 		"bill_id": subID, "bill_name": subName, "subscription_id": subID, "subscription_name": subName,
-		"reconciled": false, "notes": notes, "tags": tags, "internal_reference": nil, "external_id": nil, "external_url": nil,
+		"reconciled": false, "notes": notes, "tags": tags, "internal_reference": nil, "external_id": nilIfEmpty(t.ExternalID), "external_url": nil,
 		"original_source": "pocket-money-" + Version, "recurrence_id": nil, "has_attachments": t.AttachmentCount > 0,
 		"latitude": t.Lat, "longitude": t.Lng, "zoom_level": nil,
 		"pc_amount": nil, "primary_currency_code": nil,

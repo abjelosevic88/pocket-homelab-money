@@ -28,7 +28,6 @@ import (
 	"github.com/abjelosevic88/pocket-homelab-money/internal/firefly"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/fx"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/notify"
-	"github.com/abjelosevic88/pocket-homelab-money/internal/pocket"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
 
@@ -51,10 +50,6 @@ type Server struct {
 
 	oidcMu sync.Mutex
 	oidc   *oidcProvider
-
-	tripMu  sync.Mutex
-	trips   []pocket.Trip
-	tripsAt time.Time
 
 	core     *core.Client
 	coreMu   sync.Mutex
@@ -110,43 +105,9 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
-	st, err := s.store.GetSettings(ctx, ownerID)
+	st, err := s.seedOwnerSettings(ctx, ownerID)
 	if err != nil {
 		return err
-	}
-	changed := false
-	set := func(dst *string, v string) {
-		if *dst == "" && v != "" {
-			*dst = v
-			changed = true
-		}
-	}
-	set(&st.FireflyURL, s.cfg.FireflyURL)
-	set(&st.FireflyToken, s.cfg.FireflyToken)
-	set(&st.PicoURL, s.cfg.PicoURL)
-	set(&st.NotifyURL, s.cfg.NotifyURL)
-	set(&st.AIKey, s.cfg.OpenAIKey)
-	set(&st.AIModel, s.cfg.OpenAIModel)
-	set(&st.AIURL, s.cfg.OpenAIBaseURL)
-	set(&st.TravelURL, s.cfg.TravelURL)
-	set(&st.TravelToken, s.cfg.TravelToken)
-	set(&st.TravelPublicURL, s.cfg.TravelPublicURL)
-	if s.cfg.NotifyFormat != "" && st.NotifyURL == s.cfg.NotifyURL && st.NotifyFormat != s.cfg.NotifyFormat {
-		st.NotifyFormat = s.cfg.NotifyFormat
-		changed = true
-	}
-	if s.cfg.NotifyHour != 9 && st.NotifyHour == 9 {
-		st.NotifyHour = s.cfg.NotifyHour
-		changed = true
-	}
-	if st.HomeCurrency == "EUR" && s.cfg.DefaultCurrency != "EUR" {
-		st.HomeCurrency = s.cfg.DefaultCurrency
-		changed = true
-	}
-	if changed {
-		if err := s.store.SaveSettings(ctx, ownerID, st, true); err != nil {
-			return err
-		}
 	}
 	if s.cfg.DemoData {
 		if err := s.seedDemo(ctx); err != nil {
@@ -178,6 +139,66 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 		go s.coreLoop(ctx)
 	}
 	return nil
+}
+
+// seedOwnerSettings fills the owner's empty integration settings from the
+// environment (FIREFLY_*, NOTIFY_URL, OPENAI_*, TRAVEL_*). Each value is
+// copied once: clearing it in Settings (to move Pocket Travel over to
+// Pocket Core, say) must not bring it back at the next start. A value
+// already there counts as copied.
+func (s *Server) seedOwnerSettings(ctx context.Context, ownerID int64) (store.Settings, error) {
+	st, err := s.store.GetSettings(ctx, ownerID)
+	if err != nil {
+		return st, err
+	}
+	changed := false
+	var marks []string
+	set := func(name string, dst *string, v string) {
+		key := "seeded:" + name
+		if _, _, done := s.store.CacheGet(ctx, key); done {
+			return
+		}
+		if *dst == "" && v != "" {
+			*dst = v
+			changed = true
+		}
+		if *dst != "" {
+			marks = append(marks, key)
+		}
+	}
+	set("FireflyURL", &st.FireflyURL, s.cfg.FireflyURL)
+	set("FireflyToken", &st.FireflyToken, s.cfg.FireflyToken)
+	set("PicoURL", &st.PicoURL, s.cfg.PicoURL)
+	set("NotifyURL", &st.NotifyURL, s.cfg.NotifyURL)
+	set("AIKey", &st.AIKey, s.cfg.OpenAIKey)
+	set("AIModel", &st.AIModel, s.cfg.OpenAIModel)
+	set("AIURL", &st.AIURL, s.cfg.OpenAIBaseURL)
+	set("TravelURL", &st.TravelURL, s.cfg.TravelURL)
+	set("TravelToken", &st.TravelToken, s.cfg.TravelToken)
+	set("TravelPublicURL", &st.TravelPublicURL, s.cfg.TravelPublicURL)
+	if s.cfg.NotifyFormat != "" && st.NotifyURL == s.cfg.NotifyURL && st.NotifyFormat != s.cfg.NotifyFormat {
+		st.NotifyFormat = s.cfg.NotifyFormat
+		changed = true
+	}
+	if s.cfg.NotifyHour != 9 && st.NotifyHour == 9 {
+		st.NotifyHour = s.cfg.NotifyHour
+		changed = true
+	}
+	if st.HomeCurrency == "EUR" && s.cfg.DefaultCurrency != "EUR" {
+		st.HomeCurrency = s.cfg.DefaultCurrency
+		changed = true
+	}
+	if changed {
+		if err := s.store.SaveSettings(ctx, ownerID, st, true); err != nil {
+			return st, err
+		}
+	}
+	// marked only once saved (unowned values are adopted by the first admin
+	// with the rest of the unowned settings)
+	for _, k := range marks {
+		_ = s.store.CachePut(ctx, k, "1")
+	}
+	return st, nil
 }
 
 // importOwner picks the account that owns the environment's Firefly import:
@@ -259,21 +280,17 @@ type clients struct {
 	st      store.Settings
 	firefly *firefly.Client
 	notify  *notify.Client
-	travel  *pocket.Client
 	ai      *ai.Client
 }
 
 // clients are built from the settings of the person in ctx (every
-// integration credential is personal).
+// integration credential is personal). Pocket Travel is reached through
+// travelFor, which follows the person's connection mode.
 func (s *Server) clients(ctx context.Context) clients {
 	st, _ := s.store.GetSettings(ctx, actorID(ctx))
-	if st.TravelURL == "" && st.TravelToken != "" {
-		st.TravelURL = s.resolveSibling(ctx, "travel")
-	}
 	return clients{st: st,
 		firefly: firefly.New(st.FireflyURL, st.FireflyToken, 60*time.Second),
 		notify:  notify.New(st.NotifyURL, st.NotifyFormat),
-		travel:  pocket.New(st.TravelURL, st.TravelToken, 15*time.Second),
 		ai:      ai.New(st.AIURL, st.AIKey, st.AIModel, st.AITranscribe),
 	}
 }
@@ -623,6 +640,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "MONEY",
 		Publishes: []string{"money.transaction_created", "money.transaction_deleted", "money.subscription_paid"},
 		Offers:    linkOffers,
+		Uses:      linkUses,
 	}
 	if s.cfg.BaseURL != "" {
 		// ask Core for a relying-party client so "Sign in with Pocket Core" needs no configuration

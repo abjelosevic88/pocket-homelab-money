@@ -585,3 +585,12 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
   input[type="date"], input[type="time"], input[type="datetime-local"] { -webkit-appearance: none; appearance: none; min-width: 0; max-width: 100%; min-height: 42px; display: block; }
   input::-webkit-date-and-time-value { text-align: left; }
 }
+
+/* Pocket app connections (Settings → Integrations) */
+.conn-block { display: grid; gap: 12px; }
+.conn-mode { display: flex; }
+.conn-status { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--muted); padding: 8px 10px; border-radius: 8px; background: var(--surface-2); line-height: 1.4; }
+.conn-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; margin-top: 5px; }
+.conn-status.ok { color: var(--text); }
+.conn-status.ok .dot { background: var(--success, #16a34a); }
+.conn-status.bad .dot { background: var(--warning, #d97706); }

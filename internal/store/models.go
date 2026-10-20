@@ -53,6 +53,7 @@ type Settings struct {
 	TravelToken     string `json:"travel_token"`
 	TravelPublicURL string `json:"travel_public_url"`
 	TravelAutoTag   bool   `json:"travel_auto_tag"` // add the running trip's tag to new expenses
+	TravelMode      string `json:"travel_mode"`     // core | direct | off; "" = direct with a token, else core
 
 	SetupComplete bool `json:"setup_complete"`
 }

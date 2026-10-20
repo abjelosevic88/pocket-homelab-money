@@ -590,8 +590,8 @@ func (s *Server) loadTx(w http.ResponseWriter, r *http.Request, write bool) *sto
 	if write {
 		ok = s.canWrite(ctx, t.AccountID)
 	}
-	if app := linkApp(principalFrom(ctx)); app != "" && t.Source != app {
-		ok = false // a linked app only touches what it booked
+	if p := principalFrom(ctx); linkApp(p) != "" && t.Source != linkApp(p) && (write || !p.hasScope("transactions:read")) {
+		ok = false // a linked app only touches what it booked (and reads more only with transactions:read)
 	}
 	if !ok {
 		writeErr(w, http.StatusNotFound, "not found")

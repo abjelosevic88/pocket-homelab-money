@@ -36,13 +36,15 @@ func majorString(minor int64, code string) string {
 	return strconv.FormatFloat(float64(minor)/math.Pow10(dec), 'f', dec, 64) + " " + code
 }
 
-func (s *Server) publicSettings(st store.Settings, admin bool) map[string]any {
+func (s *Server) publicSettings(ctx context.Context, u *store.User, st store.Settings, admin bool) map[string]any {
 	model := st.AIModel
 	if model == "" {
 		model = ai.DefaultModel
 	}
+	travelMode, travelVia, travelDetail := s.connStatus(ctx, u, "travel", "Pocket Travel", st.TravelMode, st.TravelToken, travelScopes)
 	return map[string]any{
-		"title": st.Title, "home_currency": st.HomeCurrency, "date_format": st.DateFormat, "time_format": st.TimeFormat,
+		"core_configured": s.core.Configured(),
+		"title":           st.Title, "home_currency": st.HomeCurrency, "date_format": st.DateFormat, "time_format": st.TimeFormat,
 		"week_start": st.WeekStart, "month_start_day": st.MonthStartDay, "fx_auto": st.FXAuto, "fx_provider": s.cfg.FXProvider,
 		"default_account_id": st.DefaultAcct, "quick_lang": st.QuickLang,
 		"firefly_url": st.FireflyURL, "firefly_token": mask(st.FireflyToken), "firefly_configured": st.FireflyURL != "" && st.FireflyToken != "",
@@ -50,8 +52,8 @@ func (s *Server) publicSettings(st store.Settings, admin bool) map[string]any {
 		"notify_url": st.NotifyURL, "notify_format": st.NotifyFormat, "notify_hour": st.NotifyHour, "notify_digest": st.NotifyDigest, "notify_configured": st.NotifyURL != "",
 		"ai_url": st.AIURL, "ai_key": mask(st.AIKey), "ai_model": st.AIModel, "ai_model_effective": model, "ai_transcribe_model": st.AITranscribe,
 		"ai_language": st.AILanguage, "ai_context": st.AIContext, "ai_configured": st.AIKey != "",
-		"travel_url": st.TravelURL, "travel_public_url": st.TravelPublicURL, "travel_token": mask(st.TravelToken), "travel_configured": st.TravelURL != "" && st.TravelToken != "",
-		"travel_auto_tag":  st.TravelAutoTag,
+		"travel_url": st.TravelURL, "travel_public_url": st.TravelPublicURL, "travel_token": mask(st.TravelToken), "travel_configured": travelVia != "",
+		"travel_mode": travelMode, "travel_via": travelVia, "travel_detail": travelDetail, "travel_auto_tag": st.TravelAutoTag,
 		"max_upload_bytes": s.cfg.MaxUploadBytes, "setup_complete": st.SetupComplete, "base_url": s.cfg.BaseURL,
 		// title, home_currency and fx_auto are the server's; everything else is the caller's own
 		"can_edit_server": admin,
@@ -69,7 +71,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.publicSettings(st, isAdmin(r.Context())))
+	writeJSON(w, http.StatusOK, s.publicSettings(r.Context(), userFrom(r.Context()), st, isAdmin(r.Context())))
 }
 
 // handlePutSettings saves the caller's own settings; the server-wide ones
@@ -164,15 +166,18 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	url("travel_public_url", &cur.TravelPublicURL, in.TravelPublicURL)
 	secret("travel_token", &cur.TravelToken, in.TravelToken)
 	flag("travel_auto_tag", &cur.TravelAutoTag, in.TravelAutoTag)
+	if keys["travel_mode"] && (in.TravelMode == modeCore || in.TravelMode == modeDirect || in.TravelMode == modeOff) {
+		cur.TravelMode = in.TravelMode
+	}
 	if err := s.store.SaveSettings(ctx, actorID(ctx), cur, admin); err != nil {
 		s.fail(w, err, "save settings")
 		return
 	}
-	_ = s.store.CacheDelete(ctx, tripCacheKey(actorID(ctx)))
+	_ = s.store.CacheDelete(ctx, tripCacheKey(actorID(ctx))) // the mode, URL or token may have changed
 	if admin && cur.HomeCurrency != oldHome {
 		go s.recomputeHome(context.Background())
 	}
-	writeJSON(w, http.StatusOK, s.publicSettings(cur, admin))
+	writeJSON(w, http.StatusOK, s.publicSettings(ctx, userFrom(ctx), cur, admin))
 }
 
 // recomputeHome re-values every transaction in a new home currency (the
@@ -247,8 +252,22 @@ func (s *Server) handleIntegrationTest(w http.ResponseWriter, r *http.Request) {
 		msg = "Test message sent via " + n.Format
 	case "travel":
 		var v string
-		v, err = pocket.New(urlOr(st.TravelURL), keyOr(st.TravelToken), 15*time.Second).Health(ctx)
-		msg = "Pocket Travel " + v
+		typed := in.Key != "" && !strings.Contains(in.Key, "••")
+		// a token typed into the form is tried as is; otherwise the saved mode decides
+		if tok := keyOr(st.TravelToken); tok != "" && (typed || connMode(st.TravelMode, st.TravelToken) == modeDirect) {
+			base := urlOr(st.TravelURL)
+			if base == "" {
+				base = s.resolveSibling(ctx, "travel")
+			}
+			v, err = pocket.New(base, tok, 15*time.Second).Health(ctx)
+			msg = "Pocket Travel " + v + ", direct connection"
+		} else {
+			var conn *siblingConn
+			if conn, err = s.travelFor(ctx, userFrom(r.Context())); err == nil {
+				v, err = conn.client.Health(ctx)
+				msg = "Pocket Travel " + v + " through Pocket Core"
+			}
+		}
 	case "ai":
 		model := in.Model
 		if model == "" {
@@ -355,50 +374,81 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 
 // ---- Pocket Travel: the running trip's tag on new expenses ----
 
-func (s *Server) tripList(ctx context.Context) []pocket.Trip {
-	c := s.clients(ctx)
-	if !c.travel.Configured() {
-		return nil
+// tripCache is what is kept of a person's trips for 30 minutes.
+type tripCache struct {
+	Trips  []pocket.Trip `json:"trips"`
+	Public string        `json:"public"`
+	Failed bool          `json:"failed,omitempty"` // not reachable: asked again after 5 minutes
+}
+
+// travelOn reports whether the person in ctx has Pocket Travel switched on
+// at all (any mode but off), without contacting anything.
+func (s *Server) travelOn(st store.Settings) bool {
+	return connMode(st.TravelMode, st.TravelToken) != modeOff
+}
+
+// tripList returns the trips of the person in ctx (and where their Pocket
+// Travel opens in a browser), through Pocket Core or directly, as they chose.
+// Kept 30 minutes per person (a failure 5 minutes, so every new expense does
+// not ask again); saving Settings forgets it.
+func (s *Server) tripList(ctx context.Context) ([]pocket.Trip, string) {
+	u := userFrom(ctx)
+	if u == nil {
+		return nil, ""
 	}
-	key := tripCacheKey(actorID(ctx))
+	key := tripCacheKey(u.ID)
 	if val, at, ok := s.store.CacheGet(ctx, key); ok {
-		if t, err := time.Parse(time.RFC3339Nano, at); err == nil && time.Since(t) < 30*time.Minute {
-			var out []pocket.Trip
-			if json.Unmarshal([]byte(val), &out) == nil {
-				return out
+		var out tripCache
+		if t, err := time.Parse(time.RFC3339Nano, at); err == nil && json.Unmarshal([]byte(val), &out) == nil {
+			if age := time.Since(t); age < 5*time.Minute || (!out.Failed && age < 30*time.Minute) {
+				return out.Trips, out.Public
 			}
 		}
 	}
-	trips, err := c.travel.Trips(ctx)
-	if err != nil {
-		s.log.Warn("pocket travel", "err", err)
-		return nil
+	failed := func() ([]pocket.Trip, string) {
+		_ = s.store.CachePut(ctx, key, `{"failed":true}`)
+		return nil, ""
 	}
-	b, _ := json.Marshal(trips)
+	conn, err := s.travelFor(ctx, u)
+	if err != nil {
+		s.log.Debug("pocket travel", "user", u.ID, "err", err)
+		return failed()
+	}
+	trips, err := conn.client.Trips(ctx)
+	if err != nil {
+		s.log.Warn("pocket travel", "via", conn.via, "user", u.ID, "err", err)
+		return failed()
+	}
+	b, _ := json.Marshal(tripCache{Trips: trips, Public: conn.public})
 	_ = s.store.CachePut(ctx, key, string(b))
-	return trips
+	return trips, conn.public
 }
 
-// tripCacheKey is per person: each has their own Pocket Travel token.
+// tripCacheKey is per person: each reaches their own Pocket Travel.
 func tripCacheKey(uid int64) string { return fmt.Sprintf("travel:trips:%d", uid) }
 
 func (s *Server) addTripTag(ctx context.Context, t *store.Transaction) {
 	st, _ := s.store.GetSettings(ctx, actorID(ctx))
-	if !st.TravelAutoTag || st.TravelURL == "" {
+	if !st.TravelAutoTag || !s.travelOn(st) {
 		return
 	}
-	if trip := pocket.TripOn(s.tripList(ctx), t.Date); trip != nil && trip.FireflyTag != "" {
+	trips, _ := s.tripList(ctx)
+	if trip := pocket.TripOn(trips, t.Date); trip != nil && trip.FireflyTag != "" {
 		t.Tags = cleanTags(append(t.Tags, trip.FireflyTag))
 	}
 }
 
 func (s *Server) handleTravelTrips(w http.ResponseWriter, r *http.Request) {
-	trips := s.tripList(r.Context())
+	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
+	var trips []pocket.Trip
+	public := ""
+	if s.travelOn(st) {
+		trips, public = s.tripList(r.Context())
+	}
 	if trips == nil {
 		trips = []pocket.Trip{}
 	}
-	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
-	writeJSON(w, http.StatusOK, map[string]any{"trips": trips, "public_url": firstNonEmpty(st.TravelPublicURL, st.TravelURL), "running": pocket.TripOn(trips, store.Today())})
+	writeJSON(w, http.StatusOK, map[string]any{"trips": trips, "public_url": public, "running": pocket.TripOn(trips, store.Today())})
 }
 
 // ---- home + dashboard ----
@@ -467,8 +517,9 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	fc := s.forecast(ctx)
 	var trip *pocket.Trip
-	if st.TravelURL != "" {
-		trip = pocket.TripOn(s.tripList(ctx), store.Today())
+	if s.travelOn(st) {
+		trips, _ := s.tripList(ctx)
+		trip = pocket.TripOn(trips, store.Today())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"currency": home, "net_worth": net, "liquid": liquid, "accounts": accts,

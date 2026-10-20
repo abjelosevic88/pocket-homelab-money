@@ -2,6 +2,9 @@ export interface User { id: number; email: string; name: string; role: 'admin' |
 export interface Currency { code: string; name: string; decimals: number }
 export interface APIToken { id: number; name: string; prefix: string; last_used_at: string | null; created_at: string }
 
+/** How Money reaches another Pocket app for a person: through Pocket Core, with their own URL + token, or not at all. */
+export type ConnMode = 'core' | 'direct' | 'off'
+
 export interface Settings {
   title: string; home_currency: string; date_format: string; time_format: string; week_start: number; month_start_day: number
   fx_auto: boolean; fx_provider: string; default_account_id: number; quick_lang: string
@@ -9,6 +12,7 @@ export interface Settings {
   notify_url: string; notify_format: string; notify_hour: number; notify_digest: boolean; notify_configured: boolean
   ai_url: string; ai_key: string; ai_model: string; ai_model_effective: string; ai_transcribe_model: string; ai_language: string; ai_context: string; ai_configured: boolean
   travel_url: string; travel_public_url: string; travel_token: string; travel_configured: boolean; travel_auto_tag: boolean
+  travel_mode: ConnMode; travel_via: '' | 'core' | 'direct'; travel_detail: string; core_configured: boolean
   max_upload_bytes: number; setup_complete: boolean; base_url: string
 }
 

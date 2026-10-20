@@ -13,15 +13,16 @@ JSON over HTTP under `/api/v1`. Authenticate with the session cookie (the UI), a
 
 ### Pocket Core app links
 
-Another Pocket app can act for a person here with a `pcx_` token from Pocket Core (see `docs/links.md` in pocket-homelab-core). Money offers two scopes:
+Another Pocket app can act for a person here with a `pcx_` token from Pocket Core (see `docs/links.md` in pocket-homelab-core). Money offers three scopes:
 
 | Scope | Routes |
 |---|---|
 | any | `GET /auth/me` |
 | `accounts:read` | `GET /accounts`, `GET /accounts/{id}/categories`, `GET /categories` |
 | `transactions:write` | `POST /transactions`; `GET` / `PUT` / `DELETE /transactions/{id}` only for transactions that app created |
+| `transactions:read` | `GET /transactions`, `GET /transactions/{id}` (any transaction the person can see), `GET /tags`, `GET /accounts`, `GET /categories`; and on the [Firefly-compatible API](#firefly-iii-compatible-api) `GET /firefly/api/v1/` `about`, `about/user`, `accounts`, `accounts/{id}`, `accounts/{id}/transactions`, `categories`, `categories/{id}`, `tags`, `tags/{tag}`, `tags/{tag}/transactions`, `transactions`, `transactions/{id}`, `currencies`. Read only: no write route, native or Firefly, is open to it |
 
-Every other route answers `403` to a link token; the Firefly-compatible API answers `401`. A transaction created this way gets `source` = the acting app's slug, and its `external_id` is prefixed with `<slug>:`. Audit entries read "<person> via Pocket Garage (Pocket Core link)". `POST /transactions` takes an optional `external_id` from any caller, except the reserved `firefly:` prefix.
+`transactions:read` is what Pocket Travel (trip costs: `/about`, `/tags`, `/tags/{id}/transactions?type=withdrawal&start=&end=`) and Pocket Day (the day's spending: `/about`, `/transactions?type=withdrawal&start=&end=`) use with their Firefly client pointed at `https://<money>/firefly`. Every other route answers `403` to a link token, on the Firefly-compatible API in Firefly's error shape. A transaction created this way gets `source` = the acting app's slug, and its `external_id` is prefixed with `<slug>:`. Audit entries read "<person> via Pocket Garage (Pocket Core link)". `POST /transactions` takes an optional `external_id` from any caller, except the reserved `firefly:` prefix.
 
 ## Accounts
 
@@ -54,7 +55,7 @@ Every other route answers `403` to a link token; the Firefly-compatible API answ
 
 **Splits.** `splits: [{category_id, amount, note}, …]` (two or more) puts one receipt across categories. Part amounts are in the transaction's `currency` and must add up to `amount`; the transaction's own `category_id` becomes the biggest part's. On PUT, `splits: []` removes the split; leaving `splits` out keeps the parts and rescales them when the amount changes. Transfers cannot be split. Reports, budgets and the category filter count each part under its own category.
 
-**Pipeline on create:** rules → running Pocket Travel trip tag → insert → link to the subscription it pays (name/match words, amount ±20 %, around the due date) → template use counter.
+**Pipeline on create:** rules → running Pocket Travel trip tag (see [Pocket Travel](#pocket-travel)) → insert → link to the subscription it pays (name/match words, amount ±20 %, around the due date) → template use counter.
 
 ## Quick add
 
@@ -140,6 +141,18 @@ Events: `transaction.created`, `transaction.updated`, `transaction.deleted` (fro
         - { field: next_bill_text, label: Next bill }
 ```
 
+## Pocket Travel
+
+While a trip is running in the person's Pocket Travel, a new expense gets the trip's tag (setting `travel_auto_tag`). Each person chooses how Money reaches *their* Travel, under Settings → Integrations (`PUT /settings {travel_mode}`, saved per person):
+
+| `travel_mode` | |
+|---|---|
+| `core` | through Pocket Core: Money acts for the person with an app link (`uses: travel trips:read`), asking Core for a fresh five-minute `pcx_` token on every call. Nothing to paste; the link can be switched off box-wide (Core → Links) or by the person (Core → Settings → Apps acting for me) |
+| `direct` | `travel_url` (empty = found through Core) + `travel_token`, a Pocket Travel API token; `travel_public_url` is what the browser opens |
+| `off` | Money does not talk to Travel |
+
+Unset, it is `direct` when a token is saved (an existing pasted token keeps working) and `core` otherwise. `GET /settings` answers `travel_mode` (the mode in effect), `travel_via` (`core` / `direct` / `""` = not connected), `travel_detail` (why not, e.g. "you switched the Money → Pocket Travel link off in Pocket Core") and `core_configured`. `POST /integrations/test {which: "travel"}` tests the mode in effect (a token typed into the form is tried as is). Disconnect = `PUT /settings {travel_url: "", travel_token: "", travel_public_url: ""}`. The trip list is kept 30 minutes per person (a failure 5 minutes) and forgotten whenever settings are saved; `GET /travel/trips` returns `{trips, public_url, running}`. `TRAVEL_URL` / `TRAVEL_TOKEN` / `TRAVEL_PUBLIC_URL` seed the owner's settings once: cleared in Settings, they do not come back at the next start.
+
 ## Firefly III-compatible API
 
 Mounted at `/firefly/api/v1` with a Pocket Money bearer token, shaped like Firefly III 6.x so existing clients only change their base URL to `https://money.example.com/firefly`:
@@ -155,6 +168,8 @@ Mounted at `/firefly/api/v1` with a Pocket Money bearer token, shaped like Firef
 | `GET /bills` (and `/subscriptions`) | `pay_dates`, `next_expected_match`, `repeat_freq`, a `notify: N` line in `notes` |
 | `GET /currencies`, `/exchange-rates`, `/insight/expense/total`, `/insight/income/total` | |
 | `GET /budgets`, `/piggy-banks`, `/rules`, `/recurrences` | empty lists (use the native API) |
+
+Each split carries `external_id` (Money's own: `firefly:<journal id>` for what came from Firefly, `<app>:…` for what a linked app booked; `null` otherwise) and `original_source: "pocket-money-<version>"`; `GET /about` has `php_version: "pocket-money <version>"`, which is how a client tells Money from a real Firefly III. A Pocket Core link token with `transactions:read` works here too (see [Pocket Core app links](#pocket-core-app-links)).
 
 Firefly Pico's template list is at `/firefly/api/transaction-templates` (Pico's shape, with `[currency:XXX]` in the notes when a template has its own currency).
 
