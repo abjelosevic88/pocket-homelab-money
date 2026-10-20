@@ -56,6 +56,8 @@ type Server struct {
 	coreOK   bool
 	coreErr  string
 	resolved map[string]resolvedURL
+
+	modesKick chan struct{} // a connection-mode report is due (modes.go)
 }
 
 type resolvedURL struct {
@@ -67,7 +69,7 @@ type resolvedURL struct {
 func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Server {
 	return &Server{cfg: cfg, store: st, log: log, webFS: webFS, started: time.Now(), fx: fx.New(cfg.FXProvider, cfg.UserAgent, 8*time.Second), oidc: &oidcProvider{issuerURL: cfg.OIDCIssuer},
 		core:     core.New(cfg.CoreURL, core.Options{TokenFile: cfg.DataDir + "/core.token", UserAgent: cfg.UserAgent}),
-		resolved: map[string]resolvedURL{}}
+		resolved: map[string]resolvedURL{}, modesKick: make(chan struct{}, 1)}
 }
 
 // Bootstrap seeds the first admin (if configured), integration defaults,
@@ -137,6 +139,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	go s.janitor(ctx)
 	if s.core.Configured() {
 		go s.coreLoop(ctx)
+		go s.modesLoop(ctx)
 	}
 	return nil
 }
@@ -611,11 +614,15 @@ func (s *Server) coreLoop(ctx context.Context) {
 	for {
 		err := s.registerWithCore(ctx)
 		s.coreMu.Lock()
+		was := s.coreOK
 		s.coreOK, s.coreErr = err == nil, ""
 		if err != nil {
 			s.coreErr = err.Error()
 		}
 		s.coreMu.Unlock()
+		if err == nil && !was {
+			s.modesChanged() // first report right after registering
+		}
 		if err != nil {
 			s.log.Warn("pocket core: registration failed, retrying", "err", err, "in", wait.String())
 		} else {

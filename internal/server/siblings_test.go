@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/config"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
@@ -68,6 +69,7 @@ type fakeLinkCore struct {
 	tokens    atomic.Int32
 	mu        sync.Mutex
 	manifest  map[string]any
+	modes     [][]core.ConnMode // every PUT /api/v1/links/modes
 }
 
 func (f *fakeLinkCore) handler() http.Handler {
@@ -83,6 +85,19 @@ func (f *fakeLinkCore) handler() http.Handler {
 			return "on"
 		}
 		switch r.URL.Path {
+		case "/api/v1/links/modes":
+			if r.Method != http.MethodPut || r.Header.Get("Authorization") != "Bearer pca_money" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			var in struct {
+				Modes []core.ConnMode `json:"modes"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			f.mu.Lock()
+			f.modes = append(f.modes, in.Modes)
+			f.mu.Unlock()
+			_, _ = w.Write([]byte(`{"recorded":1}`))
 		case "/api/v1/apps/register":
 			var m map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&m)

@@ -174,6 +174,9 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.CacheDelete(ctx, tripCacheKey(actorID(ctx))) // the mode, URL or token may have changed
+	if keys["travel_mode"] || keys["travel_token"] {
+		s.modesChanged() // a mode changed or the connection was removed: tell Core's map
+	}
 	if admin && cur.HomeCurrency != oldHome {
 		go s.recomputeHome(context.Background())
 	}

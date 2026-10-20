@@ -588,7 +588,9 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 
 /* Pocket app connections (Settings → Integrations) */
 .conn-block { display: grid; gap: 12px; }
-.conn-mode { display: flex; }
+.conn-mode { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.conn-advanced { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--muted); text-decoration: underline; cursor: pointer; }
+.conn-advanced:hover { color: var(--text); }
 .conn-status { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--muted); padding: 8px 10px; border-radius: 8px; background: var(--surface-2); line-height: 1.4; }
 .conn-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; margin-top: 5px; }
 .conn-status.ok { color: var(--text); }

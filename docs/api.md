@@ -153,6 +153,8 @@ While a trip is running in the person's Pocket Travel, a new expense gets the tr
 
 Unset, it is `direct` when a token is saved (an existing pasted token keeps working) and `core` otherwise. `GET /settings` answers `travel_mode` (the mode in effect), `travel_via` (`core` / `direct` / `""` = not connected), `travel_detail` (why not, e.g. "you switched the Money → Pocket Travel link off in Pocket Core") and `core_configured`. `POST /integrations/test {which: "travel"}` tests the mode in effect (a token typed into the form is tried as is). Disconnect = `PUT /settings {travel_url: "", travel_token: "", travel_public_url: ""}`. The trip list is kept 30 minutes per person (a failure 5 minutes) and forgotten whenever settings are saved; `GET /travel/trips` returns `{trips, public_url, running}`. `TRAVEL_URL` / `TRAVEL_TOKEN` / `TRAVEL_PUBLIC_URL` seed the owner's settings once: cleared in Settings, they do not come back at the next start.
 
+With Pocket Core, Money reports every person's mode in effect for `travel` to Core (`PUT /api/v1/links/modes`, one batch) right after registering, after a mode change or disconnect, and every 30 minutes, so Core's Links page shows Direct connections too; a failed report is only logged.
+
 ## Firefly III-compatible API
 
 Mounted at `/firefly/api/v1` with a Pocket Money bearer token, shaped like Firefly III 6.x so existing clients only change their base URL to `https://money.example.com/firefly`:
