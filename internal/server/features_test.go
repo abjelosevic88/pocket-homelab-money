@@ -206,7 +206,7 @@ func TestCompatTemplateUseCount(t *testing.T) {
 	line := `{"type":"withdrawal","date":"2026-10-01","amount":"2","description":"x","source_id":"` + itoa(acct.ID) + `"}`
 	post(`{"template_id":"` + itoa(pekara.ID) + `","transactions":[` + line + `]}`)
 	post(`{"template_id":` + itoa(pekara.ID) + `,"transactions":[` + line + `,` + line + `]}`) // a split group is one use
-	post(`{"transactions":[` + line + `]}`)                                                         // no template: no count
+	post(`{"transactions":[` + line + `]}`)                                                    // no template: no count
 	var list struct {
 		Data []struct {
 			ID       int64  `json:"id"`
