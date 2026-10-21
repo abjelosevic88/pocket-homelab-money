@@ -81,7 +81,7 @@ export default function Settings() {
           </nav>
         )}
         <main className="set-content">
-          <div className={`set-inner ${WIDE.includes(tab) ? 'wide' : ''}`}>
+          <div key={tab} className={`set-inner ${WIDE.includes(tab) ? 'wide' : ''}`}>
             <div className="set-title">
               <h2>{current.label}</h2>
               <p>{current.sub}</p>
