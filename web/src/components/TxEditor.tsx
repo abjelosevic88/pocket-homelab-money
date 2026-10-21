@@ -9,6 +9,7 @@ import { Field, Modal, useDebounce, useToast } from './ui'
 import { CurrencySelect, MoneyInput } from './Money'
 import { AccountSelect, CategoryGrid, CategorySelect, KindTabs, TagInput } from './pickers'
 import { Select } from './Select'
+import { Icon } from './icons'
 
 export interface TxSeed {
   kind?: Kind; amount?: number | null; currency?: string; account_id?: number; to_account_id?: number | null; category_id?: number | null
@@ -232,11 +233,11 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
                 <CategorySelect value={p.category_id} kind={kind} list={partList} onChange={id => setPart(i, { category_id: id })} />
                 <MoneyInput value={p.amount} code={currency} onChange={v => setPart(i, { amount: v })} ariaLabel={`Part ${i + 1} amount`} />
                 <input value={p.note} onChange={e => setPart(i, { note: e.target.value })} placeholder="Note" aria-label={`Part ${i + 1} note`} />
-                <button type="button" className="btn ghost icon" onClick={() => dropPart(i)} aria-label="Remove part">✕</button>
+                <button type="button" className="btn ghost icon" onClick={() => dropPart(i)} aria-label="Remove part"><Icon name="x" size={16} /></button>
               </div>
             ))}
             <div className="row">
-              <button type="button" className="btn ghost sm" onClick={() => setParts(ps => [...ps, { category_id: null, amount: remaining > 0 ? remaining : null, note: '' }])}>＋ Part</button>
+              <button type="button" className="btn ghost sm" onClick={() => setParts(ps => [...ps, { category_id: null, amount: remaining > 0 ? remaining : null, note: '' }])}><Icon name="plus" size={14} />Part</button>
               {remaining > 0 && <button type="button" className="btn ghost sm" onClick={() => setPart(restAt, { amount: (parts[restAt].amount || 0) + remaining })}>Put the rest in {parts[restAt].amount ? 'the last part' : 'the empty part'}</button>}
               <span className="spacer" />
               <button type="button" className="btn ghost sm" onClick={() => { if (parts[0]?.category_id) setCategoryId(parts[0].category_id); setParts([]) }}>Don't split</button>
@@ -265,10 +266,10 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
           <button type="button" className={`chip ${date === todayISO() ? 'active' : ''}`} onClick={() => setDate(todayISO())}>Today</button>
           <button type="button" className={`chip ${date === addDays(todayISO(), -1) ? 'active' : ''}`} onClick={() => setDate(addDays(todayISO(), -1))}>Yesterday</button>
           <button type="button" className={`chip ${date === addDays(todayISO(), -2) ? 'active' : ''}`} onClick={() => setDate(addDays(todayISO(), -2))}>2 days ago</button>
-          <input type="time" value={time} onChange={e => setTime(e.target.value)} style={{ width: 120 }} aria-label="Time" />
+          <input type="time" value={time} onChange={e => setTime(e.target.value)} style={{ width: 140 }} aria-label="Time" />
         </div>
       )}
-      {!more && <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => setMore(true)}>More: payee, notes, time, receipt, subscription…</button>}
+      {!more && <button type="button" className="btn ghost sm wrap-btn" style={{ justifySelf: 'start' }} onClick={() => setMore(true)}>More: payee, notes, time, receipt, subscription…</button>}
       {more && <>
         <div className="two-col tight">
           <Field label={kind === 'income' ? 'From (payer)' : 'Payee / shop'}><input value={payee} onChange={e => setPayee(e.target.value)} /></Field>
@@ -283,11 +284,11 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
             {atts.map(a => (
               <a key={a.id} className="receipt" href={`${V1}/attachments/${a.id}`} target="_blank" rel="noreferrer" style={a.mime.startsWith('image/') ? { backgroundImage: `url(${V1}/attachments/${a.id})` } : undefined}>
                 {!a.mime.startsWith('image/') && <span>{a.name}<br />{fmtBytes(a.size)}</span>}
-                <button type="button" className="x" onClick={e => { e.preventDefault(); removeAtt(a) }}>✕</button>
+                <button type="button" className="x" onClick={e => { e.preventDefault(); removeAtt(a) }} aria-label="Remove receipt"><Icon name="x" size={12} /></button>
               </a>
             ))}
             {pending.map((f, i) => <span key={i} className="receipt">{f.name}</span>)}
-            <label className="receipt" style={{ cursor: 'pointer' }}>📷<br />Add<input type="file" accept="image/*,application/pdf" capture="environment" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) setPending(p => [...p, f]) }} /></label>
+            <label className="receipt" style={{ cursor: 'pointer', gap: 2, alignContent: 'center' }}><Icon name="camera" size={18} /><span>Add</span><input type="file" accept="image/*,application/pdf" capture="environment" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) setPending(p => [...p, f]) }} /></label>
           </div>
         </Field>
       </>}

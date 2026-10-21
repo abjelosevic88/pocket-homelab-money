@@ -3,6 +3,8 @@ import { api, V1 } from './api'
 import { setDateFormats, type DateFormat, type TimeFormat } from './format'
 import type { Account, Category, Currency, Meta, Settings, Tag, User } from './types'
 
+export type ThemeMode = 'system' | 'light' | 'dark'
+
 interface AuthStatus { needs_setup: boolean; auth_mode: string; authenticated: boolean; user: User | null; version: string; title: string; oidc?: boolean; oidc_name?: string; password_login?: boolean }
 interface AppState {
   status: AuthStatus | null
@@ -14,7 +16,9 @@ interface AppState {
   accounts: Account[]
   categories: Category[]
   tags: Tag[]
+  themeMode: ThemeMode
   theme: 'light' | 'dark'
+  setThemeMode: (m: ThemeMode) => void
   toggleTheme: () => void
   refresh: () => Promise<void>
   reloadMeta: () => Promise<void>
@@ -41,8 +45,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [tags, setTags] = useState<Tag[]>([])
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('pm-theme') as 'light' | 'dark') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('pm-theme', theme) }, [theme])
+  // System unless picked; the old 'pm-theme' key was written on every visit, so it is not a choice
+  const [themeMode, setThemeModeRaw] = useState<ThemeMode>(() => { localStorage.removeItem('pm-theme'); return (localStorage.getItem('pm-theme-mode') as ThemeMode) || 'system' })
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const h = () => setSystemDark(mq.matches)
+    mq.addEventListener('change', h)
+    return () => mq.removeEventListener('change', h)
+  }, [])
+  const theme: 'light' | 'dark' = themeMode === 'system' ? (systemDark ? 'dark' : 'light') : themeMode
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', theme === 'dark' ? '#111113' : '#ffffff'))
+  }, [theme])
+  const setThemeMode = useCallback((m: ThemeMode) => { setThemeModeRaw(m); if (m === 'system') localStorage.removeItem('pm-theme-mode'); else localStorage.setItem('pm-theme-mode', m) }, [])
   useEffect(() => { if (settings?.title) document.title = settings.title }, [settings?.title])
   const setSettings = useCallback((s: Settings) => { setSettingsRaw(s); setDateFormats(s.date_format as DateFormat, s.time_format as TimeFormat) }, [])
   const reloadAccounts = useCallback(async () => { setAccounts(await api.get<Account[]>(`${V1}/accounts?archived=1`)) }, [])
@@ -74,8 +91,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const acctById = useCallback((id: number | null | undefined) => (id ? accounts.find(a => a.id === id) : undefined), [accounts])
   return (
     <Ctx.Provider value={{
-      status, user, settings, users, currencies, meta, accounts, categories, tags, theme,
-      toggleTheme: () => setTheme(t => t === 'dark' ? 'light' : 'dark'), refresh, reloadMeta, reloadAccounts, reloadCatalog, setUser, setSettings,
+      status, user, settings, users, currencies, meta, accounts, categories, tags, themeMode, theme, setThemeMode,
+      toggleTheme: () => setThemeMode(theme === 'dark' ? 'light' : 'dark'), refresh, reloadMeta, reloadAccounts, reloadCatalog, setUser, setSettings,
       home: settings?.home_currency || 'EUR', catById, acctById,
     }}>{children}</Ctx.Provider>
   )

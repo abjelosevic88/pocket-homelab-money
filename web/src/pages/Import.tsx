@@ -6,6 +6,7 @@ import { Card, Field, Segmented, useToast } from '../components/ui'
 import { Select } from '../components/Select'
 import { AccountSelect } from '../components/pickers'
 import { useSettingsForm } from './Settings'
+import { Icon } from '../components/icons'
 
 interface ImportResult { started: string; finished: string; accounts: number; categories: number; tags: number; subscriptions: number; goals: number; templates: number; created: number; updated: number; deleted: number; skipped: number; balances: string[]; warnings: string[]; error?: string }
 
@@ -32,7 +33,7 @@ function FireflyImport() {
   }
   const last = f.firefly_configured ? st?.last : null
   return (
-    <Card title="🔥 From Firefly III (and Firefly Pico)">
+    <Card title="From Firefly III (and Firefly Pico)">
       <p className="muted small">Uses your own Firefly III and brings it into your own ledger. Brings over asset accounts with their exact current balance, categories (with an emoji picked from the name), tags, every transaction (foreign amounts, notes and locations included), bills and recurring transactions merged into subscriptions (the <code>notify: N</code> note becomes the reminder), piggy banks as goals, and Firefly Pico's templates with their <code>[currency:XXX]</code>. Everything is keyed by its Firefly id: run it again and it updates instead of duplicating.</p>
       <div className="grid" style={{ gap: 12 }}>
         <div className="two-col tight">
@@ -43,9 +44,9 @@ function FireflyImport() {
         <label className="row"><input type="checkbox" checked={f.firefly_mirror} onChange={e => setF({ ...f, firefly_mirror: e.target.checked })} style={{ width: 'auto' }} />
           <span>Keep mirroring while Firefly is still in use — new and changed Firefly transactions of the last 45 days come over every 30 minutes, and automatic subscription booking waits (Firefly's recurring transactions still do it). Turn off on the day you switch.</span></label>
         <div className="row wrap">
-          <button className="btn" onClick={async () => { await save(); await poll() }}>Save</button>
-          <button className="btn primary" onClick={() => run('all')} disabled={!f.firefly_configured || st?.running}>{st?.running ? 'Importing…' : 'Import everything'}</button>
-          <button className="btn" onClick={() => run('transactions')} disabled={!f.firefly_configured || st?.running}>Transactions only</button>
+          <button type="button" className="btn" onClick={async () => { await save(); await poll() }}>Save</button>
+          <button type="button" className="btn primary" onClick={() => run('all')} disabled={!f.firefly_configured || st?.running}>{st?.running ? 'Importing…' : 'Import everything'}</button>
+          <button type="button" className="btn" onClick={() => run('transactions')} disabled={!f.firefly_configured || st?.running}>Transactions only</button>
         </div>
         {last && (
           <div className={`callout ${last.error ? 'danger' : 'success'}`}>
@@ -99,7 +100,7 @@ function CSVImport() {
   )
   const acct = acctById(account)
   return (
-    <Card title="📄 Bank statement (CSV)">
+    <Card title="Bank statement (CSV)">
       <p className="muted small">Any bank's CSV export: pick the columns once, check with a dry run, import. Rows already in Pocket Money (same day, amount and text) are skipped, so overlapping statements are fine. Rules and learned categories apply to every row.</p>
       <div className="grid" style={{ gap: 12 }}>
         <div className="two-col tight">
@@ -117,7 +118,7 @@ function CSVImport() {
             <label className="row small"><input type="checkbox" checked={m.has_header} onChange={e => setM({ ...m, has_header: e.target.checked })} style={{ width: 'auto' }} /> First row is a header</label>
           </div>
           <div style={{ overflowX: 'auto' }}><table className="table compact small"><thead><tr>{pv.header.map((h, i) => <th key={i}>{h}</th>)}</tr></thead><tbody>{pv.rows.slice(0, 6).map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody></table></div>
-          <div className="row"><span className="muted small">{pv.total} rows</span><span className="spacer" /><button className="btn" disabled={!account || busy} onClick={() => go(true)}>Dry run</button><button className="btn primary" disabled={!account || busy} onClick={() => go(false)}>{busy ? 'Working…' : 'Import'}</button></div>
+          <div className="row"><span className="muted small">{pv.total} rows</span><span className="spacer" /><button type="button" className="btn" disabled={!account || busy} onClick={() => go(true)}>Dry run</button><button type="button" className="btn primary" disabled={!account || busy} onClick={() => go(false)}>{busy ? 'Working…' : 'Import'}</button></div>
         </>}
         {result && (
           <div className="callout">

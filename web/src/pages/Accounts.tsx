@@ -12,6 +12,7 @@ import { TxList } from '../components/TxList'
 import { TxModal } from '../components/TxEditor'
 import { Select } from '../components/Select'
 import { IconInput } from '../components/pickers'
+import { Icon } from '../components/icons'
 
 const COLORS = ['#047857', '#2563eb', '#7c3aed', '#db2777', '#d97706', '#0d9488', '#475569', '#dc2626']
 
@@ -104,7 +105,7 @@ export default function Accounts() {
   const byKind = (Object.keys(KIND_LABEL) as AccountKind[]).map(k => ({ k, list: active.filter(a => a.kind === k) })).filter(g => g.list.length)
   return (
     <>
-      <PageHeader title="Accounts" sub={<>Net worth <b>{fmtMoney(net, home, dec)}</b></>} actions={<button className="btn primary" onClick={() => setCreating(true)}>＋ Account</button>} />
+      <PageHeader title="Accounts" sub={<>Net worth <b>{fmtMoney(net, home, dec)}</b></>} actions={<button type="button" className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" size={16} />Account</button>} />
       {accounts.length === 0 ? <Empty title="No accounts yet">Create one, or import from Firefly III under Settings → Import.</Empty> : (
         <div className="grid" style={{ gap: 18 }}>
           {byKind.map(g => (
@@ -114,7 +115,7 @@ export default function Accounts() {
             </div>
           ))}
           {accounts.some(a => a.archived) && <>
-            <button className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => setShowArchived(s => !s)}>{showArchived ? 'Hide' : 'Show'} archived ({accounts.filter(a => a.archived).length})</button>
+            <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => setShowArchived(s => !s)}>{showArchived ? 'Hide' : 'Show'} archived ({accounts.filter(a => a.archived).length})</button>
             {showArchived && <div className="acct-grid">{accounts.filter(a => a.archived).map(a => <AccountCard key={a.id} a={a} />)}</div>}
           </>}
         </div>
@@ -160,10 +161,10 @@ export function AccountPage() {
   return (
     <>
       <PageHeader title={<>{a.icon || KIND_ICON[a.kind]} {a.name}</>} sub={<>{KIND_LABEL[a.kind]}{a.institution ? ` · ${a.institution}` : ''}{a.number ? ` · ${a.number}` : ''}</>} actions={<>
-        <button className="btn primary" onClick={() => setAdding(true)} disabled={a.role === 'viewer'}>＋ Transaction</button>
-        <button className="btn" onClick={() => setReconcile(true)} disabled={a.role === 'viewer'} title="Tell it what the bank says; the difference is booked">Balance check</button>
-        {a.role === 'owner' && <button className="btn" onClick={() => setSharing(true)}>Share</button>}
-        {a.role === 'owner' && <button className="btn" onClick={() => setEditing(true)}>Edit</button>}
+        <button type="button" className="btn primary" onClick={() => setAdding(true)} disabled={a.role === 'viewer'}><Icon name="plus" size={16} />Transaction</button>
+        <button type="button" className="btn" onClick={() => setReconcile(true)} disabled={a.role === 'viewer'} title="Tell it what the bank says; the difference is booked">Balance check</button>
+        {a.role === 'owner' && <button type="button" className="btn" onClick={() => setSharing(true)}>Share</button>}
+        {a.role === 'owner' && <button type="button" className="btn" onClick={() => setEditing(true)}>Edit</button>}
       </>} />
       <div className="stats">
         <div className="stat"><div className="n" style={{ color: a.balance < 0 ? 'var(--red-ink)' : undefined }}>{fmtMoney(a.balance, a.currency, dec)}</div><div className="l">Balance{a.currency !== home ? ` · ≈ ${fmtMoney(a.balance_home, home, decimalsOf(home, currencies))}` : ''}</div></div>
@@ -179,11 +180,11 @@ export function AccountPage() {
       {a.role === 'owner' && <div className="mt"><Tabs tabs={[{ id: 'tx', label: 'Transactions' }, { id: 'audit', label: 'Audit log' }]} value={tab} onChange={setTab} /></div>}
       <div className="mt">
         {a.role === 'owner' && tab === 'audit' ? (
-          <Card title="Audit log" actions={<Link className="btn ghost sm" to="/audit">All my accounts →</Link>}>
+          <Card title="Audit log" actions={<Link className="btn ghost sm" to="/audit">All my accounts<Icon name="chevron-right" size={14} /></Link>}>
             <AuditLog accountId={a.id} />
           </Card>
         ) : (
-          <Card title="Transactions" actions={<Link className="btn ghost sm" to={`/transactions?account=${a.id}`}>Filter & search →</Link>}>
+          <Card title="Transactions" actions={<Link className="btn ghost sm" to={`/transactions?account=${a.id}`}>Filter & search<Icon name="chevron-right" size={14} /></Link>}>
             {!txs ? <Loading /> : txs.items.length === 0 ? <Empty title="No transactions yet" /> : <TxList items={txs.items} onOpen={t => setOpen(t.id)} showAccount={false} perspective={a.id} />}
           </Card>
         )}
@@ -196,7 +197,7 @@ export function AccountPage() {
       {editing && a.role === 'owner' && <span />}
       <div className="mt row">
         <span className="spacer" />
-        {a.role === 'owner' && <button className="btn ghost danger-text sm" onClick={async () => {
+        {a.role === 'owner' && <button type="button" className="btn ghost danger-text sm" onClick={async () => {
           if (!confirm(`Delete ${a.name} and all ${a.tx_count} of its transactions? This cannot be undone — archive it instead to keep the history.`)) return
           await api.del(`${V1}/accounts/${a.id}`); toast('Deleted'); reloadAccounts(); navigate('/accounts')
         }}>Delete account</button>}
@@ -225,7 +226,7 @@ function Reconcile({ a, onClose, onDone }: { a: Account; onClose: () => void; on
         <Field label="On"><input type="date" value={date} onChange={e => setDate(e.target.value)} /></Field>
       </div>
       <p className="mt">Pocket Money has <b>{fmtMoney(a.balance, a.currency, dec)}</b>{diff !== 0 && <> — difference <b className={diff > 0 ? 'ok' : 'bad'}>{fmtMoney(diff, a.currency, dec, { sign: true })}</b></>}.</p>
-      <div className="form-actions"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={go}>{diff === 0 ? 'Matches' : 'Book adjustment'}</button></div>
+      <div className="form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn primary" onClick={go}>{diff === 0 ? 'Matches' : 'Book adjustment'}</button></div>
     </Modal>
   )
 }
@@ -237,7 +238,7 @@ function Share({ a, users, onClose, onDone }: { a: Account; users: { id: number;
   const save = async () => { await api.put(`${V1}/accounts/${a.id}/members`, { members }); onDone() }
   return (
     <Modal title={`Share ${a.name}`} onClose={onClose}>
-      {users.length === 0 ? <p className="muted">No other users yet — add them under Settings → Users.</p> : (
+      {users.length === 0 ? <p className="muted">No other users yet — add them under Settings → People.</p> : (
         <div className="grid" style={{ gap: 8 }}>
           {users.map(u => (
             <div key={u.id} className="row"><span className="grow">{u.name || u.email}<div className="muted small">{u.email}</div></span>
@@ -246,7 +247,7 @@ function Share({ a, users, onClose, onDone }: { a: Account; users: { id: number;
           ))}
         </div>
       )}
-      <div className="form-actions"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save}>Save</button></div>
+      <div className="form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn primary" onClick={save}>Save</button></div>
     </Modal>
   )
 }
@@ -266,7 +267,7 @@ function PayoffCard({ a, onBooked }: { a: Account; onBooked: () => void }) {
   }
   const rows = all ? p.schedule : p.schedule.slice(0, 6)
   return (
-    <Card className="mb" title={owe ? 'Paying it off' : 'Getting it back'} actions={p.rate > 0 && p.outstanding > 0 && a.role !== 'viewer' && <button className="btn sm" onClick={book}>Book this month's interest</button>}>
+    <Card className="mb" title={owe ? 'Paying it off' : 'Getting it back'} actions={p.rate > 0 && p.outstanding > 0 && a.role !== 'viewer' && <button type="button" className="btn sm" onClick={book}>Book this month's interest</button>}>
       <div className="stats">
         <div className="stat"><div className="n">{m(p.outstanding)}</div><div className="l">{owe ? 'Still owed' : 'Still to get back'}</div></div>
         {p.principal > 0 && <div className="stat"><div className="n ok">{p.pct}%</div><div className="l">{owe ? 'Repaid' : 'Returned'} · {m(p.repaid)} of {m(p.principal)}</div></div>}
@@ -281,7 +282,7 @@ function PayoffCard({ a, onBooked }: { a: Account; onBooked: () => void }) {
             <thead><tr><th>Date</th><th className="num">Payment</th><th className="num">Interest</th><th className="num">Principal</th><th className="num">Left after</th></tr></thead>
             <tbody>{rows.map(r => <tr key={r.date}><td>{fmtDate(r.date)}</td><td className="num">{m(r.payment)}</td><td className="num">{m(r.interest)}</td><td className="num">{m(r.principal)}</td><td className="num">{m(r.remaining)}</td></tr>)}</tbody>
           </table>
-          {p.schedule.length > 6 && <button className="btn ghost sm mt-sm" onClick={() => setAll(x => !x)}>{all ? 'Show less' : `Show ${p.schedule.length} months`}</button>}
+          {p.schedule.length > 6 && <button type="button" className="btn ghost sm mt-sm" onClick={() => setAll(x => !x)}>{all ? 'Show less' : `Show ${p.schedule.length} months`}</button>}
         </div>
       )}
     </Card>

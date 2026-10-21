@@ -4,6 +4,7 @@ import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtMoney } from '../lib/format'
 import { KIND_ICON, type Category, type Kind, type Transaction } from '../lib/types'
 import { Select } from './Select'
+import { Icon } from './icons'
 
 /** Accounts as a searchable select; writable ones only unless told otherwise. */
 export function AccountSelect({ value, onChange, placeholder = 'Account…', all = false, exclude, clearLabel }: { value: number | null; onChange: (id: number) => void; placeholder?: string; all?: boolean; exclude?: number | null; clearLabel?: string }) {
@@ -73,7 +74,7 @@ export function TagInput({ value, onChange, placeholder = 'Add tag…' }: { valu
     .sort((a, b) => (b.last_used || '').localeCompare(a.last_used || '')).slice(0, 8)
   return (
     <div className="tag-input" onBlur={() => setTimeout(() => setOpen(false), 150)}>
-      {value.map(t => <span key={t} className="tg">#{t}<button type="button" onClick={() => onChange(value.filter(x => x !== t))} aria-label={`Remove ${t}`}>×</button></span>)}
+      {value.map(t => <span key={t} className="tg">#{t}<button type="button" onClick={() => onChange(value.filter(x => x !== t))} aria-label={`Remove ${t}`}><Icon name="x" size={12} /></button></span>)}
       <input value={text} placeholder={value.length ? '' : placeholder} onFocus={() => setOpen(true)} onChange={e => { setText(e.target.value); setOpen(true) }}
         onKeyDown={e => {
           if ((e.key === 'Enter' || e.key === ',') && text.trim()) { e.preventDefault(); add(text) }

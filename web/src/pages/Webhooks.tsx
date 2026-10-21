@@ -3,6 +3,7 @@ import { api, V1 } from '../lib/api'
 import { ago, fmtDateTime } from '../lib/format'
 import type { Delivery, Webhook } from '../lib/types'
 import { Card, Confirm, Field, Modal, Segmented, clickRow, ownClicks, useAsync, useToast } from '../components/ui'
+import { Icon } from '../components/icons'
 
 const EVENT_LABEL: Record<string, string> = {
   'transaction.created': 'Transaction added', 'transaction.updated': 'Transaction changed', 'transaction.deleted': 'Transaction deleted',
@@ -23,7 +24,7 @@ export function Webhooks() {
   }
   return (
     <div className="two-col">
-      <Card title="Webhooks" actions={<button className="btn primary sm" onClick={() => setEditing({})}>＋ Webhook</button>}>
+      <Card title="Webhooks" actions={<button type="button" className="btn primary sm" onClick={() => setEditing({})}><Icon name="plus" size={14} />Webhook</button>}>
         {fresh?.secret && <div className="callout success mb"><b>Signing secret for “{fresh.name || fresh.url}” — copy it now, it is shown once.</b><pre className="mono" style={{ margin: '8px 0 0' }}>{fresh.secret}</pre></div>}
         {!data ? null : data.items.length === 0 ? <p className="muted">None yet. Add one to push changes to Pocket Day, n8n, Home Assistant or a script instead of having them poll.</p> : (
           <table className="table compact">
@@ -33,7 +34,7 @@ export function Webhooks() {
                 <td><b>{h.name || 'Webhook'}</b><div className="muted small mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.url}</div></td>
                 <td className="small">{h.events.length === data.events.length ? 'everything' : h.events.map(e => EVENT_LABEL[e] || e).join(', ')}{h.format === 'firefly' ? ' · Firefly format' : ''}</td>
                 <td className="small">{h.last_at ? <><span className={h.last_status >= 200 && h.last_status < 300 ? 'ok' : 'bad'}>{h.last_status || 'no answer'}</span> · {ago(h.last_at)}</> : <span className="muted">never</span>}</td>
-                <td className="right" {...ownClicks}><button className="btn ghost sm" onClick={() => test(h)}>Test</button><button className="btn ghost sm" onClick={() => setLog(h)}>Log</button></td>
+                <td className="right" {...ownClicks}><button type="button" className="btn ghost sm" onClick={() => test(h)}>Test</button><button type="button" className="btn ghost sm" onClick={() => setLog(h)}>Log</button></td>
               </tr>
             ))}</tbody>
           </table>

@@ -10,6 +10,7 @@ import { TxList } from '../components/TxList'
 import { TxModal, type TxSeed } from '../components/TxEditor'
 import { DayBars, HBars } from '../components/Charts'
 import { AccountForm } from './Accounts'
+import { Icon } from '../components/icons'
 
 export function Templates({ items, onBooked, onOpen }: { items: Template[]; onBooked: () => void; onOpen: (seed: TxSeed) => void }) {
   const { currencies, acctById } = useApp()
@@ -56,7 +57,7 @@ export default function Home() {
   const upcoming = fc.upcoming.filter(u => daysBetween(todayISO(), u.date) <= 14)
   return (
     <>
-      {data.trip && <div className="trip-banner">✈️ <span><b>{data.trip.name}</b> is on — new expenses get the <b>#{data.trip.firefly_tag}</b> tag{settings?.travel_auto_tag ? '' : ' (auto-tag is off)'}.</span><span className="spacer" /><Link to={`/transactions?tag=${encodeURIComponent(data.trip.firefly_tag)}`}>Trip spending →</Link></div>}
+      {data.trip && <div className="trip-banner"><Icon name="plane" size={16} /><span><b>{data.trip.name}</b> is on — new expenses get the <b>#{data.trip.firefly_tag}</b> tag{settings?.travel_auto_tag ? '' : ' (auto-tag is off)'}.</span><span className="spacer" /><Link to={`/transactions?tag=${encodeURIComponent(data.trip.firefly_tag)}`}>Trip spending →</Link></div>}
       <div className="money-hero">
         <div className="first">
           <div className="l">Net worth</div>
@@ -83,10 +84,10 @@ export default function Home() {
       {data.templates.length > 0 && <div className="mb"><Templates items={data.templates} onBooked={reload} onOpen={seed => setOpen({ seed })} /></div>}
       <div className="home-grid">
         <div className="grid" style={{ gap: 16 }}>
-          <Card title="Recent" actions={<Link to="/transactions" className="btn ghost sm">All →</Link>}>
+          <Card title="Recent" actions={<Link to="/transactions" className="btn ghost sm">All<Icon name="chevron-right" size={14} /></Link>}>
             {data.recent.length === 0 ? <Empty title="No transactions yet">Type one above.</Empty> : <TxList items={data.recent} onOpen={t => setOpen({ id: t.id })} />}
           </Card>
-          <Card title={`${data.month.label} day by day`} actions={<Link to="/reports" className="btn ghost sm">Reports →</Link>}>
+          <Card title={`${data.month.label} day by day`} actions={<Link to="/reports" className="btn ghost sm">Reports<Icon name="chevron-right" size={14} /></Link>}>
             <DayBars days={data.month.daily} currency={home} decimals={dec} />
             <div className="mt"><HBars rows={data.month.categories.map(c => ({ key: c.id, label: c.name || 'Uncategorised', icon: c.icon, value: c.sum }))} currency={home} decimals={dec} onPick={k => navigate(`/transactions?category=${k || 'none'}&from=${data.month.from}&to=${data.month.to}`)} /></div>
           </Card>
@@ -99,7 +100,7 @@ export default function Home() {
               ))}</div>
             </Card>
           )}
-          <Card title="Coming up" actions={<Link to="/subscriptions" className="btn ghost sm">Subscriptions →</Link>}>
+          <Card title="Coming up" actions={<Link to="/subscriptions" className="btn ghost sm">Subscriptions<Icon name="chevron-right" size={14} /></Link>}>
             {upcoming.length === 0 ? <p className="muted small">Nothing due in the next two weeks.</p> : (
               <div className="timeline">{upcoming.map((u, i) => (
                 <Link key={i} to={`/subscriptions/${u.id}`} className="tl" style={{ color: 'inherit' }}>
@@ -110,7 +111,7 @@ export default function Home() {
             )}
           </Card>
           {data.budgets.length > 0 && (
-            <Card title="Budgets" actions={<Link to="/budgets" className="btn ghost sm">All →</Link>}>
+            <Card title="Budgets" actions={<Link to="/budgets" className="btn ghost sm">All<Icon name="chevron-right" size={14} /></Link>}>
               <div className="list-links">{data.budgets.slice(0, 5).map(b => b.status && (
                 <Link key={b.id} to="/budgets" className="hov">
                   <div className="row small"><span>{b.icon} {b.name}</span><span className="spacer" /><span className="muted">{m(b.status.spent)} / {m(b.status.available)}</span></div>
@@ -119,7 +120,7 @@ export default function Home() {
               ))}</div>
             </Card>
           )}
-          <Card title="Accounts" actions={<Link to="/accounts" className="btn ghost sm">Manage →</Link>}>
+          <Card title="Accounts" actions={<Link to="/accounts" className="btn ghost sm">Manage<Icon name="chevron-right" size={14} /></Link>}>
             <div className="list-links">{data.accounts.map(a => (
               <Link key={a.id} to={`/accounts/${a.id}`} className="row hov">
                 <span>{a.icon || KIND_ICON[a.kind]}</span><span className="grow" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
@@ -128,7 +129,7 @@ export default function Home() {
             ))}</div>
           </Card>
           {data.goals.length > 0 && (
-            <Card title="Goals" actions={<Link to="/goals" className="btn ghost sm">All →</Link>}>
+            <Card title="Goals" actions={<Link to="/goals" className="btn ghost sm">All<Icon name="chevron-right" size={14} /></Link>}>
               <div className="list-links">{data.goals.slice(0, 3).map(g => (
                 <Link key={g.id} to="/goals" className="hov">
                   <div className="row small"><span>{g.icon} {g.name}</span><span className="spacer" /><span className="muted">{fmtMoney(g.saved, g.currency, decimalsOf(g.currency, currencies), { compact: true })} / {fmtMoney(g.target, g.currency, decimalsOf(g.currency, currencies), { compact: true })}</span></div>
@@ -152,9 +153,9 @@ function Onboarding({ onDone }: { onDone: () => void }) {
     <>
       <PageHeader title="Welcome to Pocket Money" sub="Accounts, quick entry, subscriptions, budgets and goals — in any currency." />
       <div className="onboard">
-        <div className="opt"><span className="e">🔥</span><span className="grow"><b>Bring everything over from Firefly III</b><div className="muted small">Accounts, categories, tags, all transactions, bills and recurring transactions, and Firefly Pico templates. Re-runnable, nothing is duplicated.</div></span><button className="btn primary" onClick={() => navigate('/settings?tab=import')}>{settings?.firefly_configured ? 'Import' : 'Set up'}</button></div>
-        <div className="opt"><span className="e">🏦</span><span className="grow"><b>Start fresh</b><div className="muted small">Create your first account with its current balance.</div></span><button className="btn" onClick={() => setCreating(true)}>New account</button></div>
-        <div className="opt"><span className="e">📄</span><span className="grow"><b>Import a bank statement (CSV)</b><div className="muted small">Map the columns once; duplicates are skipped.</div></span><button className="btn" onClick={() => navigate('/settings?tab=import')}>CSV import</button></div>
+        <div className="opt"><span className="e"><Icon name="download" size={20} /></span><span className="grow"><b>Bring everything over from Firefly III</b><div className="muted small">Accounts, categories, tags, all transactions, bills and recurring transactions, and Firefly Pico templates. Re-runnable, nothing is duplicated.</div></span><button type="button" className="btn primary" onClick={() => navigate('/settings/import')}>{settings?.firefly_configured ? 'Import' : 'Set up'}</button></div>
+        <div className="opt"><span className="e"><Icon name="bank" size={20} /></span><span className="grow"><b>Start fresh</b><div className="muted small">Create your first account with its current balance.</div></span><button type="button" className="btn" onClick={() => setCreating(true)}>New account</button></div>
+        <div className="opt"><span className="e"><Icon name="file" size={20} /></span><span className="grow"><b>Import a bank statement (CSV)</b><div className="muted small">Map the columns once; duplicates are skipped.</div></span><button type="button" className="btn" onClick={() => navigate('/settings/import')}>CSV import</button></div>
       </div>
       {creating && <AccountForm onClose={() => setCreating(false)} onSaved={async () => { setCreating(false); await reloadAccounts(); onDone() }} />}
     </>

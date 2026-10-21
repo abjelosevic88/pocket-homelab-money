@@ -53,7 +53,7 @@ function MonthReport() {
   const isNow = month === monthOf(todayISO())
   return (
     <div className="grid" style={{ gap: 16 }}>
-      <div className="row wrap"><button className="btn" onClick={() => setMonth(x => shift(x, -1))}>‹</button><b>{data.label}</b><button className="btn" onClick={() => setMonth(x => shift(x, 1))}>›</button>{!isNow && <button className="btn ghost sm" onClick={() => setMonth(monthOf(todayISO()))}>This month</button>}<span className="spacer" /><span className="muted small">{fmtDate(data.from)} – {fmtDate(data.to)}</span></div>
+      <div className="row wrap"><button type="button" className="btn" onClick={() => setMonth(x => shift(x, -1))}>‹</button><b>{data.label}</b><button type="button" className="btn" onClick={() => setMonth(x => shift(x, 1))}>›</button>{!isNow && <button type="button" className="btn ghost sm" onClick={() => setMonth(monthOf(todayISO()))}>This month</button>}<span className="spacer" /><span className="muted small">{fmtDate(data.from)} – {fmtDate(data.to)}</span></div>
       <div className="stats">
         <div className="stat"><div className="n ok">{m(data.income)}</div><div className="l">Income <Delta cur={data.income} prev={data.prev.income} inverse /></div></div>
         <div className="stat"><div className="n">{m(data.expense)}</div><div className="l">Expenses <Delta cur={data.expense} prev={data.prev.expense} /></div></div>
@@ -130,7 +130,7 @@ function Categories() {
   if (!data) return <Loading />
   const rows = split ? data.categories : data.parents
   return (
-    <Card title={<div className="row wrap"><button className="btn sm" onClick={() => setMonth(x => shift(x, -1))}>‹</button><span>{fmtDate(data.from, false)} – {fmtDate(data.to)}</span><button className="btn sm" onClick={() => setMonth(x => shift(x, 1))}>›</button></div>}
+    <Card title={<div className="row wrap"><button type="button" className="btn sm" onClick={() => setMonth(x => shift(x, -1))}>‹</button><span>{fmtDate(data.from, false)} – {fmtDate(data.to)}</span><button type="button" className="btn sm" onClick={() => setMonth(x => shift(x, 1))}>›</button></div>}
       actions={<><Segmented size="sm" value={kind} onChange={setKind} options={[{ value: 'expense', label: 'Expenses' }, { value: 'income', label: 'Income' }]} /><Segmented size="sm" value={split ? 1 : 0} onChange={v => setSplit(v === 1)} options={[{ value: 0, label: 'Groups' }, { value: 1, label: 'All' }]} /></>} flush>
       {rows.length === 0 ? <Empty title="Nothing in this period" /> : (
         <table className="table cat-table">
@@ -216,7 +216,7 @@ function Calendar() {
   const top = Object.entries(data.days).sort((a, b) => (b[1].expense || 0) - (a[1].expense || 0)).slice(0, 5)
   return (
     <div className="grid" style={{ gap: 16 }}>
-      <Card title={<div className="row"><button className="btn sm" onClick={() => setYear(y => String(Number(y) - 1))}>‹</button>{year}<button className="btn sm" onClick={() => setYear(y => String(Number(y) + 1))}>›</button></div>} actions={<span className="muted small">{fmtMoney(total, home, dec)} spent · {vals.length} days with spending</span>}>
+      <Card title={<div className="row"><button type="button" className="btn sm" onClick={() => setYear(y => String(Number(y) - 1))}>‹</button>{year}<button type="button" className="btn sm" onClick={() => setYear(y => String(Number(y) + 1))}>›</button></div>} actions={<span className="muted small">{fmtMoney(total, home, dec)} spent · {vals.length} days with spending</span>}>
         <div className="heatmap">{cells.map((c, i) => <span key={i} className={`hc ${c.date ? level(c.v) : 'out'}`} title={c.date ? `${weekday(c.date)} ${fmtDate(c.date)} · ${fmtMoney(c.v, home, dec)}` : ''} onClick={() => c.date && navigate(`/transactions?from=${c.date}&to=${c.date}`)} style={{ cursor: c.date ? 'pointer' : undefined }} />)}</div>
         <div className="legend"><span>less</span>{['', 'l1', 'l2', 'l3', 'l4'].map(l => <span key={l} className={`hc ${l}`} style={{ width: 12, height: 12, borderRadius: 3, display: 'inline-block', background: l ? undefined : 'var(--surface-2)' }} />)}<span>more</span></div>
       </Card>
@@ -244,7 +244,7 @@ function Ask() {
   return (
     <div className="grid" style={{ gap: 12 }}>
       <form className="row" onSubmit={e => { e.preventDefault(); ask() }}><input value={q} onChange={e => setQ(e.target.value)} placeholder="Ask anything about your money…" autoFocus /><button className="btn primary" disabled={busy}>{busy ? 'Thinking…' : 'Ask'}</button></form>
-      {answers.length === 0 && <div className="chips">{examples.map(e => <button key={e} className="chip" onClick={() => ask(e)}>{e}</button>)}</div>}
+      {answers.length === 0 && <div className="chips">{examples.map(e => <button type="button" key={e} className="chip" onClick={() => ask(e)}>{e}</button>)}</div>}
       {answers.map((x, i) => <Card key={i} title={x.q}><div className="answer">{x.a}</div></Card>)}
       <p className="muted small">The model sees monthly totals per category, balances, subscriptions, top payees and the transactions that match words in your question — not your notes or receipts.</p>
     </div>

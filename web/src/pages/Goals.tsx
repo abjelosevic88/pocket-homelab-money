@@ -7,6 +7,7 @@ import { Empty, Field, Loading, Modal, PageHeader, clickRow, useAsync, useToast 
 import { CurrencySelect, MoneyInput } from '../components/Money'
 import { AccountSelect } from '../components/pickers'
 import { Ring } from '../components/Charts'
+import { Icon } from '../components/icons'
 
 export default function Goals() {
   const { currencies } = useApp()
@@ -17,7 +18,7 @@ export default function Goals() {
   const active = data.filter(g => !g.archived)
   return (
     <>
-      <PageHeader title="Savings goals" sub="Put money aside for something — on its own or as the balance of a savings account." actions={<button className="btn primary" onClick={() => setEditing('new')}>＋ Goal</button>} />
+      <PageHeader title="Savings goals" sub="Put money aside for something — on its own or as the balance of a savings account." actions={<button type="button" className="btn primary" onClick={() => setEditing('new')}><Icon name="plus" size={16} />Goal</button>} />
       {active.length === 0 ? <Empty title="No goals yet">A trip, a new laptop, an emergency fund… Pocket Money tells you how much to save each month to get there on time, and the safe-to-spend figure leaves it aside.</Empty> : (
         <div className="goal-grid">
           {active.map(g => {
@@ -96,14 +97,14 @@ function GoalDetail({ id, onClose, onEdit, onChanged }: { id: number; onClose: (
           {g.target_date && <div className="small">{fmtMoney(g.monthly_need, g.currency, dec)}/month until {fmtDate(g.target_date)}</div>}</div>
       </div>
       {!g.account_id && <>
-        <div className="row mt"><div style={{ width: 150 }}><MoneyInput value={amount} code={g.currency} onChange={setAmount} /></div><input value={note} onChange={e => setNote(e.target.value)} placeholder="note" /><button className="btn primary" onClick={() => add(1)} disabled={!amount}>Add</button><button className="btn" onClick={() => add(-1)} disabled={!amount}>Take out</button></div>
+        <div className="row mt"><div style={{ width: 150 }}><MoneyInput value={amount} code={g.currency} onChange={setAmount} /></div><input value={note} onChange={e => setNote(e.target.value)} placeholder="note" /><button type="button" className="btn primary" onClick={() => add(1)} disabled={!amount}>Add</button><button type="button" className="btn" onClick={() => add(-1)} disabled={!amount}>Take out</button></div>
         <div className="mt inline-list">{(g.entries || []).map(e => (
           <div key={e.id} className="li"><span className="muted small">{fmtDate(e.date)}</span><span className="grow">{e.note}</span><span className={`money ${e.amount < 0 ? 'bad' : 'ok'}`}>{fmtMoney(e.amount, g.currency, dec, { sign: true })}</span>
-            <button className="icon-btn" onClick={async () => { await api.del(`${V1}/goals/${g.id}/entries/${e.id}`); reload(); onChanged() }}>✕</button></div>
+            <button type="button" className="icon-btn" onClick={async () => { await api.del(`${V1}/goals/${g.id}/entries/${e.id}`); reload(); onChanged() }} aria-label="Remove"><Icon name="x" size={14} /></button></div>
         ))}</div>
       </>}
       {g.account_id && <p className="muted mt">Follows the balance of <b>{g.account_name}</b> — transfers into it count automatically.</p>}
-      <div className="form-actions"><button className="btn" onClick={() => onEdit(g)}>Edit goal</button></div>
+      <div className="form-actions"><button type="button" className="btn" onClick={() => onEdit(g)}>Edit goal</button></div>
     </Modal>
   )
 }

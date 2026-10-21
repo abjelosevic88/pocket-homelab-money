@@ -4,6 +4,7 @@ import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
 import type { Currency, Draft, QuickSuggestion, Transaction } from '../lib/types'
 import { useDebounce, useToast } from './ui'
+import { Icon } from './icons'
 
 /** The words at the start of the line being typed that can still name a
  *  template (before the amount, @account, #tag…). Picking a suggestion or Esc
@@ -109,7 +110,7 @@ export function QuickAdd({ onAdded, autoFocus = false, placeholder }: { onAdded:
   return (
     <div className="quick-bar">
       <div className="qinput">
-        <span className="plus">＋</span>
+        <span className="plus"><Icon name="plus" size={20} strokeWidth={2.2} /></span>
         <input ref={input} value={text} autoFocus={autoFocus} placeholder={placeholder || 'kafa 3,5 · cg hrana 20 eur · +1500 plata · gorivo 80 juče'}
           onChange={e => { setText(e.target.value); setAiDrafts(null) }}
           role="combobox" aria-expanded={showSugs} aria-controls="quick-suggest" aria-activedescendant={showSugs && active >= 0 ? `quick-sug-${active}` : undefined}
@@ -124,8 +125,8 @@ export function QuickAdd({ onAdded, autoFocus = false, placeholder }: { onAdded:
             if (e.key === 'Escape') { setText(''); setAiDrafts(null) }
           }}
           aria-label="Quick add" autoComplete="off" enterKeyHint="done" />
-        {ai && <button type="button" className={`btn ghost icon mic ${rec ? 'rec' : ''}`} onClick={toggleMic} title="Dictate" disabled={busy && !rec}>🎙</button>}
-        {ai && text.trim() && !aiDrafts && <button type="button" className="btn ghost sm" onClick={() => askAI()} disabled={busy} title="Let the AI read it (several items, any wording)">✨ AI</button>}
+        {ai && <button type="button" className={`btn ghost icon mic ${rec ? 'rec' : ''}`} onClick={toggleMic} title="Dictate" aria-label="Dictate" disabled={busy && !rec}><Icon name="mic" size={18} /></button>}
+        {ai && text.trim() && !aiDrafts && <button type="button" className="btn ghost sm" onClick={() => askAI()} disabled={busy} title="Let the AI read it (several items, any wording)"><Icon name="sparkles" size={15} />AI</button>}
         <button type="button" className="btn primary" onClick={book} disabled={!ready || busy}>{busy ? '…' : shown.length > 1 ? `Add ${shown.length}` : 'Add'}</button>
       </div>
       {showSugs && (

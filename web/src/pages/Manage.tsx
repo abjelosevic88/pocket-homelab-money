@@ -9,6 +9,7 @@ import { Select } from '../components/Select'
 import { CurrencySelect, MoneyInput } from '../components/Money'
 import { AccountSelect, CategorySelect, IconInput, KindTabs, TagInput } from '../components/pickers'
 import { TxList } from '../components/TxList'
+import { Icon } from '../components/icons'
 
 // ---------------- categories ----------------
 
@@ -25,7 +26,7 @@ export function Categories() {
     toast('Category removed'); setDel(null); setMoveTo(null); reloadCatalog()
   }
   return (
-    <Card title="Categories" actions={<button className="btn primary sm" onClick={() => setEdit({ kind: 'expense' })}>+ Category</button>}>
+    <Card title="Categories" actions={<button type="button" className="btn primary sm" onClick={() => setEdit({ kind: 'expense' })}>+ Category</button>}>
       <p className="muted small">Your own list; accounts you share book in it unless a category is hidden from sharing. One level of sub-categories (Food › Bakery): reports roll children up into their parent, budgets on a parent include its children.</p>
       {categories.length === 0 ? <Empty title="No categories yet" /> : (
         <table className="table compact">
@@ -36,7 +37,7 @@ export function Categories() {
                 <td style={{ paddingLeft: c.parent_id ? 34 : undefined }}>{c.icon || '•'} {c.name}{c.archived && <span className="badge" style={{ marginLeft: 6 }}>archived</span>}{c.share_hidden && <span className="badge" style={{ marginLeft: 6 }} title="Others you share accounts with can't pick it">hidden from sharing</span>}</td>
                 <td className="muted">{c.kind}</td>
                 <td className="num">{c.tx_count}</td>
-                <td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?category=${c.id}`}>Show</Link><button className="btn ghost sm danger-text" onClick={() => setDel(c)}>Remove</button></td>
+                <td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?category=${c.id}`}>Show</Link><button type="button" className="btn ghost sm danger-text" onClick={() => setDel(c)}>Remove</button></td>
               </tr>
             ))}
           </tbody>
@@ -47,7 +48,7 @@ export function Categories() {
         <Modal title={`Remove ${del.name}?`} onClose={() => setDel(null)}>
           <p>{del.tx_count} transactions use it. Move them to:</p>
           <CategorySelect value={moveTo} onChange={setMoveTo} kind="any" placeholder="No category" />
-          <div className="form-actions"><button className="btn" onClick={() => setDel(null)}>Cancel</button><button className="btn danger" onClick={remove}>Remove</button></div>
+          <div className="form-actions"><button type="button" className="btn" onClick={() => setDel(null)}>Cancel</button><button type="button" className="btn danger" onClick={remove}>Remove</button></div>
         </Modal>
       )}
     </Card>
@@ -104,7 +105,7 @@ export function TagsAdmin() {
       {tags.length === 0 ? <Empty title="No tags yet">Type #tag in quick add or use the tag field.</Empty> : (
         <table className="table compact">
           <thead><tr><th>Tag</th><th className="num">Transactions</th><th>Last used</th><th /></tr></thead>
-          <tbody>{tags.map(t => <tr key={t.id} className={`clickable ${t.archived ? 'muted' : ''}`} {...clickRow(() => { setEdit(t); setName(t.name) })} title="Edit"><td>#{t.name}</td><td className="num">{t.tx_count}</td><td className="muted">{t.last_used ? fmtDate(t.last_used) : '—'}</td><td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?tag=${encodeURIComponent(t.name)}`}>Show</Link><button className="btn ghost sm danger-text" onClick={async () => { if (confirm(`Remove #${t.name} from ${t.tx_count} transactions?`)) { await api.del(`${V1}/tags/${t.id}`); reloadCatalog() } }}>Remove</button></td></tr>)}</tbody>
+          <tbody>{tags.map(t => <tr key={t.id} className={`clickable ${t.archived ? 'muted' : ''}`} {...clickRow(() => { setEdit(t); setName(t.name) })} title="Edit"><td>#{t.name}</td><td className="num">{t.tx_count}</td><td className="muted">{t.last_used ? fmtDate(t.last_used) : '—'}</td><td className="right" {...ownClicks}><Link className="btn ghost sm" to={`/transactions?tag=${encodeURIComponent(t.name)}`}>Show</Link><button type="button" className="btn ghost sm danger-text" onClick={async () => { if (confirm(`Remove #${t.name} from ${t.tx_count} transactions?`)) { await api.del(`${V1}/tags/${t.id}`); reloadCatalog() } }}>Remove</button></td></tr>)}</tbody>
         </table>
       )}
       {edit && (
@@ -113,7 +114,7 @@ export function TagsAdmin() {
             <Field label="Rename"><input value={name} onChange={e => setName(e.target.value)} /></Field>
             <label className="row"><input type="checkbox" checked={edit.archived} onChange={e => setEdit({ ...edit, archived: e.target.checked })} style={{ width: 'auto' }} /> Archived (hidden from suggestions)</label>
             <Field label="…or merge into" group><Select value={merge} onChange={setMerge} options={tags.filter(t => t.id !== edit.id).map(t => ({ value: String(t.id), label: `#${t.name}` }))} clearLabel="Don't merge" placeholder="Don't merge" /></Field>
-            <div className="form-actions"><button className="btn" onClick={() => setEdit(null)}>Cancel</button><button className="btn primary" onClick={save}>{merge ? 'Merge' : 'Save'}</button></div>
+            <div className="form-actions"><button type="button" className="btn" onClick={() => setEdit(null)}>Cancel</button><button type="button" className="btn primary" onClick={save}>{merge ? 'Merge' : 'Save'}</button></div>
           </div>
         </Modal>
       )}
@@ -131,7 +132,7 @@ export function TemplatesAdmin() {
   // someone else's shared template: usable, not editable; "Copy to mine" makes an own one
   const copy = (t: Template) => setEdit({ ...t, id: undefined, owner_id: undefined, owner_name: undefined, shared: false, pinned: false, use_count: 0 })
   return (
-    <Card title="Templates" actions={<button className="btn primary sm" onClick={() => setEdit({ kind: 'expense', tags: [] })}>+ Template</button>}>
+    <Card title="Templates" actions={<button type="button" className="btn primary sm" onClick={() => setEdit({ kind: 'expense', tags: [] })}>+ Template</button>}>
       <p className="muted small">One tap on Home or Add books a template with an amount; without one it opens the form. Quick add matches them by the start of the name or an alias — <code>cg h 20</code> finds “cg hrana”. Most used come first, on every device. Templates are private; switch on Share to let people who can book on its account use it.</p>
       {data.length === 0 ? <Empty title="No templates yet" /> : (
         <table className="table compact">
@@ -140,7 +141,7 @@ export function TemplatesAdmin() {
             const cur = t.currency || acctById(t.account_id)?.currency || ''
             const theirs = Boolean(t.owner_name)
             const amount = <td className="num">{t.amount != null ? fmtMoney(t.amount, cur, decimalsOf(cur, currencies)) : '—'}{t.currency && <span className="badge" style={{ marginLeft: 4 }}>{t.currency}</span>}</td>
-            if (theirs) return <tr key={t.id}><td>{t.category_icon} {t.name}<div className="muted small">shared · {t.owner_name} · {t.account_name}</div></td><td className="muted">{t.aliases}</td>{amount}<td>{t.category_name}</td><td className="muted">{t.account_name}</td><td className="num right"><button className="btn ghost sm" onClick={() => copy(t)}>Copy to mine</button></td></tr>
+            if (theirs) return <tr key={t.id}><td>{t.category_icon} {t.name}<div className="muted small">shared · {t.owner_name} · {t.account_name}</div></td><td className="muted">{t.aliases}</td>{amount}<td>{t.category_name}</td><td className="muted">{t.account_name}</td><td className="num right"><button type="button" className="btn ghost sm" onClick={() => copy(t)}>Copy to mine</button></td></tr>
             return <tr key={t.id} className="clickable" {...clickRow(() => setEdit(t))} title="Edit"><td>{t.pinned && '📌 '}{t.category_icon} {t.name}{t.shared && <span className="badge" style={{ marginLeft: 6 }} title="People who can book on its account can use it">shared</span>}</td><td className="muted">{t.aliases}</td>{amount}<td>{t.category_name}</td><td className="muted">{t.account_name}</td><td className="num">{t.use_count}</td></tr>
           })}</tbody>
         </table>
@@ -223,7 +224,7 @@ export function Rules() {
     toast(`${res.matched} matched, ${res.changed} changed`); reload()
   }
   return (
-    <Card title="Rules" actions={<button className="btn primary sm" onClick={() => setEdit({ match: 'all', conditions: [{ field: 'text', op: 'contains', value: '' }], actions: {}, active: true })}>+ Rule</button>}>
+    <Card title="Rules" actions={<button type="button" className="btn primary sm" onClick={() => setEdit({ match: 'all', conditions: [{ field: 'text', op: 'contains', value: '' }], actions: {}, active: true })}>+ Rule</button>}>
       <p className="muted small">Run on every new transaction (typed, imported, from the API), top to bottom. A rule fills the category only when none was chosen, adds tags, sets the payee or renames. Besides rules, Pocket Money already learns: a description you used before gets the category it usually had.</p>
       {data.length === 0 ? <Empty title="No rules yet">e.g. description contains “uber” → Transport.</Empty> : (
         <table className="table compact">
@@ -233,7 +234,7 @@ export function Rules() {
               <td>{r.name}<div className="muted small">{r.conditions.map(c => `${c.field} ${c.op} ${c.value}`).join(r.match === 'any' ? ' or ' : ' and ')}</div></td>
               <td className="small">{[r.actions.category_id ? `${catById(r.actions.category_id)?.icon || ''} ${catById(r.actions.category_id)?.name || 'category'}` : '', ...(r.actions.add_tags || []).map(t => '#' + t), r.actions.payee ? `payee ${r.actions.payee}` : '', r.actions.description ? `rename “${r.actions.description}”` : ''].filter(Boolean).join(' · ')}</td>
               <td className="num">{r.hits}</td>
-              <td className="right" {...ownClicks}><button className="btn ghost sm" onClick={() => apply(r)}>Run now</button></td>
+              <td className="right" {...ownClicks}><button type="button" className="btn ghost sm" onClick={() => apply(r)}>Run now</button></td>
             </tr>
           ))}</tbody>
         </table>
@@ -269,10 +270,10 @@ function RuleModal({ rule, onClose, onSaved }: { rule: Partial<Rule>; onClose: (
                   <input value={c.value} onChange={e => setCond(i, { value: e.target.value })} style={{ flex: 1, minWidth: 120 }} placeholder={c.field === 'currency' ? 'EUR' : ''} />
                   {c.op === 'between' && <input value={c.value2 || ''} onChange={e => setCond(i, { value2: e.target.value })} style={{ width: 100 }} />}
                 </>}
-            {conds.length > 1 && <button className="icon-btn" onClick={() => setR({ ...r, conditions: conds.filter((_, j) => j !== i) })}>✕</button>}
+            {conds.length > 1 && <button type="button" className="icon-btn" onClick={() => setR({ ...r, conditions: conds.filter((_, j) => j !== i) })} aria-label="Remove condition"><Icon name="x" size={14} /></button>}
           </div>
         ))}
-        <button className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => setR({ ...r, conditions: [...conds, { field: 'text', op: 'contains', value: '' }] })}>+ condition</button>
+        <button type="button" className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => setR({ ...r, conditions: [...conds, { field: 'text', op: 'contains', value: '' }] })}>+ condition</button>
         <hr />
         <div className="two-col tight">
           <Field label="Set category" group><CategorySelect value={r.actions?.category_id ?? null} kind="any" onChange={v => setR({ ...r, actions: { ...r.actions, category_id: v } })} /></Field>
@@ -284,7 +285,7 @@ function RuleModal({ rule, onClose, onSaved }: { rule: Partial<Rule>; onClose: (
         </div>
         <div className="row wrap"><label className="row"><input type="checkbox" checked={r.active ?? true} onChange={e => setR({ ...r, active: e.target.checked })} style={{ width: 'auto' }} /> Active</label><label className="row"><input type="checkbox" checked={r.stop ?? false} onChange={e => setR({ ...r, stop: e.target.checked })} style={{ width: 'auto' }} /> Stop after this rule</label></div>
         {preview && <div className="callout"><b>{preview.count}</b> transactions from the last year match.{preview.items.length > 0 && <div className="mt-sm" style={{ maxHeight: 240, overflow: 'auto' }}><TxList items={preview.items.slice(0, 12)} onOpen={() => {}} compact /></div>}</div>}
-        <div className="form-actions">{r.id && <button className="btn ghost danger-text" onClick={del}>Delete</button>}<span className="spacer" /><button className="btn" onClick={test}>Test</button><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save}>Save</button></div>
+        <div className="form-actions">{r.id && <button type="button" className="btn ghost danger-text" onClick={del}>Delete</button>}<span className="spacer" /><button type="button" className="btn" onClick={test}>Test</button><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn primary" onClick={save}>Save</button></div>
       </div>
     </Modal>
   )

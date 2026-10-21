@@ -9,6 +9,7 @@ import { Line } from '../components/Charts'
 import { TxList } from '../components/TxList'
 import { TxModal } from '../components/TxEditor'
 import { TagInput } from '../components/pickers'
+import { Icon } from '../components/icons'
 
 type List = { items: Budget[]; currency: string; month_total: number; month_spent: number; month_all_spent: number; month_from: string; month_to: string; month_label: string }
 type Sug = { category_id: number; name: string; icon: string; average: number; suggested: number }
@@ -34,11 +35,11 @@ export default function Budgets() {
   return (
     <>
       <PageHeader title="Budgets" sub={<>{data.month_label} · {m(data.month_spent)} of {m(data.month_total)} budgeted{data.month_all_spent > data.month_spent ? ` · ${m(data.month_all_spent - data.month_spent)} outside budgets` : ''}</>} actions={<>
-        <button className="btn" onClick={() => setDate(d => shiftMonth(d, -1))}>‹</button>
-        {!isNow && <button className="btn" onClick={() => setDate(todayISO())}>This month</button>}
-        <button className="btn" onClick={() => setDate(d => shiftMonth(d, 1))}>›</button>
-        <button className="btn" onClick={() => setSuggest(true)}>✨ Suggest</button>
-        <button className="btn primary" onClick={() => setEditing('new')}>＋ Budget</button>
+        <button type="button" className="btn" onClick={() => setDate(d => shiftMonth(d, -1))}>‹</button>
+        {!isNow && <button type="button" className="btn" onClick={() => setDate(todayISO())}>This month</button>}
+        <button type="button" className="btn" onClick={() => setDate(d => shiftMonth(d, 1))}>›</button>
+        <button type="button" className="btn" onClick={() => setSuggest(true)}><Icon name="sparkles" size={15} />Suggest</button>
+        <button type="button" className="btn primary" onClick={() => setEditing('new')}><Icon name="plus" size={16} />Budget</button>
       </>} />
       {active.length === 0 ? (
         <Empty title="No budgets yet">A budget caps one or more categories (or tags) per week, month or year. “Suggest” proposes amounts from what you actually spent in the last three months.</Empty>
@@ -134,7 +135,7 @@ function BudgetDetail({ id, date, onClose, onEdit, onChanged }: { id: number; da
       {pts.length > 1 && <Line points={pts} fmt={v => fmtMoney(v, home, dec)} color="expense" area height={140} />}
       <p className="muted small mt-sm">{fmtDate(s.from)} – {fmtDate(s.to)} · {s.tx_count} transactions{b.rollover ? ` · carried ${fmtMoney(s.carry, home, dec, { sign: true })}` : ''}</p>
       <div className="mt">{data.transactions.length === 0 ? <p className="muted">Nothing spent yet.</p> : <TxList items={data.transactions} onOpen={t => setOpen(t.id)} />}</div>
-      <div className="form-actions"><button className="btn" onClick={() => onEdit(b)}>Edit budget</button></div>
+      <div className="form-actions"><button type="button" className="btn" onClick={() => onEdit(b)}>Edit budget</button></div>
       {open && <TxModal id={open} onClose={() => setOpen(null)} onChanged={() => { reload(); onChanged() }} />}
     </Modal>
   )
@@ -165,7 +166,7 @@ function Suggest({ onClose, onDone }: { onClose: () => void; onDone: () => void 
           ))}
         </div>
       )}
-      <div className="form-actions"><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!Object.values(pick).some(v => v != null)} onClick={create}>Create</button></div>
+      <div className="form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn primary" disabled={!Object.values(pick).some(v => v != null)} onClick={create}>Create</button></div>
     </Modal>
   )
 }

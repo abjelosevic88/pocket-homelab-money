@@ -6,6 +6,7 @@ import { colorFor, fmtDateTime, initials } from '../lib/format'
 import type { AuditActor, AuditEntry, AuditPage } from '../lib/types'
 import { Card, Empty, Loading, PageHeader, clickRow } from '../components/ui'
 import { Select } from '../components/Select'
+import { Icon } from '../components/icons'
 
 const ACTIONS = [
   { value: 'transaction.created', label: 'Added' },
@@ -113,11 +114,11 @@ export function AuditLog({ accountId, showAccount = false }: { accountId?: numbe
               </div>
               {open.has(e.id) && <div className="audit-body">
                 <Diff e={e} />
-                {e.transaction_id && !e.action.endsWith('.deleted') && <Link className="btn ghost sm mt-sm" to={`/transactions/${e.transaction_id}`}>Open transaction →</Link>}
+                {e.transaction_id && !e.action.endsWith('.deleted') && <Link className="btn ghost sm mt-sm" to={`/transactions/${e.transaction_id}`}>Open transaction<Icon name="chevron-right" size={14} /></Link>}
               </div>}
             </div>
           ))}
-          {next && <button className="btn ghost sm mt-sm" onClick={more}>Load older</button>}
+          {next && <button type="button" className="btn ghost sm mt-sm" onClick={more}>Load older</button>}
         </div>
       )}
     </>

@@ -10,6 +10,7 @@ import { AccountSelect, CategorySelect, IconInput, KindTabs, TagInput } from '..
 import { TxList } from '../components/TxList'
 import { TxModal } from '../components/TxEditor'
 import { Select } from '../components/Select'
+import { Icon } from '../components/icons'
 
 type List = { items: Subscription[]; monthly: number; yearly: number; income_monthly: number; currency: string; upcoming: Upcoming[] }
 
@@ -93,7 +94,7 @@ export default function Subscriptions() {
   }
   return (
     <>
-      <PageHeader title="Subscriptions & bills" sub={<>{m(data.monthly)} a month · {m(data.yearly)} a year{data.income_monthly > 0 ? ` · ${m(data.income_monthly)} recurring income` : ''}</>} actions={<button className="btn primary" onClick={() => setEditing({})}>＋ Subscription</button>} />
+      <PageHeader title="Subscriptions & bills" sub={<>{m(data.monthly)} a month · {m(data.yearly)} a year{data.income_monthly > 0 ? ` · ${m(data.income_monthly)} recurring income` : ''}</>} actions={<button type="button" className="btn primary" onClick={() => setEditing({})}><Icon name="plus" size={16} />Subscription</button>} />
       <div className="home-grid">
         <div className="grid" style={{ gap: 16 }}>
           <Card title="All" actions={<Segmented size="sm" value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All' }, { value: 'expense', label: 'Bills' }, { value: 'income', label: 'Income' }]} />}>
@@ -107,7 +108,7 @@ export default function Subscriptions() {
                 <span className={`due ${s.status}`}>{dueText(s)}</span>
                 <span style={{ textAlign: 'right' }}>
                   <span className={`amt ${s.kind}`}>{fmtMoney(s.amount, s.currency, decimalsOf(s.currency, currencies))}{s.amount_max > s.amount ? '+' : ''}</span>
-                  {s.active && (s.status === 'overdue' || s.status === 'today' || s.status === 'soon') && s.mode !== 'auto' && <div {...ownClicks}><button className="btn sm" onClick={() => pay(s)}>{s.kind === 'income' ? 'Received' : 'Pay'}</button></div>}
+                  {s.active && (s.status === 'overdue' || s.status === 'today' || s.status === 'soon') && s.mode !== 'auto' && <div {...ownClicks}><button type="button" className="btn sm" onClick={() => pay(s)}>{s.kind === 'income' ? 'Received' : 'Pay'}</button></div>}
                 </span>
               </div>
             ))}
@@ -117,10 +118,10 @@ export default function Subscriptions() {
               <p className="muted small">Payments that repeat on a steady rhythm and are not tracked yet.</p>
               {detected.map((d, i) => (
                 <div key={i} className="sub-row" style={{ cursor: 'default' }}>
-                  <span className="cat-ico">🔍</span>
+                  <span className="cat-ico"><Icon name="search" size={16} /></span>
                   <span style={{ minWidth: 0 }}><div className="t">{d.name}</div><div className="s">{d.count}× · {every(d)} · last {fmtDate(d.last_date, false)} · ≈{m(d.monthly_home)}/month</div></span>
                   <span className="amt">{fmtMoney(d.amount, d.currency, decimalsOf(d.currency, currencies))}</span>
-                  <button className="btn sm" onClick={() => setEditing({ name: d.name, kind: d.kind, amount: d.amount, currency: d.currency, account_id: d.account_id, category_id: d.category_id, freq: d.freq, every: d.every, next_date: d.next_date, start_date: d.next_date, mode: 'track', match_text: d.name.toLowerCase() })}>Track</button>
+                  <button type="button" className="btn sm" onClick={() => setEditing({ name: d.name, kind: d.kind, amount: d.amount, currency: d.currency, account_id: d.account_id, category_id: d.category_id, freq: d.freq, every: d.every, next_date: d.next_date, start_date: d.next_date, mode: 'track', match_text: d.name.toLowerCase() })}>Track</button>
                 </div>
               ))}
             </Card>
@@ -155,7 +156,7 @@ function CalendarFeed() {
   return (
     <Card title="In your calendar">
       <p className="muted small">Subscribe from Apple/Google Calendar or Nextcloud to see every payment on its day.</p>
-      {url ? <><input readOnly value={url} onFocus={e => e.target.select()} /><button className="btn sm mt-sm" onClick={() => { navigator.clipboard?.writeText(url); toast('Copied') }}>Copy</button></> : <button className="btn" onClick={make}>Create feed link</button>}
+      {url ? <><input readOnly value={url} onFocus={e => e.target.select()} /><button type="button" className="btn sm mt-sm" onClick={() => { navigator.clipboard?.writeText(url); toast('Copied') }}>Copy</button></> : <button type="button" className="btn" onClick={make}>Create feed link</button>}
     </Card>
   )
 }
@@ -283,9 +284,9 @@ export function SubscriptionPage() {
   return (
     <>
       <PageHeader title={<>{s.icon || s.category_icon || '↻'} {s.name}</>} sub={<>{fmtMoney(s.amount, s.currency, dec)}{s.amount_max > s.amount ? `–${fmtMoney(s.amount_max, s.currency, dec)}` : ''} {every(s)}{monthlyOn(s)} · {MODE_LABEL[s.mode]}{s.account_name ? ` · ${s.account_name}` : ''}</>} actions={<>
-        {s.active && <button className="btn primary" onClick={() => act('pay')}>Pay now</button>}
-        {s.active && <button className="btn" onClick={() => act('skip')}>Skip this one</button>}
-        <button className="btn" onClick={() => setEditing(true)}>Edit</button>
+        {s.active && <button type="button" className="btn primary" onClick={() => act('pay')}>Pay now</button>}
+        {s.active && <button type="button" className="btn" onClick={() => act('skip')}>Skip this one</button>}
+        <button type="button" className="btn" onClick={() => setEditing(true)}>Edit</button>
       </>} />
       <div className="stats">
         <div className="stat"><div className="n">{dueText(s)}</div><div className="l">next {fmtDate(s.due_date || s.next_date)}{s.due_date && s.due_date !== s.next_date ? ` (moved from ${fmtDate(s.next_date, false)})` : ''}</div></div>
@@ -295,16 +296,16 @@ export function SubscriptionPage() {
         {s.max_count > 0 && <div className="stat"><div className="n">{s.done_count} / {s.max_count}</div><div className="l">{s.max_count - s.done_count > 0 ? `${s.max_count - s.done_count} to go` : 'all done'}</div></div>}
       </div>
       <div className="home-grid">
-        <Card title="Payments" actions={<button className="btn ghost sm" onClick={relink} title="Find past payments that match">Find payments</button>}>
+        <Card title="Payments" actions={<button type="button" className="btn ghost sm" onClick={relink} title="Find past payments that match">Find payments</button>}>
           {data.payments.length === 0 ? <p className="muted">None linked yet. New transactions that match the name and amount around the due date are linked automatically.</p> : <TxList items={data.payments} onOpen={t => setOpen(t.id)} />}
         </Card>
         <Card title="Next dates">
           <div className="timeline">{data.next.map(d => <div key={d} className="tl"><span className="when">{fmtDate(d, false)}</span><span /><span className="nm muted">{d.slice(0, 4)}</span><span className="amt">{fmtMoney(s.amount, s.currency, dec)}</span></div>)}</div>
-          {s.url && <a className="btn mt" href={s.url} target="_blank" rel="noreferrer">Manage / cancel ↗</a>}
+          {s.url && <a className="btn mt" href={s.url} target="_blank" rel="noreferrer">Manage / cancel<Icon name="external" size={14} /></a>}
           {s.notes && <p className="mt small">{s.notes}</p>}
         </Card>
       </div>
-      <div className="row mt"><span className="spacer" /><button className="btn ghost danger-text sm" onClick={del}>Delete subscription</button></div>
+      <div className="row mt"><span className="spacer" /><button type="button" className="btn ghost danger-text sm" onClick={del}>Delete subscription</button></div>
       {editing && <SubForm sub={s} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); reload() }} />}
       {open && <TxModal id={open} onClose={() => setOpen(null)} onChanged={reload} />}
     </>

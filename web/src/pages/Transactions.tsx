@@ -9,6 +9,7 @@ import { Select } from '../components/Select'
 import { TxList } from '../components/TxList'
 import { TxModal } from '../components/TxEditor'
 import { CategorySelect } from '../components/pickers'
+import { Icon } from '../components/icons'
 
 type Page = { items: Transaction[]; totals: TxTotals; has_more: boolean }
 
@@ -46,6 +47,9 @@ export default function Transactions() {
 
   const set = (k: string, v: string) => { const n = new URLSearchParams(sp); if (v) n.set(k, v); else n.delete(k); setSp(n, { replace: true }) }
   useEffect(() => { set('q', dq) }, [dq]) // eslint-disable-line react-hooks/exhaustive-deps
+  // a search started elsewhere (⌘K) while this page is open
+  const urlQ = sp.get('q') || ''
+  useEffect(() => { if (urlQ !== dq) setQ(urlQ) }, [urlQ]) // eslint-disable-line react-hooks/exhaustive-deps
   const query = useMemo(() => {
     const n = new URLSearchParams(sp)
     n.delete('preset')
@@ -97,10 +101,10 @@ export default function Transactions() {
     <>
       <PageHeader title="Transactions" sub={page ? `${page.totals.count.toLocaleString()} found` : ''} actions={<>
         <a className="btn" href={`${V1}/export/transactions.csv?${query}`}>Export CSV</a>
-        <button className="btn primary" onClick={() => setCreating(true)}>＋ Add</button>
+        <button type="button" className="btn primary" onClick={() => setCreating(true)}><Icon name="plus" size={16} />Add</button>
       </>} />
       <div className="toolbar">
-        <div className="search"><span className="ico">⌕</span><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search description, payee, notes, category, tag…" /></div>
+        <div className="search"><Icon name="search" size={15} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search description, payee, notes, category, tag…" /></div>
         <Select value={sp.get('account') || ''} onChange={v => set('account', v)} options={accounts.map(a => ({ value: String(a.id), label: a.name, hint: a.currency }))} placeholder="All accounts" clearLabel="All accounts" />
         <Select value={sp.get('category') || ''} onChange={v => set('category', v)} options={[{ value: 'none', label: '∅ Uncategorised' }, ...categories.map(c => ({ value: String(c.id), label: `${c.icon || '•'} ${c.full_name}` }))]} placeholder="All categories" clearLabel="All categories" />
         <Select value={sp.get('tag') || ''} onChange={v => set('tag', v)} options={tags.map(t => ({ value: t.name, label: `#${t.name}`, hint: String(t.tx_count) }))} placeholder="Any tag" clearLabel="Any tag" />
@@ -111,7 +115,7 @@ export default function Transactions() {
         <input type="date" value={sp.get('from') || ''} onChange={e => set('from', e.target.value)} style={{ width: 'auto' }} aria-label="From" />
         <span className="muted">–</span>
         <input type="date" value={sp.get('to') || ''} onChange={e => set('to', e.target.value)} style={{ width: 'auto' }} aria-label="To" />
-        {hasFilters && <button className="btn ghost sm" onClick={() => { setQ(''); setSp(new URLSearchParams(), { replace: true }) }}>Clear filters</button>}
+        {hasFilters && <button type="button" className="btn ghost sm" onClick={() => { setQ(''); setSp(new URLSearchParams(), { replace: true }) }}>Clear filters</button>}
       </div>
       {page && page.totals.count > 0 && (
         <div className="totals-strip">
@@ -120,31 +124,31 @@ export default function Transactions() {
           <span>Net <b className={page.totals.net >= 0 ? 'ok' : 'bad'}>{fmtMoney(page.totals.net, home, dec, { sign: true })}</b></span>
           {page.totals.transfers > 0 && <span className="muted">Transfers {fmtMoney(page.totals.transfers, home, dec)}</span>}
           <span className="spacer" />
-          <button className="btn ghost sm" onClick={() => setSel(sel.size ? new Set() : new Set(page.items.map(t => t.id)))}>{sel.size ? 'Clear selection' : 'Select all shown'}</button>
+          <button type="button" className="btn ghost sm" onClick={() => setSel(sel.size ? new Set() : new Set(page.items.map(t => t.id)))}>{sel.size ? 'Clear selection' : 'Select all shown'}</button>
         </div>
       )}
-      {!page ? <Loading /> : page.items.length === 0 ? <Empty title="Nothing here">{hasFilters ? 'No transaction matches these filters.' : 'Add your first one with ＋ Add.'}</Empty> : (
+      {!page ? <Loading /> : page.items.length === 0 ? <Empty title="Nothing here">{hasFilters ? 'No transaction matches these filters.' : 'Add your first one with Add.'}</Empty> : (
         <div className="list-card">
           <TxList items={page.items} onOpen={t => setOpen(t.id)} selected={sel} onToggle={toggle} perspective={Number(sp.get('account')) || undefined} />
-          {page.has_more && <div className="row" style={{ justifyContent: 'center', padding: 10 }}><button className="btn" disabled={busy} onClick={() => load(true)}>{busy ? 'Loading…' : 'Load more'}</button></div>}
+          {page.has_more && <div className="row" style={{ justifyContent: 'center', padding: 10 }}><button type="button" className="btn" disabled={busy} onClick={() => load(true)}>{busy ? 'Loading…' : 'Load more'}</button></div>}
         </div>
       )}
       {sel.size > 0 && (
         <div className="bulk-bar">
-          <span className="count">{sel.size} selected<button onClick={() => setSel(new Set())} aria-label="Clear selection" title="Clear selection">×</button></span>
+          <span className="count">{sel.size} selected<button type="button" onClick={() => setSel(new Set())} aria-label="Clear selection" title="Clear selection"><Icon name="x" size={13} /></button></span>
           <div className="divider" />
           <div className="group">
             <div style={{ width: 210 }}><CategorySelect value={bulkCat} onChange={setBulkCat} kind="any" placeholder="Set category…" /></div>
-            <button className="btn primary sm" disabled={!bulkCat} onClick={() => bulk('category', { category_id: bulkCat })}>Apply</button>
+            <button type="button" className="btn primary sm" disabled={!bulkCat} onClick={() => bulk('category', { category_id: bulkCat })}>Apply</button>
           </div>
           <div className="divider" />
           <div className="group">
             <input value={bulkTag} onChange={e => setBulkTag(e.target.value)} placeholder="Tag" style={{ width: 120 }} />
-            <button className="btn sm" disabled={!bulkTag.trim()} onClick={() => bulk('add_tags', { tags: [bulkTag] })}>+ Add</button>
-            <button className="btn sm" disabled={!bulkTag.trim()} onClick={() => bulk('remove_tags', { tags: [bulkTag] })}>− Remove</button>
+            <button type="button" className="btn sm" disabled={!bulkTag.trim()} onClick={() => bulk('add_tags', { tags: [bulkTag] })}><Icon name="plus" size={14} />Add</button>
+            <button type="button" className="btn sm" disabled={!bulkTag.trim()} onClick={() => bulk('remove_tags', { tags: [bulkTag] })}><Icon name="minus" size={14} />Remove</button>
           </div>
           <span className="spacer" />
-          <button className="btn sm danger-ghost" onClick={() => bulk('delete')}>Delete</button>
+          <button type="button" className="btn sm danger-ghost" onClick={() => bulk('delete')}>Delete</button>
         </div>
       )}
       {(open || creating) && <TxModal id={open || undefined} onClose={() => { creating ? setCreating(false) : closeModal() }} onChanged={() => load(false)} />}

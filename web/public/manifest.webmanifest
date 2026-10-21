@@ -3,7 +3,7 @@
   "short_name": "Money",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f5f6f8",
+  "background_color": "#ffffff",
   "theme_color": "#047857",
   "icons": [
     { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
