@@ -405,6 +405,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/payees", s.handlePayees)
 
 			r.Post("/quick/parse", s.handleQuickParse)
+			r.Post("/quick/suggest", s.handleQuickSuggest)
 			r.Post("/quick", s.handleQuickAdd)
 
 			r.Get("/categories", s.handleListCategories)

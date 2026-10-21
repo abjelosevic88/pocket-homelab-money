@@ -1,16 +1,18 @@
 // Package quick turns one line of text into a transaction draft without any
 // AI: "kafa 6", "cg hrana 20eur", "+1500 plata", "gorivo 80 juce",
-// "taxi 12 usd @cash #trip". Templates are matched by name prefix the way the
+// "taxi 12 usd @cash #trip", "plata 4800-10,23". Templates are matched by name prefix the way the
 // Firefly Pico assistant did it, so muscle memory carries over.
 package quick
 
 import (
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/abjelosevic88/pocket-homelab-money/internal/currency"
 )
@@ -68,7 +70,8 @@ type Draft struct {
 	Description string   `json:"description"`
 	Payee       string   `json:"payee"`
 	TemplateID  int64    `json:"template_id"`
-	Recognized  []string `json:"recognized"` // human hints: "template Kafa", "yesterday", "EUR"
+	Calc        string   `json:"calc,omitempty"` // the sum typed for the amount: "4800 − 10.23"
+	Recognized  []string `json:"recognized"`     // human hints: "template Kafa", "yesterday", "EUR"
 	Input       string   `json:"input"`
 }
 
@@ -106,6 +109,8 @@ var (
 	reThousand = regexp.MustCompile(`^\d{1,3}(\.\d{3})+(,\d+)?$`)
 	reISODate  = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})$`)
 	reTime     = regexp.MustCompile(`^(\d{1,2})[:h](\d{2})$`)
+	// a sum in place of the amount: "4800-10.23", "3x2,5", "(12+8)/2eur"
+	reExpr = regexp.MustCompile(`^([+-]?)([€$£¥]?)([\d(][\d.,()+\-*/x×÷]*[\d)])([a-zA-Z€$£¥кмКМ.]{0,8})$`)
 )
 
 func fold(s string) string {
@@ -184,6 +189,7 @@ func Parse(input string, c Context) Draft {
 	}
 
 	// 2. walk the rest: amount, currency, dates, time, @account, >account, #tag
+	tokens = joinSums(tokens)
 	var words []string
 	amountSeen := false
 	for i := 0; i < len(tokens); i++ {
@@ -252,49 +258,33 @@ func Parse(input string, c Context) Draft {
 			}
 		}
 		if !amountSeen {
-			if m := reAmount.FindStringSubmatch(tok); m != nil {
-				cur := ""
-				if m[2] != "" {
-					cur = currencyWords[m[2]]
+			if sign, cur, v, calc, ok := readAmount(tok); ok {
+				amountSeen = true
+				if sign == "+" {
+					d.Kind = "income"
+					d.Recognized = append(d.Recognized, "income")
 				}
-				if suf := fold(strings.TrimSuffix(m[4], ".")); suf != "" {
-					code, ok := currencyWords[suf]
-					if !ok && len(suf) == 3 && currency.Valid(suf) {
-						code, ok = strings.ToUpper(suf), true
+				// a currency word may follow: "20 eur", "20 maraka"
+				if cur == "" && i+1 < len(tokens) {
+					nx := fold(tokens[i+1])
+					if code, ok := currencyWords[nx]; ok {
+						cur = code
+						i++
+					} else if len(nx) == 3 && currency.Valid(nx) && strings.ToUpper(tokens[i+1]) == tokens[i+1] {
+						cur = strings.ToUpper(nx)
+						i++
 					}
-					if !ok {
-						goto word // "3x", "2kom" — not money
-					}
-					cur = code
 				}
-				if v, ok := parseNumber(m[3]); ok {
-					amountSeen = true
-					if m[1] == "+" {
-						d.Kind = "income"
-						d.Recognized = append(d.Recognized, "income")
-					}
-					// a currency word may follow: "20 eur", "20 maraka"
-					if cur == "" && i+1 < len(tokens) {
-						nx := fold(tokens[i+1])
-						if code, ok := currencyWords[nx]; ok {
-							cur = code
-							i++
-						} else if len(nx) == 3 && currency.Valid(nx) && strings.ToUpper(tokens[i+1]) == tokens[i+1] {
-							cur = strings.ToUpper(nx)
-							i++
-						}
-					}
-					if cur != "" {
-						d.Currency = cur
-						d.Recognized = append(d.Recognized, cur)
-					}
-					minor := toMinor(v, d.Currency, c, d.AccountID)
-					d.Amount = &minor
-					continue
+				if cur != "" {
+					d.Currency = cur
+					d.Recognized = append(d.Recognized, cur)
 				}
+				minor := toMinor(v, d.Currency, c, d.AccountID)
+				d.Amount = &minor
+				d.Calc = calc
+				continue
 			}
 		}
-	word:
 		words = append(words, tok)
 	}
 
@@ -324,6 +314,177 @@ func Parse(input string, c Context) Draft {
 		}
 	}
 	return d
+}
+
+// readAmount reads "20", "€20", "20eur", "+1500" or a sum like "4800-10.23"
+// (calc is the sum written out, empty for a plain number). "3x", "2kom" are
+// not money.
+func readAmount(tok string) (sign, cur string, v float64, calc string, ok bool) {
+	m := reAmount.FindStringSubmatch(tok)
+	if m == nil {
+		if m = reExpr.FindStringSubmatch(tok); m == nil {
+			return
+		}
+	}
+	if m[2] != "" {
+		cur = currencyWords[m[2]]
+	}
+	if suf := fold(strings.TrimSuffix(m[4], ".")); suf != "" {
+		code, known := currencyWords[suf]
+		if !known && len(suf) == 3 && currency.Valid(suf) {
+			code, known = strings.ToUpper(suf), true
+		}
+		if !known {
+			return "", "", 0, "", false
+		}
+		cur = code
+	}
+	if v, ok = parseNumber(m[3]); ok {
+		return m[1], cur, v, "", true
+	}
+	if v, calc, ok = evalSum(m[3]); ok && v > 0 {
+		return m[1], cur, v, calc, true
+	}
+	return "", "", 0, "", false
+}
+
+// joinSums glues a sum typed with spaces ("4800 - 10.23", "20 + 5 eur") into
+// one token so it reads like "4800-10.23". Only joins what then reads as an
+// amount, so "kafa 3 -2d" keeps its day offset.
+func joinSums(tokens []string) []string {
+	out := make([]string, 0, len(tokens))
+	for i := 0; i < len(tokens); i++ {
+		best := i
+		joined := tokens[i]
+		for j := i + 1; j < len(tokens) && j <= i+8; j++ {
+			// only across an operator: "5 2026-10-12" is an amount and a date
+			if !strings.ContainsAny(lastRune(tokens[j-1])+firstRune(tokens[j]), "+-*/x×÷()") {
+				break
+			}
+			joined += tokens[j]
+			if _, _, _, calc, ok := readAmount(joined); ok && calc != "" {
+				best = j
+			}
+		}
+		out = append(out, strings.Join(tokens[i:best+1], ""))
+		i = best
+	}
+	return out
+}
+
+func firstRune(s string) string {
+	_, n := utf8.DecodeRuneInString(s)
+	return s[:n]
+}
+
+func lastRune(s string) string {
+	_, n := utf8.DecodeLastRuneInString(s)
+	return s[len(s)-n:]
+}
+
+// evalSum works out + − × ÷ with brackets over numbers written the way
+// parseNumber reads them; "x" and "×" multiply, "÷" divides. It needs at least
+// one operator, and gives back the sum written out with spaces.
+func evalSum(s string) (float64, string, bool) {
+	var toks []string
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if unicode.IsDigit(r) || r == '.' || r == ',' {
+			j := i
+			for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] == '.' || s[j] == ',') {
+				j++
+			}
+			toks = append(toks, s[i:j])
+			i = j
+			continue
+		}
+		switch r {
+		case '+', '-', '(', ')':
+			toks = append(toks, string(r))
+		case '*', 'x', '×':
+			toks = append(toks, "×")
+		case '/', '÷':
+			toks = append(toks, "÷")
+		default:
+			return 0, "", false
+		}
+		i += size
+	}
+	p := sumParser{toks: toks}
+	v := p.expr()
+	if p.bad || p.pos != len(toks) || p.ops == 0 || math.IsInf(v, 0) || math.IsNaN(v) {
+		return 0, "", false
+	}
+	calc := strings.Join(toks, " ")
+	calc = strings.NewReplacer("( ", "(", " )", ")", "-", "−").Replace(calc)
+	return v, calc, true
+}
+
+type sumParser struct {
+	toks []string
+	pos  int
+	ops  int
+	bad  bool
+}
+
+func (p *sumParser) peek() string {
+	if p.pos < len(p.toks) {
+		return p.toks[p.pos]
+	}
+	return ""
+}
+
+func (p *sumParser) expr() float64 {
+	v := p.term()
+	for op := p.peek(); op == "+" || op == "-"; op = p.peek() {
+		p.pos++
+		p.ops++
+		if op == "+" {
+			v += p.term()
+		} else {
+			v -= p.term()
+		}
+	}
+	return v
+}
+
+func (p *sumParser) term() float64 {
+	v := p.factor()
+	for op := p.peek(); op == "×" || op == "÷"; op = p.peek() {
+		p.pos++
+		p.ops++
+		f := p.factor()
+		if op == "×" {
+			v *= f
+		} else if f == 0 {
+			p.bad = true
+		} else {
+			v /= f
+		}
+	}
+	return v
+}
+
+func (p *sumParser) factor() float64 {
+	t := p.peek()
+	p.pos++
+	switch {
+	case t == "(":
+		v := p.expr()
+		if p.peek() != ")" {
+			p.bad = true
+		}
+		p.pos++
+		return v
+	case t != "" && t[0] >= '0' && t[0] <= '9':
+		v, ok := parseNumber(t)
+		if !ok {
+			p.bad = true
+		}
+		return v
+	}
+	p.bad = true
+	return 0
 }
 
 func looksLikeAmount(s string) bool {
@@ -419,4 +580,112 @@ func pad2(n int) string {
 		return "0" + strconv.Itoa(n)
 	}
 	return strconv.Itoa(n)
+}
+
+// Suggestion is a template that fits the words being typed, with the line
+// that books it: the template's name, then whatever else was typed (amount,
+// day, #tags…).
+type Suggestion struct {
+	TemplateID int64  `json:"template_id"`
+	Name       string `json:"name"`
+	Alias      string `json:"alias,omitempty"` // the alias that matched, when it wasn't the name
+	Line       string `json:"line"`
+}
+
+// Suggest lists the templates the leading words of a line could mean: names
+// or aliases starting with them, names where every typed word starts a word
+// ("athena" → "Plata Athena"), or a name followed by more words. Exact
+// matches first, then prefixes, then the rest; ties keep the templates'
+// order (pinned, then most used). query is the folded words it matched on.
+func Suggest(input string, c Context) (query string, out []Suggestion) {
+	raw := strings.TrimSpace(input)
+	lead := ""
+	if strings.HasPrefix(raw, "+") && len(raw) > 1 && !unicode.IsDigit(rune(raw[1])) {
+		lead = "+"
+		raw = strings.TrimSpace(raw[1:])
+	}
+	tokens := strings.Fields(raw)
+	n := 0
+	for n < len(tokens) && n < 5 && isNameWord(tokens[n]) {
+		n++
+	}
+	if n == 0 {
+		return "", nil
+	}
+	typed := tokens[:n]
+	query = fold(strings.Join(typed, " "))
+	qWords := strings.Fields(query)
+
+	type hit struct {
+		Suggestion
+		score int
+	}
+	var hits []hit
+	for _, t := range c.Templates {
+		best := hit{score: 0}
+		for ni, name := range t.Names {
+			fn := fold(name)
+			score, extra := 0, []string(nil)
+			nw := len(strings.Fields(fn))
+			switch {
+			case fn == query:
+				score = 4
+			case strings.HasPrefix(fn, query):
+				score = 3
+			case wordsStart(strings.Fields(fn), qWords):
+				score = 2
+			case n > nw && fold(strings.Join(typed[:nw], " ")) == fn:
+				score, extra = 1, typed[nw:]
+			}
+			if score > best.score {
+				best = hit{Suggestion{TemplateID: t.ID, Name: t.Names[0]}, score}
+				if ni > 0 {
+					best.Alias = name
+				}
+				best.Line = strings.Join(append(append([]string{lead + t.Names[0]}, extra...), tokens[n:]...), " ")
+			}
+		}
+		if best.score > 0 {
+			hits = append(hits, best)
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	for _, h := range hits {
+		out = append(out, h.Suggestion)
+	}
+	return query, out
+}
+
+// isNameWord: a word that may still be part of a template name, not the
+// amount, a day, @account, >account or #tag that follows it.
+func isNameWord(tok string) bool {
+	if strings.ContainsAny(tok, "0123456789") || strings.ContainsAny(firstRune(tok), "@#>→+-") {
+		return false
+	}
+	low := fold(tok)
+	if _, ok := dayWords[low]; ok {
+		return false
+	}
+	if _, ok := weekdayWords[low]; ok && len(low) > 3 {
+		return false
+	}
+	return true
+}
+
+// wordsStart: every typed word starts some word of the name, each a different one.
+func wordsStart(name, typed []string) bool {
+	used := make([]bool, len(name))
+	for _, q := range typed {
+		found := false
+		for i, w := range name {
+			if !used[i] && strings.HasPrefix(w, q) {
+				used[i], found = true, true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

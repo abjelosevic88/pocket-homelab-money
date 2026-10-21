@@ -109,9 +109,12 @@ export interface Home {
 
 export interface Draft {
   kind: Kind; amount: number | null; currency: string; date: string; time: string; account_id: number; to_account_id: number; category_id: number
-  tags: string[]; description: string; payee: string; template_id: number; recognized: string[]; input: string
+  tags: string[]; description: string; payee: string; template_id: number; recognized: string[]; input: string; calc?: string
   account_name: string; account_currency: string; to_account_name?: string; category_name: string; category_icon: string; account_amount: number | null; rate: number; ready: boolean; problem?: string
 }
+
+/** A template that fits what is being typed; `line` books it, `preview` is what that line would book. */
+export interface QuickSuggestion { template_id: number; name: string; alias?: string; line: string; preview: Draft }
 
 export interface Meta { account_kinds: AccountKind[]; transaction_kinds: Kind[]; frequencies: Freq[]; subscription_modes: SubMode[]; budget_periods: string[] }
 

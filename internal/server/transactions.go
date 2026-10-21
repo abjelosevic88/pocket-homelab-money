@@ -1071,6 +1071,42 @@ func (s *Server) handleQuickParse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleQuickSuggest lists the templates that fit the words being typed on
+// the last line, each with the transaction it would book (the typed amount,
+// sum, day and tags applied), so the quick-add bar can offer them as you type.
+func (s *Server) handleQuickSuggest(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Text string `json:"text"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	type suggestion struct {
+		quick.Suggestion
+		Preview quickPreview `json:"preview"`
+	}
+	out := struct {
+		Query       string       `json:"query"`
+		Suggestions []suggestion `json:"suggestions"`
+	}{Suggestions: []suggestion{}}
+	last := in.Text[strings.LastIndexAny(in.Text, "\n;")+1:]
+	c, accts := s.quickContext(r.Context())
+	query, sugs := quick.Suggest(last, c)
+	out.Query = query
+	for _, sg := range sugs {
+		d := quick.Parse(sg.Line, c)
+		if d.TemplateID != sg.TemplateID {
+			continue // another template's name wins that line; picking it would mislead
+		}
+		out.Suggestions = append(out.Suggestions, suggestion{sg, s.preview(r.Context(), d, accts)})
+		if len(out.Suggestions) == 8 {
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // draftToIn turns a parsed (or AI) draft into transaction input.
 func draftToIn(d quick.Draft, source string) txIn {
 	in := txIn{Kind: &d.Kind, Date: &d.Date, AccountID: &d.AccountID, Amount: d.Amount, Description: &d.Description, Payee: &d.Payee, Tags: &d.Tags, Source: source, TemplateID: d.TemplateID}

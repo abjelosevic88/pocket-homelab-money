@@ -65,6 +65,16 @@ func TestParse(t *testing.T) {
 		{"3x kafa 9", "expense", 900, "", "2026-10-18", 0, 0, "3x kafa", 1},
 		{"€4.20 coffee", "expense", 420, "EUR", "2026-10-18", 0, 0, "Coffee", 1},
 		{"100 >sp_devizni", "transfer", 10000, "", "2026-10-18", 0, 0, "", 1},
+		{"plata athena 4800-10.23", "income", 478977, "", "2026-10-18", 4, 0, "Plata Athena", 2},
+		{"plata athena 4800 - 10,23 juce", "income", 478977, "", "2026-10-17", 4, 0, "Plata Athena", 2},
+		{"kafa 3x2,5", "expense", 750, "", "2026-10-18", 0, 2, "Kafa", 1},
+		{"cg h (12+8)/2", "expense", 1000, "EUR", "2026-10-18", 2, 1, "cg hrana", 1},
+		{"taxi 20 + 5 eur", "expense", 2500, "EUR", "2026-10-18", 0, 0, "Taxi", 1},
+		{"pivo 1.500+500 din", "expense", 200000, "RSD", "2026-10-18", 0, 0, "Pivo", 1},
+		{"gorivo 80 -2d", "expense", 8000, "", "2026-10-16", 5, 3, "Gorivo", 1},
+		{"poklon 50 2026-10-12", "expense", 5000, "", "2026-10-12", 0, 0, "Poklon", 1},
+		{"kafa 10-20", "expense", -1, "", "2026-10-18", 0, 0, "Kafa 10-20", 1},
+		{"kafa 5/0", "expense", -1, "", "2026-10-18", 0, 0, "Kafa 5/0", 1},
 	}
 	for _, c := range cases {
 		d := Parse(c.in, ctx())
@@ -83,5 +93,67 @@ func TestParse(t *testing.T) {
 	d = Parse("parking 2 14:30", ctx())
 	if d.Time != "14:30" || amt(d) != 200 {
 		t.Errorf("time %q amount %d", d.Time, amt(d))
+	}
+}
+
+func TestSum(t *testing.T) {
+	d := Parse("plata athena 4800-10.23", ctx())
+	if d.Calc != "4800 − 10.23" {
+		t.Errorf("calc %q", d.Calc)
+	}
+	if d = Parse("kafa 3,5", ctx()); d.Calc != "" {
+		t.Errorf("plain amount has calc %q", d.Calc)
+	}
+	if d = Parse("cg h (12+8)/2", ctx()); d.Calc != "(12 + 8) ÷ 2" {
+		t.Errorf("calc %q", d.Calc)
+	}
+}
+
+func TestSuggest(t *testing.T) {
+	c := ctx()
+	c.Templates = append(c.Templates, Template{ID: 6, Names: []string{"Plata"}, Kind: "income"}, Template{ID: 7, Names: []string{"Struja", "elektro"}, Kind: "expense"})
+	ids := func(s []Suggestion) []int64 {
+		out := []int64{}
+		for _, x := range s {
+			out = append(out, x.TemplateID)
+		}
+		return out
+	}
+	cases := []struct {
+		in    string
+		want  []int64
+		line0 string
+	}{
+		{"pla", []int64{4, 6}, "Plata Athena"},
+		{"plata", []int64{6, 4}, "Plata"}, // exact first
+		{"athena 4800-10", []int64{4}, "Plata Athena 4800-10"},
+		{"plata athena 4800-10.23 #x", []int64{4, 6}, "Plata Athena 4800-10.23 #x"}, // the server drops 6: "Plata athena …" parses as 4
+		{"cg", []int64{2, 3}, "cg hrana"},
+		{"ele", []int64{7}, "Struja"},                      // alias match books under the name
+		{"gorivo pumpa 80", []int64{5}, "Gorivo pumpa 80"}, // name, then more words
+		{"+ plata 1500", []int64{6, 4}, "+Plata 1500"},
+		{"4800", []int64{}, ""},
+		{"zzz", []int64{}, ""},
+	}
+	for _, tc := range cases {
+		_, got := Suggest(tc.in, c)
+		g := ids(got)
+		if len(g) != len(tc.want) {
+			t.Errorf("%q → %v, want %v", tc.in, g, tc.want)
+			continue
+		}
+		for i := range g {
+			if g[i] != tc.want[i] {
+				t.Errorf("%q → %v, want %v", tc.in, g, tc.want)
+				break
+			}
+		}
+		if len(got) > 0 && got[0].Line != tc.line0 {
+			t.Errorf("%q → line %q, want %q", tc.in, got[0].Line, tc.line0)
+		}
+	}
+	_, got := Suggest("ele", c)
+	if got[0].Alias != "elektro" {
+		t.Errorf("alias %q", got[0].Alias)
 	}
 }

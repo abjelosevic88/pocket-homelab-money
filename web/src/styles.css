@@ -344,6 +344,13 @@ html, body { overflow-x: hidden; }
 .draft.problem { background: var(--warning-soft); }
 .draft .what { font-weight: 600; flex: 1 1 140px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .draft .bits { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; color: var(--muted); }
+.tpl-suggest { margin-top: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+.tpl-suggest .draft { border-radius: 0; background: transparent; cursor: pointer; }
+.tpl-suggest .draft + .draft { border-top: 1px solid var(--border); }
+.tpl-suggest .draft.active { background: var(--accent-soft); }
+.tpl-suggest .alias { font-weight: 400; color: var(--muted); }
+.tpl-suggest-help { font-size: 11px; color: var(--muted); padding: 4px 12px; border-top: 1px solid var(--border); }
+.calc { color: var(--muted); font-variant-numeric: tabular-nums; }
 .hint-pill { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-hover); font-weight: 600; }
 .quick-help { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .quick-help code { background: var(--surface-2); padding: 0 4px; border-radius: 4px; }
