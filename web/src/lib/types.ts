@@ -59,7 +59,7 @@ export interface Subscription {
   account_id: number | null; to_account_id: number | null; category_id: number | null; tags: string[]; payee: string; description: string
   freq: Freq; every: number; start_date: string; next_date: string; end_date: string; mode: SubMode; notify_days: number; match_text: string
   url: string; icon: string; notes: string; active: boolean; notified_for: string; external_id: string
-  weekend: '' | 'before' | 'after' | 'skip'; nth: number; max_count: number; done_count: number; due_date: string
+  weekend: '' | 'before' | 'after' | 'skip'; nth: number; month_day: number; weekday: number; max_count: number; done_count: number; due_date: string
   category_name?: string; category_icon?: string; account_name?: string
   days_left: number; status: 'overdue' | 'today' | 'soon' | 'upcoming' | 'ended' | 'paused'; monthly_home: number; yearly_home: number
   last_paid: string; last_amount: number; paid_count: number

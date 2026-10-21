@@ -6,7 +6,7 @@ import { decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
 import { FREQ_LABEL, MODE_LABEL, type Detected, type Freq, type Kind, type SubMode, type Subscription, type Transaction, type Upcoming } from '../lib/types'
 import { Card, Empty, Field, Loading, Modal, PageHeader, Segmented, clickRow, ownClicks, useAsync, useToast } from '../components/ui'
 import { CurrencySelect, MoneyInput } from '../components/Money'
-import { AccountSelect, CategorySelect, KindTabs, TagInput } from '../components/pickers'
+import { AccountSelect, CategorySelect, IconInput, KindTabs, TagInput } from '../components/pickers'
 import { TxList } from '../components/TxList'
 import { TxModal } from '../components/TxEditor'
 import { Select } from '../components/Select'
@@ -30,12 +30,51 @@ const ORD = ['', '1st', '2nd', '3rd', '4th', 'last']
 const WEEKEND: { value: Subscription['weekend']; label: string }[] = [
   { value: '', label: 'Keep the date' }, { value: 'before', label: 'Move to the Friday before' }, { value: 'after', label: 'Move to the Monday after' }, { value: 'skip', label: 'Skip that one' },
 ]
-/** "2nd Tuesday" for a date. */
-function nthName(n: number, iso: string) {
-  const [y, m, d] = iso.split('-').map(Number)
-  return `${ORD[n]} ${new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long' })}`
-}
+/** 1 = Monday … 7 = Sunday, the way the server stores a picked weekday. */
+const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7]
+function weekdayName(wd: number) { return new Date(2026, 0, 4 + wd).toLocaleDateString(undefined, { weekday: 'long' }) } // 2026-01-05 is a Monday
+function isoWeekday(iso: string) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).getDay() || 7 }
 function nthOf(iso: string) { return Math.min(4, Math.ceil(Number(iso.slice(8, 10)) / 7)) }
+function daysIn(y: number, m: number) { return new Date(y, m, 0).getDate() } // m is 1-based
+function isoOf(y: number, m: number, d: number) { return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` }
+/** "2nd Tuesday", "last Friday". */
+function nthName(n: number, wd: number) { return `${ORD[n]} ${weekdayName(wd)}` }
+/** "on the 30th", "on the last day", "on the 2nd Tuesday" — a monthly subscription's day. */
+function monthlyOn(s: Pick<Subscription, 'freq' | 'nth' | 'weekday' | 'month_day' | 'start_date' | 'next_date'>) {
+  if (s.freq !== 'monthly') return ''
+  if (s.nth) return ` on the ${nthName(s.nth, s.weekday || isoWeekday(s.start_date || s.next_date))}`
+  if (s.month_day >= 31) return ' on the last day'
+  return s.month_day ? ` on day ${s.month_day}` : ''
+}
+/** The first date on or after `from` that is day `day` of its month (31 = the month's last day). */
+function onDay(from: string, day: number) {
+  const [y, m, d] = from.split('-').map(Number)
+  if (Math.min(day, daysIn(y, m)) >= d) return isoOf(y, m, Math.min(day, daysIn(y, m)))
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1
+  return isoOf(ny, nm, Math.min(day, daysIn(ny, nm)))
+}
+/** The first nth (5 = last) weekday on or after `from`. */
+function onNth(from: string, nth: number, wd: number) {
+  const at = (y: number, m: number) => {
+    if (nth >= 5) { const last = daysIn(y, m); return last - ((isoWeekday(isoOf(y, m, last)) - wd + 7) % 7) }
+    return 1 + ((wd - isoWeekday(isoOf(y, m, 1)) + 7) % 7) + 7 * (nth - 1)
+  }
+  const [y, m, d] = from.split('-').map(Number)
+  if (at(y, m) >= d) return isoOf(y, m, at(y, m))
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1
+  return isoOf(ny, nm, at(ny, nm))
+}
+function legacyDay(start: string, next: string) {
+  const [y, m, d] = next.split('-').map(Number)
+  const sd = Number(start.slice(8, 10))
+  return sd > d && d === daysIn(y, m) ? sd : d
+}
+/** Every day of the month, the last day, and every 1st–4th/last weekday. */
+const ON_OPTIONS = [
+  ...Array.from({ length: 30 }, (_, i) => ({ value: `d:${i + 1}`, label: `Day ${i + 1} of the month`, hint: i + 1 === 29 ? '28th in February' : i + 1 === 30 ? '28th or 29th in February' : undefined, group: 'Day of the month' })),
+  { value: 'd:31', label: 'Last day of the month', hint: '31st, 30th, 28th…', group: 'Day of the month' },
+  ...[1, 2, 3, 4, 5].flatMap(n => WEEKDAYS.map(wd => ({ value: `n:${n}:${wd}`, label: `The ${nthName(n, wd)}`, group: 'Weekday' }))),
+]
 
 export default function Subscriptions() {
   const { home, currencies } = useApp()
@@ -122,7 +161,7 @@ function CalendarFeed() {
 }
 
 export function SubForm({ sub, onClose, onSaved }: { sub: Partial<Subscription>; onClose: () => void; onSaved: (s: Subscription) => void }) {
-  const { settings, acctById } = useApp()
+  const { settings, acctById, categories } = useApp()
   const { toast } = useToast()
   const [f, setF] = useState({
     name: sub.name || '', kind: (sub.kind || 'expense') as Kind, amount: sub.amount ?? null as number | null, amount_max: sub.amount_max || 0, currency: sub.currency || settings?.home_currency || 'EUR',
@@ -130,7 +169,28 @@ export function SubForm({ sub, onClose, onSaved }: { sub: Partial<Subscription>;
     payee: sub.payee || '', description: sub.description || '', freq: (sub.freq || 'monthly') as Freq, every: sub.every || 1, start_date: sub.start_date || '', next_date: sub.next_date || todayISO(),
     end_date: sub.end_date || '', mode: (sub.mode || 'remind') as SubMode, notify_days: sub.notify_days ?? 2, match_text: sub.match_text || '', url: sub.url || '', icon: sub.icon || '', notes: sub.notes || '', active: sub.active ?? true,
     weekend: (sub.weekend || '') as Subscription['weekend'], nth: sub.nth || 0, max_count: sub.max_count || 0,
+    // the picked day; older subscriptions take the day of their next date (or
+    // the start date's when the next one was cut short by a short month)
+    month_day: sub.nth ? 0 : sub.month_day || legacyDay(sub.start_date || '', sub.next_date || todayISO()),
+    weekday: sub.weekday || isoWeekday(sub.start_date || sub.next_date || todayISO()),
   })
+  // "On" moves Next due to the first matching date on or after this one (the
+  // saved next date, or the one typed into Next due)
+  const [base, setBase] = useState(sub.next_date || todayISO())
+  const pickOn = (v: string) => {
+    const [k, a, b] = v.split(':')
+    if (k === 'd') setF(x => ({ ...x, nth: 0, month_day: Number(a), next_date: onDay(base, Number(a)) }))
+    else setF(x => ({ ...x, nth: Number(a), weekday: Number(b), month_day: 0, next_date: onNth(base, Number(a), Number(b)) }))
+  }
+  // typing a Next due date keeps the kind of "On" but takes its day from the date
+  const setNext = (d: string) => {
+    setBase(d || todayISO())
+    if (!d) { set('next_date', d); return }
+    const [y, m, day] = d.split('-').map(Number)
+    setF(x => x.nth
+      ? { ...x, next_date: d, weekday: isoWeekday(d), nth: x.nth === 5 && day + 7 > daysIn(y, m) ? 5 : nthOf(d) }
+      : { ...x, next_date: d, month_day: x.month_day >= 31 && day === daysIn(y, m) ? 31 : day })
+  }
   const [range, setRange] = useState(sub.amount_max ? true : false)
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF(x => ({ ...x, [k]: v }))
   const save = async (e: React.FormEvent) => {
@@ -142,13 +202,14 @@ export function SubForm({ sub, onClose, onSaved }: { sub: Partial<Subscription>;
     } catch (err) { toast((err as Error).message, 'err') }
   }
   const acct = acctById(f.account_id)
+  const catIcon = categories.find(c => c.id === f.category_id)?.icon || ''
   return (
     <Modal title={sub.id ? `Edit ${sub.name}` : 'New subscription or bill'} onClose={onClose} size="lg">
       <form onSubmit={save} className="grid" style={{ gap: 12 }}>
         <KindTabs value={f.kind} onChange={k => set('kind', k)} />
         <div className="two-col tight">
           <Field label="Name"><input value={f.name} onChange={e => set('name', e.target.value)} autoFocus placeholder="Netflix, Rent, Salary…" required /></Field>
-          <Field label="Icon"><input value={f.icon} onChange={e => set('icon', e.target.value)} placeholder="from the category" maxLength={4} /></Field>
+          <Field label="Icon" group><IconInput value={f.icon} onChange={v => set('icon', v)} fallback={catIcon} placeholder={catIcon ? `${catIcon} from the category — type to search` : 'from the category — type to search'} /></Field>
         </div>
         <div className="two-col tight">
           <Field label={range ? 'From' : 'Amount'} group><div className="input-group"><MoneyInput value={f.amount} code={f.currency} onChange={v => set('amount', v)} /><CurrencySelect value={f.currency} onChange={v => set('currency', v)} /></div></Field>
@@ -159,13 +220,9 @@ export function SubForm({ sub, onClose, onSaved }: { sub: Partial<Subscription>;
           <span>Every</span><input type="number" min={1} value={f.every} onChange={e => set('every', Math.max(1, Number(e.target.value)))} style={{ width: 70 }} />
           <Segmented value={f.freq} onChange={v => set('freq', v)} options={[{ value: 'daily', label: 'days' }, { value: 'weekly', label: 'weeks' }, { value: 'monthly', label: 'months' }, { value: 'yearly', label: 'years' }]} />
         </div>
-        {f.freq === 'monthly' && f.next_date && (
-          <Field label="On" group>
-            <Select value={String(f.nth)} onChange={v => set('nth', Number(v))} options={[
-              { value: '0', label: `Day ${Number(f.next_date.slice(8, 10))} of the month` },
-              { value: String(nthOf(f.next_date)), label: `The ${nthName(nthOf(f.next_date), f.next_date)}` },
-              { value: '5', label: `The ${nthName(5, f.next_date)}` },
-            ].filter((o, i, a) => a.findIndex(x => x.value === o.value) === i)} />
+        {f.freq === 'monthly' && (
+          <Field label="On" group help="Type to filter: 30, last, friday…">
+            <Select value={f.nth ? `n:${f.nth}:${f.weekday}` : `d:${f.month_day}`} onChange={pickOn} options={ON_OPTIONS} ariaLabel="Day of the month" />
           </Field>
         )}
         <div className="two-col tight">
@@ -175,7 +232,7 @@ export function SubForm({ sub, onClose, onSaved }: { sub: Partial<Subscription>;
           </Field>
         </div>
         <div className="three-col tight" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
-          <Field label="Next due"><input type="date" value={f.next_date} onChange={e => set('next_date', e.target.value)} required /></Field>
+          <Field label="Next due"><input type="date" value={f.next_date} onChange={e => setNext(e.target.value)} required /></Field>
           <Field label="Started"><input type="date" value={f.start_date} onChange={e => set('start_date', e.target.value)} /></Field>
           <Field label="Ends (optional)"><input type="date" value={f.end_date} onChange={e => set('end_date', e.target.value)} /></Field>
         </div>
@@ -225,7 +282,7 @@ export function SubscriptionPage() {
   const del = async () => { if (confirm(`Delete ${s.name}? Its payments stay, unlinked.`)) { await api.del(`${V1}/subscriptions/${s.id}`); navigate('/subscriptions') } }
   return (
     <>
-      <PageHeader title={<>{s.icon || s.category_icon || '↻'} {s.name}</>} sub={<>{fmtMoney(s.amount, s.currency, dec)}{s.amount_max > s.amount ? `–${fmtMoney(s.amount_max, s.currency, dec)}` : ''} {every(s)}{s.nth ? ` on the ${nthName(s.nth, s.next_date)}` : ''} · {MODE_LABEL[s.mode]}{s.account_name ? ` · ${s.account_name}` : ''}</>} actions={<>
+      <PageHeader title={<>{s.icon || s.category_icon || '↻'} {s.name}</>} sub={<>{fmtMoney(s.amount, s.currency, dec)}{s.amount_max > s.amount ? `–${fmtMoney(s.amount_max, s.currency, dec)}` : ''} {every(s)}{monthlyOn(s)} · {MODE_LABEL[s.mode]}{s.account_name ? ` · ${s.account_name}` : ''}</>} actions={<>
         {s.active && <button className="btn primary" onClick={() => act('pay')}>Pay now</button>}
         {s.active && <button className="btn" onClick={() => act('skip')}>Skip this one</button>}
         <button className="btn" onClick={() => setEditing(true)}>Edit</button>

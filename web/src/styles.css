@@ -407,6 +407,9 @@ html, body { overflow-x: hidden; }
 .cat-btn.child .n::before { content: "› "; opacity: .5; }
 
 /* tags input */
+.icon-input { position: relative; }
+.icon-suggest { max-height: 300px; overflow-y: auto; min-width: 240px; }
+.icon-suggest .em { display: inline-block; width: 1.6em; font-size: 18px; text-align: center; }
 .tag-input { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; background: var(--surface); position: relative; }
 .tag-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .tag-input input { border: 0; padding: 3px 2px; flex: 1; min-width: 80px; box-shadow: none !important; }

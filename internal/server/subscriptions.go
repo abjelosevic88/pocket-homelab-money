@@ -69,7 +69,12 @@ func subPeriodDays(freq string, every int) float64 {
 	return 30.44 * float64(every)
 }
 
+// anchorOf is the day of the month a payment falls on: the one picked (31 =
+// the last day, every month) or else the start date's.
 func anchorOf(x *store.Subscription) int {
+	if x.Freq == "monthly" && x.MonthDay > 0 {
+		return x.MonthDay
+	}
 	d := x.StartDate
 	if d == "" {
 		d = x.NextDate
@@ -90,8 +95,12 @@ func nthWeekday(y int, m time.Month, nth int, wd time.Weekday) time.Time {
 	return first.AddDate(0, 0, (int(wd)-int(first.Weekday())+7)%7+7*(nth-1))
 }
 
-// anchorWeekday is the weekday a "2nd Tuesday" subscription falls on (its start date's).
+// anchorWeekday is the weekday a "2nd Tuesday" subscription falls on: the one
+// picked (1 = Monday … 7 = Sunday) or else the start date's.
 func anchorWeekday(x *store.Subscription) time.Weekday {
+	if x.Weekday >= 1 && x.Weekday <= 7 {
+		return time.Weekday(x.Weekday % 7)
+	}
 	d := firstNonEmpty(x.StartDate, x.NextDate)
 	if t, err := store.ParseDate(d); err == nil {
 		return t.Weekday()
@@ -543,6 +552,8 @@ type subIn struct {
 	Active      *bool     `json:"active"`
 	Weekend     *string   `json:"weekend"`
 	Nth         *int      `json:"nth"`
+	MonthDay    *int      `json:"month_day"`
+	Weekday     *int      `json:"weekday"`
 	MaxCount    *int      `json:"max_count"`
 	DoneCount   *int      `json:"done_count"`
 }
@@ -604,6 +615,12 @@ func (s *Server) applySub(ctx context.Context, in *subIn, x *store.Subscription)
 	if in.Nth != nil {
 		x.Nth = *in.Nth
 	}
+	if in.MonthDay != nil {
+		x.MonthDay = *in.MonthDay
+	}
+	if in.Weekday != nil {
+		x.Weekday = *in.Weekday
+	}
 	if in.MaxCount != nil {
 		x.MaxCount = max(0, *in.MaxCount)
 	}
@@ -615,6 +632,23 @@ func (s *Server) applySub(ctx context.Context, in *subIn, x *store.Subscription)
 	}
 	if x.Nth < 0 || x.Nth > 5 || x.Freq != "monthly" {
 		x.Nth = 0
+	}
+	if x.MonthDay < 0 || x.MonthDay > 31 || x.Freq != "monthly" || x.Nth > 0 {
+		x.MonthDay = 0
+	}
+	if x.Weekday < 0 || x.Weekday > 7 || x.Nth == 0 {
+		x.Weekday = 0
+	}
+	// "day 30" / "last day": the next date must itself be that day of its month
+	if x.MonthDay > 0 {
+		if t, err := store.ParseDate(x.NextDate); err == nil {
+			c := time.Date(t.Year(), t.Month(), min(x.MonthDay, daysIn(t.Year(), t.Month())), 0, 0, 0, 0, time.UTC)
+			if c.Before(t) {
+				m := time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+				c = time.Date(m.Year(), m.Month(), min(x.MonthDay, daysIn(m.Year(), m.Month())), 0, 0, 0, 0, time.UTC)
+			}
+			x.NextDate = c.Format("2006-01-02")
+		}
 	}
 	// "2nd Tuesday": the next date must itself be that weekday of its month
 	if x.Nth > 0 {

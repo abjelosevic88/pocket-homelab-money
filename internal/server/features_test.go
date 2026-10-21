@@ -25,6 +25,18 @@ func TestSchedules(t *testing.T) {
 	if got := step(x, "2026-10-27"); got != "2026-11-24" {
 		t.Errorf("last Tuesday = %s", got)
 	}
+	// a picked weekday wins over the start date's: 1st Friday (5)
+	x.Nth, x.Weekday = 1, 5
+	if got := step(x, "2026-10-02"); got != "2026-11-06" {
+		t.Errorf("1st Friday = %s", got)
+	}
+	// the last day of every month (31), whatever day it started on
+	l := &store.Subscription{Freq: "monthly", Every: 1, MonthDay: 31, StartDate: "2026-01-15", NextDate: "2027-01-31"}
+	for _, want := range []string{"2027-02-28", "2027-03-31", "2027-04-30"} {
+		if l.NextDate = step(l, l.NextDate); l.NextDate != want {
+			t.Errorf("last day → %s, want %s", l.NextDate, want)
+		}
+	}
 	// 2026-10-17 is a Saturday
 	w := &store.Subscription{Freq: "monthly", Every: 1, StartDate: "2026-10-17", NextDate: "2026-10-17", Weekend: "before"}
 	if d := dueOf(w); d != "2026-10-16" {
@@ -220,5 +232,27 @@ func TestCompatTemplateUseCount(t *testing.T) {
 	}
 	if len(list.Data) != 2 || list.Data[0].Name != "Pekara" || list.Data[0].UseCount != 2 || list.Data[0].LastUsed == nil || list.Data[1].UseCount != 0 {
 		t.Errorf("templates after uses: %+v", list.Data)
+	}
+}
+
+func TestSubscriptionPickedDay(t *testing.T) {
+	c := newTestServer(t)
+	var acct store.Account
+	c.do("POST", "/api/v1/accounts", map[string]any{"name": "Main", "currency": "EUR"}, &acct)
+	var sub store.Subscription
+	if code := c.do("POST", "/api/v1/subscriptions", map[string]any{"name": "Fee", "amount": 767, "currency": "EUR", "account_id": acct.ID, "freq": "monthly", "next_date": "2026-10-21", "month_day": 31, "mode": "remind"}, &sub); code != 201 {
+		t.Fatal(code)
+	}
+	if sub.NextDate != "2026-10-31" || sub.MonthDay != 31 {
+		t.Fatalf("last day: next %s day %d", sub.NextDate, sub.MonthDay)
+	}
+	c.do("PUT", "/api/v1/subscriptions/"+itoa(sub.ID), map[string]any{"month_day": 5}, &sub)
+	if sub.NextDate != "2026-11-05" {
+		t.Fatalf("day 5 after Oct 31 = %s", sub.NextDate)
+	}
+	// 3rd Wednesday: the day is dropped, the weekday kept
+	c.do("PUT", "/api/v1/subscriptions/"+itoa(sub.ID), map[string]any{"nth": 3, "weekday": 3}, &sub)
+	if sub.NextDate != "2026-11-18" || sub.MonthDay != 0 || sub.Weekday != 3 {
+		t.Fatalf("3rd Wednesday: next %s day %d weekday %d", sub.NextDate, sub.MonthDay, sub.Weekday)
 	}
 }

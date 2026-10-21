@@ -7,7 +7,7 @@ import type { Category, Condition, Kind, Rule, Tag, Template, Transaction } from
 import { Card, Empty, Field, Loading, Modal, Segmented, clickRow, ownClicks, useAsync, useToast } from '../components/ui'
 import { Select } from '../components/Select'
 import { CurrencySelect, MoneyInput } from '../components/Money'
-import { AccountSelect, CategorySelect, KindTabs, TagInput } from '../components/pickers'
+import { AccountSelect, CategorySelect, IconInput, KindTabs, TagInput } from '../components/pickers'
 import { TxList } from '../components/TxList'
 
 // ---------------- categories ----------------
@@ -70,7 +70,7 @@ function CategoryModal({ cat, parents, onClose, onSaved }: { cat: Partial<Catego
   return (
     <Modal title={cat.id ? `Edit ${cat.name}` : 'New category'} onClose={onClose}>
       <form onSubmit={save} className="grid" style={{ gap: 12 }}>
-        <div className="row"><input value={f.icon} onChange={e => setF({ ...f, icon: e.target.value })} style={{ width: 64, textAlign: 'center', fontSize: 20 }} maxLength={4} placeholder="🙂" aria-label="Emoji" /><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Name" autoFocus required /></div>
+        <div className="row"><div style={{ width: 120, flex: 'none' }}><IconInput value={f.icon} onChange={v => setF({ ...f, icon: v })} placeholder="🙂 search" /></div><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="Name" autoFocus required /></div>
         <div className="chips">{EMOJI.map(e => <button type="button" key={e} className={`chip sm ${f.icon === e ? 'active' : ''}`} onClick={() => setF({ ...f, icon: e })}>{e}</button>)}</div>
         <Field label="Used for" group><Segmented value={f.kind} onChange={v => setF({ ...f, kind: v })} options={[{ value: 'expense', label: 'Expenses' }, { value: 'income', label: 'Income' }, { value: 'both', label: 'Both' }]} /></Field>
         <Field label="Inside (optional)" group><Select value={f.parent_id ? String(f.parent_id) : ''} onChange={v => setF({ ...f, parent_id: v ? Number(v) : null })} options={parents.map(p => ({ value: String(p.id), label: `${p.icon || '•'} ${p.name}` }))} clearLabel="Top level" placeholder="Top level" /></Field>

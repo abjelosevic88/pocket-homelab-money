@@ -166,7 +166,7 @@ func (s *Store) TemplateByExternalID(ctx context.Context, ownerID int64, ext str
 
 const subCols = `s.id, s.owner_id, s.name, s.kind, s.amount, s.amount_max, s.currency, s.account_id, s.to_account_id, s.category_id, s.tags, s.payee, s.description,
 	s.freq, s.every, s.start_date, s.next_date, s.end_date, s.mode, s.notify_days, s.match_text, s.url, s.icon, s.notes, s.active, s.notified_for, s.external_id,
-	s.weekend, s.nth, s.max_count, s.done_count, s.created_at, s.updated_at, COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(a.name, ''),
+	s.weekend, s.nth, s.month_day, s.weekday, s.max_count, s.done_count, s.created_at, s.updated_at, COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(a.name, ''),
 	COALESCE((SELECT MAX(date) FROM transactions t WHERE t.subscription_id = s.id), ''),
 	COALESCE((SELECT amount FROM transactions t WHERE t.subscription_id = s.id ORDER BY date DESC, id DESC LIMIT 1), 0),
 	(SELECT COUNT(1) FROM transactions t WHERE t.subscription_id = s.id)`
@@ -179,7 +179,7 @@ func scanSub(row interface{ Scan(...any) error }) (*Subscription, error) {
 	var active int
 	err := row.Scan(&x.ID, &x.OwnerID, &x.Name, &x.Kind, &x.Amount, &x.AmountMax, &x.Currency, &x.AccountID, &x.ToAccountID, &x.CategoryID, &tags, &x.Payee, &x.Description,
 		&x.Freq, &x.Every, &x.StartDate, &x.NextDate, &x.EndDate, &x.Mode, &x.NotifyDays, &x.MatchText, &x.URL, &x.Icon, &x.Notes, &active, &x.NotifiedFor, &x.ExternalID,
-		&x.Weekend, &x.Nth, &x.MaxCount, &x.DoneCount, &x.CreatedAt, &x.UpdatedAt, &x.CategoryName, &x.CategoryIcon, &x.AccountName, &x.LastPaid, &x.LastAmount, &x.PaidCount)
+		&x.Weekend, &x.Nth, &x.MonthDay, &x.Weekday, &x.MaxCount, &x.DoneCount, &x.CreatedAt, &x.UpdatedAt, &x.CategoryName, &x.CategoryIcon, &x.AccountName, &x.LastPaid, &x.LastAmount, &x.PaidCount)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -218,11 +218,11 @@ func (s *Store) GetSubscription(ctx context.Context, id int64) (*Subscription, e
 // CreateSubscription inserts one.
 func (s *Store) CreateSubscription(ctx context.Context, x *Subscription) error {
 	res, err := s.DB.ExecContext(ctx, `INSERT INTO subscriptions (owner_id, name, kind, amount, amount_max, currency, account_id, to_account_id, category_id, tags, payee, description,
-		freq, every, start_date, next_date, end_date, mode, notify_days, match_text, url, icon, notes, active, external_id, weekend, nth, max_count, done_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		freq, every, start_date, next_date, end_date, mode, notify_days, match_text, url, icon, notes, active, external_id, weekend, nth, month_day, weekday, max_count, done_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		x.OwnerID, x.Name, x.Kind, x.Amount, x.AmountMax, x.Currency, nullI(x.AccountID), nullI(x.ToAccountID), nullI(x.CategoryID), jsonList(x.Tags), x.Payee, x.Description,
 		x.Freq, x.Every, x.StartDate, x.NextDate, x.EndDate, x.Mode, x.NotifyDays, x.MatchText, x.URL, x.Icon, x.Notes, boolInt(x.Active), x.ExternalID,
-		x.Weekend, x.Nth, x.MaxCount, x.DoneCount)
+		x.Weekend, x.Nth, x.MonthDay, x.Weekday, x.MaxCount, x.DoneCount)
 	if err != nil {
 		return err
 	}
@@ -234,10 +234,10 @@ func (s *Store) CreateSubscription(ctx context.Context, x *Subscription) error {
 func (s *Store) UpdateSubscription(ctx context.Context, x *Subscription) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE subscriptions SET name = ?, kind = ?, amount = ?, amount_max = ?, currency = ?, account_id = ?, to_account_id = ?, category_id = ?, tags = ?,
 		payee = ?, description = ?, freq = ?, every = ?, start_date = ?, next_date = ?, end_date = ?, mode = ?, notify_days = ?, match_text = ?, url = ?, icon = ?, notes = ?,
-		active = ?, notified_for = ?, external_id = ?, weekend = ?, nth = ?, max_count = ?, done_count = ?, updated_at = ? WHERE id = ?`,
+		active = ?, notified_for = ?, external_id = ?, weekend = ?, nth = ?, month_day = ?, weekday = ?, max_count = ?, done_count = ?, updated_at = ? WHERE id = ?`,
 		x.Name, x.Kind, x.Amount, x.AmountMax, x.Currency, nullI(x.AccountID), nullI(x.ToAccountID), nullI(x.CategoryID), jsonList(x.Tags),
 		x.Payee, x.Description, x.Freq, x.Every, x.StartDate, x.NextDate, x.EndDate, x.Mode, x.NotifyDays, x.MatchText, x.URL, x.Icon, x.Notes,
-		boolInt(x.Active), x.NotifiedFor, x.ExternalID, x.Weekend, x.Nth, x.MaxCount, x.DoneCount, Now(), x.ID)
+		boolInt(x.Active), x.NotifiedFor, x.ExternalID, x.Weekend, x.Nth, x.MonthDay, x.Weekday, x.MaxCount, x.DoneCount, Now(), x.ID)
 	return err
 }
 

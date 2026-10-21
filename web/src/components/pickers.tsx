@@ -116,3 +116,86 @@ export function CatIcon({ t, size = '' }: { t: Pick<Transaction, 'kind' | 'categ
   const ico = t.kind === 'transfer' ? '⇄' : t.category_icon || (t.kind === 'income' ? '💰' : '•')
   return <span className={`cat-ico ${size} ${t.kind}`}>{ico}</span>
 }
+
+/** Emoji with words to find them by (English and Bosnian/Croatian/Serbian, no diacritics). */
+const EMOJI_WORDS: [string, string][] = [
+  ['🛒', 'groceries shop market supermarket hrana namirnice nabavka'], ['🥐', 'bakery bread pekara kifla hljeb'], ['🍽️', 'restaurant dining food restoran rucak vecera'],
+  ['☕', 'coffee cafe kafa kafic'], ['🍺', 'beer pivo bar'], ['🍷', 'wine vino alcohol alkohol'], ['🍕', 'pizza fast food brza hrana'], ['🛵', 'delivery dostava wolt glovo'],
+  ['🚗', 'car auto vozilo automobil'], ['⛽', 'fuel gas petrol gorivo benzin dizel pumpa'], ['🅿️', 'parking'], ['🚇', 'transport metro bus tram prevoz'], ['🚕', 'taxi uber cab'],
+  ['🛣️', 'toll road putarina autoput'], ['🔧', 'repair service servis majstor alat tool'], ['🛞', 'tyres tires gume'], ['🧼', 'car wash pranje'],
+  ['✈️', 'flight plane travel avion let putovanje'], ['🏨', 'hotel smjestaj accommodation airbnb'], ['🧳', 'trip luggage putovanje odmor holiday vacation'], ['🏖️', 'beach more plaza ljeto'],
+  ['🏠', 'home house rent kuca stan kirija'], ['🧾', 'bill invoice racun naknada fee'], ['⚡', 'electricity power struja elektro'], ['💧', 'water voda vodovod'],
+  ['🔥', 'heating gas grijanje toplana plin'], ['🌐', 'internet wifi net'], ['📱', 'phone mobile telefon mobitel app aplikacija'], ['📺', 'tv television kablovska streaming'],
+  ['🎬', 'netflix movies cinema film bioskop kino'], ['🎧', 'music spotify muzika'], ['▶️', 'youtube video'], ['☁️', 'cloud icloud storage google drive dropbox oblak'],
+  ['💻', 'computer laptop software tech kompjuter racunar'], ['🖥️', 'server hosting domain domena vps'], ['🤖', 'ai openai chatgpt claude'], ['🎮', 'games gaming igre playstation steam'],
+  ['🏦', 'bank banka racun account fee naknada odrzavanje'], ['💳', 'card kartica credit kredit debit'], ['💶', 'euro eur devizni cash gotovina'], ['💵', 'cash dollar money novac pare'],
+  ['💰', 'salary plata income prihod wage'], ['💼', 'work business posao firma sp'], ['🏢', 'company office tax porez knjigovodja'], ['📈', 'investment invest stocks dionice etf'],
+  ['🐷', 'savings stednja ustedjevina'], ['🪙', 'crypto bitcoin kripto coin'], ['🤝', 'loan debt dug pozajmica'], ['🧮', 'accounting knjigovodstvo'],
+  ['💊', 'pharmacy medicine apoteka lijek ljekovi'], ['🩺', 'doctor health ljekar doktor zdravlje'], ['🦷', 'dentist zubar'], ['🧘', 'therapy terapija yoga psiholog'],
+  ['🏋️', 'gym fitness sport teretana'], ['⚽', 'football fudbal sport'], ['🚴', 'bike bicikl cycling'], ['🏊', 'swimming bazen plivanje'],
+  ['👕', 'clothes clothing odjeca fashion'], ['👟', 'shoes obuca patike'], ['💄', 'beauty cosmetics kozmetika'], ['💇', 'hair haircut frizer sisanje'],
+  ['🧒', 'kids children djeca dijete'], ['🎓', 'school education skola fakultet kurs'], ['📚', 'books knjige reading'], ['✏️', 'office supplies pribor'],
+  ['🐾', 'pets ljubimci vet veterinar'], ['🐶', 'dog pas'], ['🐱', 'cat macka'], ['🌾', 'garden basta selo vikendica'], ['🪴', 'plants biljke cvijece'],
+  ['🎁', 'gift poklon donation donacija'], ['❤️', 'charity love'], ['🎉', 'party zabava proslava rodjendan birthday'], ['💍', 'wedding vjencanje svadba'],
+  ['🛡️', 'insurance osiguranje'], ['🏛️', 'government drzava takse administration'], ['⚖️', 'legal lawyer advokat notar'], ['📦', 'other ostalo misc razno package paket'],
+  ['🔁', 'transfer prenos'], ['🛠️', 'maintenance odrzavanje'], ['🧹', 'cleaning ciscenje'], ['🛋️', 'furniture namjestaj'], ['🔌', 'electronics uredjaji device'],
+  ['🎸', 'guitar gitara instrument'], ['📰', 'news novine magazine subscription pretplata'], ['🗓️', 'subscription pretplata monthly mjesecno'], ['🚬', 'cigarettes cigare duhan'],
+]
+
+function foldText(s: string) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'dj') }
+function hasEmoji(s: string) { return /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s) }
+
+/** Icon field with autocomplete: type a word ("bank", "struja") or a category
+ *  name and pick from the icons your categories use and a built-in list.
+ *  An emoji typed or pasted is kept as it is; other text is only a search. */
+export function IconInput({ value, onChange, placeholder, fallback }: { value: string; onChange: (icon: string) => void; placeholder?: string; fallback?: string }) {
+  const { categories } = useApp()
+  const [q, setQ] = useState<string | null>(null) // null = not editing
+  const [hl, setHl] = useState(0)
+  const options = useMemo(() => {
+    const byIcon = new Map<string, { emoji: string; label: string; words: string }>()
+    if (fallback) byIcon.set(fallback, { emoji: fallback, label: 'from the category', words: '' })
+    for (const c of categories) {
+      if (!c.icon || c.archived) continue
+      const o = byIcon.get(c.icon)
+      if (o) { if (!o.label.includes(c.name)) { o.label = o.label === 'from the category' ? `${o.label} · ${c.name}` : `${o.label}, ${c.name}`; o.words += ' ' + foldText(c.name) } }
+      else byIcon.set(c.icon, { emoji: c.icon, label: c.name, words: foldText(c.name) })
+    }
+    const all = [...byIcon.values()]
+    for (const [emoji, words] of EMOJI_WORDS) {
+      const o = byIcon.get(emoji)
+      if (o) o.words += ' ' + words // a category's icon is found by its built-in words too
+      else all.push({ emoji, label: words.split(' ').slice(0, 3).join(', '), words })
+    }
+    return all
+  }, [categories, fallback])
+  const sugg = useMemo(() => {
+    const s = foldText((q || '').trim())
+    if (!s || hasEmoji(s)) return options.slice(0, 40)
+    return options.filter(o => o.words.split(' ').some(w => w.startsWith(s)) || o.words.includes(s)).slice(0, 40)
+  }, [q, options])
+  const pick = (emoji: string) => { onChange(emoji); setQ(null) }
+  return (
+    <div className="icon-input" onBlur={() => setTimeout(() => setQ(null), 150)}>
+      <input value={q ?? value} placeholder={placeholder} aria-label="Icon" autoComplete="off"
+        onFocus={() => { setQ(''); setHl(0) }}
+        onChange={e => { const v = e.target.value; setQ(v); setHl(0); if (!v || hasEmoji(v)) onChange(v.trim()) }}
+        onKeyDown={e => {
+          if (q === null) return
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setHl(h => Math.max(0, Math.min(sugg.length - 1, h + (e.key === 'ArrowDown' ? 1 : -1)))) }
+          if (e.key === 'Enter' && sugg[hl] && q && !hasEmoji(q)) { e.preventDefault(); pick(sugg[hl].emoji) }
+          if (e.key === 'Escape' && q !== '') { e.stopPropagation(); setQ('') }
+        }} />
+      {q !== null && sugg.length > 0 && (
+        <div className="suggest icon-suggest" role="listbox">
+          {value && !q && <div className="r" onMouseDown={e => { e.preventDefault(); pick('') }}><span className="muted">✕ No own icon</span></div>}
+          {sugg.map((o, i) => (
+            <div key={o.emoji} role="option" aria-selected={i === hl} className={`r ${i === hl ? 'hl' : ''}`} onMouseEnter={() => setHl(i)} onMouseDown={e => { e.preventDefault(); pick(o.emoji) }}>
+              <span><span className="em">{o.emoji}</span> {o.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

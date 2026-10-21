@@ -299,6 +299,8 @@ type Subscription struct {
 	Active      bool     `json:"active"`
 	Weekend     string   `json:"weekend"`
 	Nth         int      `json:"nth"`
+	MonthDay    int      `json:"month_day"` // monthly on this day, 31 = the last day; 0 = the start date's day
+	Weekday     int      `json:"weekday"`   // with Nth: 1 = Monday … 7 = Sunday; 0 = the start date's weekday
 	MaxCount    int      `json:"max_count"`
 	DoneCount   int      `json:"done_count"`
 	NotifiedFor string   `json:"notified_for"`

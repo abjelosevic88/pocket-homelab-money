@@ -11,6 +11,7 @@ import { Line } from '../components/Charts'
 import { TxList } from '../components/TxList'
 import { TxModal } from '../components/TxEditor'
 import { Select } from '../components/Select'
+import { IconInput } from '../components/pickers'
 
 const COLORS = ['#047857', '#2563eb', '#7c3aed', '#db2777', '#d97706', '#0d9488', '#475569', '#dc2626']
 
@@ -78,7 +79,7 @@ export function AccountForm({ account, onClose, onSaved }: { account?: Account; 
         </>}
         {f.kind === 'credit' && <Field label="Credit limit"><MoneyInput value={f.credit_limit} code={f.currency} onChange={v => set('credit_limit', v ?? 0)} /></Field>}
         <div className="two-col tight">
-          <Field label="Icon (emoji)"><input value={f.icon} onChange={e => set('icon', e.target.value)} placeholder={KIND_ICON[f.kind]} maxLength={4} /></Field>
+          <Field label="Icon (emoji)" group><IconInput value={f.icon} onChange={v => set('icon', v)} placeholder={`${KIND_ICON[f.kind]} — type to search`} /></Field>
           <Field label="Colour" group><div className="row wrap">{COLORS.map(c => <button type="button" key={c} className={`color-dot ${f.color === c ? 'active' : ''}`} style={{ background: c }} onClick={() => set('color', c)} aria-label={c} />)}</div></Field>
         </div>
         <label className="row"><input type="checkbox" checked={f.include_net_worth} onChange={e => set('include_net_worth', e.target.checked)} style={{ width: 'auto' }} /> Count in net worth</label>
