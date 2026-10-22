@@ -163,8 +163,8 @@ export function AccountPage() {
       <PageHeader title={<>{a.icon || KIND_ICON[a.kind]} {a.name}</>} sub={<>{KIND_LABEL[a.kind]}{a.institution ? ` · ${a.institution}` : ''}{a.number ? ` · ${a.number}` : ''}</>} actions={<>
         <button type="button" className="btn primary" onClick={() => setAdding(true)} disabled={a.role === 'viewer'}><Icon name="plus" size={16} />Transaction</button>
         <button type="button" className="btn" onClick={() => setReconcile(true)} disabled={a.role === 'viewer'} title="Tell it what the bank says; the difference is booked">Balance check</button>
-        {a.role === 'owner' && <button type="button" className="btn" onClick={() => setSharing(true)}>Share</button>}
         {a.role === 'owner' && <button type="button" className="btn" onClick={() => setEditing(true)}>Edit</button>}
+        {a.role === 'owner' && <button type="button" className="btn account-share" onClick={() => setSharing(true)}><Icon name="share" size={16} /><span>Share</span></button>}
       </>} />
       <div className="stats">
         <div className="stat"><div className="n" style={{ color: a.balance < 0 ? 'var(--red-ink)' : undefined }}>{fmtMoney(a.balance, a.currency, dec)}</div><div className="l">Balance{a.currency !== home ? ` · ≈ ${fmtMoney(a.balance_home, home, decimalsOf(home, currencies))}` : ''}</div></div>

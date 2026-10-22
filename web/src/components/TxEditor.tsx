@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, upload, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { addDays, decimalsOf, fmtBytes, fmtMoney, todayISO } from '../lib/format'
-import type { Attachment, Category, Kind, Subscription, Transaction } from '../lib/types'
+import type { Attachment, Category, Kind, Subscription, Template, Transaction } from '../lib/types'
 
 interface Part { category_id: number | null; amount: number | null; note: string }
 import { Field, Modal, useDebounce, useToast } from './ui'
@@ -28,6 +28,18 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
   // the configured default, else the everyday account used most recently
   const recent = [...writable].filter(a => a.kind !== 'savings').sort((a, b) => (b.last_tx_date || '').localeCompare(a.last_tx_date || ''))[0]
   const defaultAcct = settings?.default_account_id && writable.some(a => a.id === settings.default_account_id) ? settings.default_account_id : recent?.id || writable[0]?.id || 0
+  const [templates, setTemplates] = useState<Template[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(!tx)
+  const [templatesError, setTemplatesError] = useState('')
+  const [templateId, setTemplateId] = useState(seed?.template_id || 0)
+  useEffect(() => {
+    if (tx) return
+    let live = true
+    api.get<Template[]>(`${V1}/templates`).then(items => { if (live) setTemplates(items) })
+      .catch(e => { if (live) setTemplatesError((e as Error).message) })
+      .finally(() => { if (live) setTemplatesLoading(false) })
+    return () => { live = false }
+  }, [tx])
   const [kind, setKind] = useState<Kind>(tx?.kind || seed?.kind || 'expense')
   const [accountId, setAccountId] = useState<number>(tx?.account_id || seed?.account_id || defaultAcct)
   const acct = acctById(accountId)
@@ -133,6 +145,33 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
     return []
   })
 
+  const chooseTemplate = (value: string) => {
+    const t = templates.find(t => String(t.id) === value)
+    setTemplateId(t?.id || 0)
+    if (!t) return
+    const nextAccount = t.account_id || accountId || defaultAcct
+    const nextCurrency = t.currency || acctById(nextAccount)?.currency || settings?.home_currency || 'EUR'
+    // Preserve an explicitly foreign template currency when changing accounts.
+    prevAcctCur.current = acctById(nextAccount)?.currency
+    setKind(t.kind)
+    setAccountId(nextAccount)
+    setCurrency(nextCurrency)
+    setAmount(t.amount)
+    setToAccountId(t.to_account_id)
+    setCategoryId(t.category_id)
+    touchedCat.current = true
+    setDescription(t.description || t.name)
+    setPayee(t.payee || '')
+    setTags(t.tags || [])
+    setNotes(t.notes || '')
+    setMore(Boolean(t.payee || t.notes))
+    setParts([])
+    setSubId(null)
+    setAccountAmount(null)
+    setToAmount(null)
+    setShowSugg(false)
+  }
+
   const pick = (s: Suggestion) => {
     setDescription(s.text)
     if (!touchedCat.current && s.category_id) {
@@ -156,7 +195,7 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
     }
     if (foreign && accountAmount) body.account_amount = accountAmount
     if (crossTransfer && toAmount) body.to_amount = toAmount
-    if (!tx && seed?.template_id) body.template_id = seed.template_id
+    if (!tx && templateId) body.template_id = templateId
     if (splitting) body.splits = parts.map(p => ({ category_id: p.category_id || 0, amount: p.amount || 0, note: p.note }))
     else if (tx?.splits?.length) body.splits = []
     try {
@@ -167,7 +206,7 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
       reloadAccounts()
       toast(tx ? 'Saved' : 'Added')
       onSaved(saved, again)
-      if (again && !tx) { setAmount(null); setAccountAmount(null); setDescription(''); setPayee(''); setNotes(''); setPending([]); touchedCat.current = false; setCategoryId(null) }
+      if (again && !tx) { setTemplateId(0); setParts([]); setSubId(null); setToAmount(null); setTags([]); setAmount(null); setAccountAmount(null); setDescription(''); setPayee(''); setNotes(''); setPending([]); touchedCat.current = false; setCategoryId(null) }
     } catch (e) { toast((e as Error).message, 'err') } finally { setBusy(false) }
   }
   const del = async () => {
@@ -192,7 +231,18 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
 
   return (
     <form onSubmit={e => { e.preventDefault(); save(false) }} className="grid" style={{ gap: 14 }}>
-      <KindTabs value={kind} onChange={k => { setKind(k); if (k === 'transfer') setCategoryId(null) }} />
+      <KindTabs value={kind} onChange={k => { setKind(k); setTemplateId(0); if (k === 'transfer') setCategoryId(null) }} />
+      {!tx && <div>
+        <Field label="Template" group help={templatesError || (templatesLoading ? 'Loading templates…' : templates.length ? 'Choose a template, then enter or change the amount. The saved template stays unchanged.' : 'No templates yet. Create one in Settings → Templates.')}>
+          <Select ariaLabel="Template" value={templateId ? String(templateId) : ''} onChange={chooseTemplate}
+            disabled={templatesLoading || !templates.length} placeholder="Choose a template…" clearLabel="No template"
+            options={templates.filter(t => !t.account_id || writable.some(a => a.id === t.account_id)).map(t => {
+              const cur = t.currency || acctById(t.account_id || accountId)?.currency || currency
+              return { value: String(t.id), label: t.name, group: t.kind === 'expense' ? 'Expenses' : t.kind === 'income' ? 'Income' : 'Transfers',
+                hint: [t.aliases, t.account_name, t.owner_name ? `Shared by ${t.owner_name}` : '', t.amount == null ? 'Enter amount' : fmtMoney(t.amount, cur, decimalsOf(cur, currencies))].filter(Boolean).join(' · ') }
+            })} />
+        </Field>
+      </div>}
       <div>
         <div className="big-amount">
           <MoneyInput value={amount} code={currency} onChange={setAmount} autoFocus={!tx} ariaLabel="Amount" />

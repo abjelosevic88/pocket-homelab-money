@@ -122,7 +122,8 @@
 .ac-row:has(.is-active) { background: var(--active); }
 .ac-row:has(.is-active) .cal-name { font-weight: 600; }
 .ac-due { margin-left: auto; }
-.create-caret { margin-left: auto; opacity: .8; }
+.create-btn .create-caret { margin-left: auto; opacity: .9; transition: transform .15s; }
+.create-btn[aria-expanded="true"] .create-caret { transform: rotate(180deg); }
 .range-title { display: flex; align-items: center; gap: 4px; }
 .crumb { background: none; border: 0; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
 .crumb:hover { color: var(--text); }
@@ -141,6 +142,7 @@
 .page-header h1 { font-size: 22px; letter-spacing: -.02em; }
 .page-header .sub { color: var(--muted); margin-top: 3px; }
 .page-header .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.page-header .account-share { margin-left: auto; }
 .ac-title { display: flex; align-items: center; gap: 12px; }
 .ac-title .ac-ico { width: 40px; height: 40px; border-radius: 11px; }
 @media (max-width: 767px) {
