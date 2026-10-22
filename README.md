@@ -129,3 +129,26 @@ Pocket Money is one of the Pocket Homelab apps — small single-binary servers t
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Choosing the AI provider
+
+In Settings, text generation defaults to **Automatic — prefer Pocket AI**.
+If Pocket Core reports an enabled link from this app to Pocket AI, generation
+uses Pocket AI's Claude account and model for the signed-in person. Otherwise,
+automatic mode uses that person's saved OpenAI-compatible configuration. You
+can explicitly select **Pocket AI** or **OpenAI**. Standalone installs need no
+Pocket Core or Pocket AI and continue to use their own API keys.
+
+Upgrade Pocket AI and this app together. On existing Core installations, approve
+the new **Generate text** (`inference:write`) link under **Core → Links**; new
+permissions are not automatically granted by an app update. The person's
+**Apps acting for me** switch must also be enabled. Existing opt-outs are
+preserved. Every generation request obtains a fresh, person-scoped token.
+
+Core outages and Pocket AI generation failures are reported without silently
+retrying against OpenAI. Pocket AI runs a text-only, temporary Claude session
+without tools, filesystem access, MCP servers or saved conversation history.
+The model and Claude account come from the person's Pocket AI settings.
+
+Dictation remains separate: it requires the person's OpenAI-compatible key and
+audio-transcription endpoint, even when Pocket AI generates text.

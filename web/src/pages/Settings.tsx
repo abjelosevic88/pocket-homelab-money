@@ -219,9 +219,12 @@ function AI() {
   if (!f) return <Loading />
   return (
     <div className="stack loose">
-      <Section title="OpenAI-compatible API" icon="sparkles" actions={badge(f.ai_configured)} sub="Turns free text and voice notes into transactions (several at once, in Bosnian or English), and answers questions about your money under Reports → Ask. Without a key every AI button stays hidden.">
+      <Section title="AI provider" icon="sparkles" actions={badge(f.ai_configured)} sub="Turns free text and voice notes into transactions (several at once, in Bosnian or English), and answers questions about your money under Reports → Ask. Pocket AI is preferred when connected through Core.">
         <div className="stack">
-          <Field label="API key"><input value={f.ai_key} onChange={e => setF({ ...f, ai_key: e.target.value })} autoComplete="off" /></Field>
+          <Field label="Text generation" help="Automatic prefers your enabled Pocket AI connection. Without one, it uses your saved OpenAI settings."><select value={f.ai_provider || 'auto'} onChange={e => setF({ ...f, ai_provider: e.target.value })}><option value="auto">Automatic — prefer Pocket AI</option><option value="pocket">Pocket AI</option><option value="openai">OpenAI / compatible API</option></select></Field>
+          <p className="muted small" role="status">Saved selection: {f.ai_status?.detail}. Pocket AI uses your Claude account and model from Pocket AI settings.</p>
+          <p className="muted small">OpenAI settings below apply when OpenAI is selected and are required separately for dictation. Pocket AI does not transcribe audio.</p>
+          <Field label="OpenAI API key"><input value={f.ai_key} onChange={e => setF({ ...f, ai_key: e.target.value })} autoComplete="off" /></Field>
           <div className="two-col tight">
             <Field label="Model" help={`Empty = ${f.ai_model_effective}`}><input value={f.ai_model} onChange={e => setF({ ...f, ai_model: e.target.value })} placeholder={f.ai_model_effective} /></Field>
             <Field label="Base URL" help="Empty = api.openai.com"><input value={f.ai_url} onChange={e => setF({ ...f, ai_url: e.target.value })} placeholder="https://api.openai.com/v1" /></Field>

@@ -42,7 +42,9 @@ func (s *Server) publicSettings(ctx context.Context, u *store.User, st store.Set
 		model = ai.DefaultModel
 	}
 	travelMode, travelVia, travelDetail := s.connStatus(ctx, u, "travel", "Pocket Travel", st.TravelMode, st.TravelToken, travelScopes)
+	_, aiStatus := s.inferenceFor(ctx, u.ID, st.AIProvider, st.AIKey != "")
 	return map[string]any{
+		"ai_provider": aiStatus.Provider, "ai_status": aiStatus, "ai_configured": aiStatus.Ready, "ai_transcribe_configured": st.AIKey != "",
 		"core_configured": s.core.Configured(),
 		"title":           st.Title, "home_currency": st.HomeCurrency, "date_format": st.DateFormat, "time_format": st.TimeFormat,
 		"week_start": st.WeekStart, "month_start_day": st.MonthStartDay, "fx_auto": st.FXAuto, "fx_provider": s.cfg.FXProvider,
@@ -51,7 +53,7 @@ func (s *Server) publicSettings(ctx context.Context, u *store.User, st store.Set
 		"firefly_mirror": st.FireflyMirror, "pico_url": st.PicoURL,
 		"notify_url": st.NotifyURL, "notify_format": st.NotifyFormat, "notify_hour": st.NotifyHour, "notify_digest": st.NotifyDigest, "notify_configured": st.NotifyURL != "",
 		"ai_url": st.AIURL, "ai_key": mask(st.AIKey), "ai_model": st.AIModel, "ai_model_effective": model, "ai_transcribe_model": st.AITranscribe,
-		"ai_language": st.AILanguage, "ai_context": st.AIContext, "ai_configured": st.AIKey != "",
+		"ai_language": st.AILanguage, "ai_context": st.AIContext,
 		"travel_url": st.TravelURL, "travel_public_url": st.TravelPublicURL, "travel_token": mask(st.TravelToken), "travel_configured": travelVia != "",
 		"travel_mode": travelMode, "travel_via": travelVia, "travel_detail": travelDetail, "travel_auto_tag": st.TravelAutoTag,
 		"max_upload_bytes": s.cfg.MaxUploadBytes, "setup_complete": st.SetupComplete, "base_url": s.cfg.BaseURL,
@@ -160,6 +162,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	flag("notify_digest", &cur.NotifyDigest, in.NotifyDigest)
 	url("ai_url", &cur.AIURL, in.AIURL)
 	secret("ai_key", &cur.AIKey, in.AIKey)
+	if keys["ai_provider"] {
+		if !validAIProvider(in.AIProvider) {
+			writeErr(w, 400, "choose automatic, Pocket AI or OpenAI")
+			return
+		}
+		cur.AIProvider = in.AIProvider
+	}
 	str("ai_model", &cur.AIModel, in.AIModel)
 	str("ai_transcribe_model", &cur.AITranscribe, in.AITranscribe)
 	str("ai_language", &cur.AILanguage, in.AILanguage)

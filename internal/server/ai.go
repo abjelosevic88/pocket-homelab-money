@@ -15,8 +15,9 @@ import (
 
 func (s *Server) aiOrFail(w http.ResponseWriter, r *http.Request) *clients {
 	c := s.clients(r.Context())
+	c.ai.Pocket, _ = s.inferenceFor(r.Context(), actorID(r.Context()), c.st.AIProvider, c.st.AIKey != "")
 	if !c.ai.Configured() {
-		writeErr(w, http.StatusBadRequest, "AI is not set up — add an API key under Settings → AI")
+		writeErr(w, http.StatusBadRequest, "connect Pocket AI or add an OpenAI key under Settings → AI")
 		return nil
 	}
 	return &c
@@ -161,8 +162,9 @@ Pick the closest existing category; reuse existing tags only when clearly implie
 
 // handleAITranscribe turns a voice note into text (the client then parses it).
 func (s *Server) handleAITranscribe(w http.ResponseWriter, r *http.Request) {
-	c := s.aiOrFail(w, r)
-	if c == nil {
+	c := s.clients(r.Context())
+	if c.ai.Key == "" {
+		writeErr(w, 400, "Dictation requires your OpenAI key in Settings → AI")
 		return
 	}
 	data, name, _, err := s.readUpload(r, "file")

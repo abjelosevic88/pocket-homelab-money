@@ -655,7 +655,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "MONEY",
 		Publishes: []string{"money.transaction_created", "money.transaction_deleted", "money.subscription_paid"},
 		Offers:    linkOffers,
-		Uses:      linkUses,
+		Uses:      append(append([]core.Use{}, linkUses...), core.InferenceUse()),
 	}
 	if s.cfg.BaseURL != "" {
 		// ask Core for a relying-party client so "Sign in with Pocket Core" needs no configuration

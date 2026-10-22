@@ -125,7 +125,7 @@ export function QuickAdd({ onAdded, autoFocus = false, placeholder }: { onAdded:
             if (e.key === 'Escape') { setText(''); setAiDrafts(null) }
           }}
           aria-label="Quick add" autoComplete="off" enterKeyHint="done" />
-        {ai && <button type="button" className={`btn ghost icon mic ${rec ? 'rec' : ''}`} onClick={toggleMic} title="Dictate" aria-label="Dictate" disabled={busy && !rec}><Icon name="mic" size={18} /></button>}
+        {settings?.ai_transcribe_configured && <button type="button" className={`btn ghost icon mic ${rec ? 'rec' : ''}`} onClick={toggleMic} title="Dictate" aria-label="Dictate" disabled={busy && !rec}><Icon name="mic" size={18} /></button>}
         {ai && text.trim() && !aiDrafts && <button type="button" className="btn ghost sm" onClick={() => askAI()} disabled={busy} title="Let the AI read it (several items, any wording)"><Icon name="sparkles" size={15} />AI</button>}
         <button type="button" className="btn primary" onClick={book} disabled={!ready || busy}>{busy ? '…' : shown.length > 1 ? `Add ${shown.length}` : 'Add'}</button>
       </div>
@@ -147,7 +147,7 @@ export function QuickAdd({ onAdded, autoFocus = false, placeholder }: { onAdded:
           ))}
         </div>
       )}
-      {!text && <div className="quick-help">Type what you paid: <code>kafa 3,5</code> · currency <code>20 eur</code> · income <code>+1500 plata</code> · day <code>juče</code> <code>-2d</code> <code>12.10.</code> · account <code>@cash</code> · tag <code>#trip</code>. Several at once with <code>;</code>.{ai ? ' ✨ or 🎙 for anything else.' : ''}</div>}
+      {!text && <div className="quick-help">Type what you paid: <code>kafa 3,5</code> · currency <code>20 eur</code> · income <code>+1500 plata</code> · day <code>juče</code> <code>-2d</code> <code>12.10.</code> · account <code>@cash</code> · tag <code>#trip</code>. Several at once with <code>;</code>.{ai ? ' ✨ for flexible wording.' : ''}{settings?.ai_transcribe_configured ? ' 🎙 to dictate.' : ''}</div>}
     </div>
   )
 }

@@ -15,7 +15,7 @@ var PersonalSettings = map[string]bool{
 	"date_format": true, "time_format": true, "week_start": true, "month_start_day": true, "default_account_id": true, "quick_lang": true,
 	"firefly_url": true, "firefly_token": true, "firefly_mirror": true, "pico_url": true,
 	"notify_url": true, "notify_format": true, "notify_hour": true, "notify_digest": true,
-	"ai_url": true, "ai_key": true, "ai_model": true, "ai_transcribe_model": true, "ai_language": true, "ai_context": true,
+	"ai_provider": true, "ai_url": true, "ai_key": true, "ai_model": true, "ai_transcribe_model": true, "ai_language": true, "ai_context": true,
 	"travel_url": true, "travel_token": true, "travel_public_url": true, "travel_auto_tag": true, "travel_mode": true,
 }
 
@@ -67,7 +67,7 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 	}
 	str := map[string]*string{
 		"firefly_url": &st.FireflyURL, "firefly_token": &st.FireflyToken, "pico_url": &st.PicoURL,
-		"notify_url": &st.NotifyURL, "ai_url": &st.AIURL, "ai_key": &st.AIKey, "ai_model": &st.AIModel,
+		"notify_url": &st.NotifyURL, "ai_provider": &st.AIProvider, "ai_url": &st.AIURL, "ai_key": &st.AIKey, "ai_model": &st.AIModel,
 		"ai_transcribe_model": &st.AITranscribe, "ai_language": &st.AILanguage, "ai_context": &st.AIContext,
 		"travel_url": &st.TravelURL, "travel_token": &st.TravelToken, "travel_public_url": &st.TravelPublicURL,
 		"travel_mode": &st.TravelMode,
@@ -136,6 +136,7 @@ func settingsKV(st Settings) map[string]string {
 		"notify_hour":         strconv.Itoa(st.NotifyHour),
 		"notify_digest":       b[st.NotifyDigest],
 		"ai_url":              st.AIURL,
+		"ai_provider":         st.AIProvider,
 		"ai_key":              st.AIKey,
 		"ai_model":            st.AIModel,
 		"ai_transcribe_model": st.AITranscribe,

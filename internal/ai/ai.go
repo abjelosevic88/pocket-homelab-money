@@ -1,7 +1,5 @@
-// Package ai talks to an OpenAI-compatible API: chat completions for the
-// drafts, questions, stories and answers, and audio transcriptions for
-// dictation. Nothing in the app depends on it; without a key every AI button
-// stays hidden.
+// Package ai generates text through Pocket AI or a personal OpenAI-compatible
+// endpoint. Direct OpenAI clients also provide models and audio transcription.
 package ai
 
 import (
@@ -10,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -25,6 +24,7 @@ const (
 
 // Client holds the endpoint and key.
 type Client struct {
+	Pocket          *core.InferenceClient
 	BaseURL         string
 	Key             string
 	Model           string
@@ -47,7 +47,7 @@ func New(baseURL, key, model, transcribe string) *Client {
 }
 
 // Configured reports whether a key is set.
-func (c *Client) Configured() bool { return c != nil && c.Key != "" }
+func (c *Client) Configured() bool { return c != nil && (c.Pocket != nil || c.Key != "") }
 
 // Usage is what one call cost in tokens.
 type Usage struct {
@@ -73,6 +73,11 @@ func reasoning(model string) bool {
 // Complete sends a system + user prompt and returns the assistant text.
 // With jsonMode the model is asked for a single JSON object.
 func (c *Client) Complete(ctx context.Context, system, user string, jsonMode bool) (string, Usage, error) {
+	if c.Pocket != nil {
+		out, err := c.Pocket.Complete(ctx, system, user, jsonMode)
+		return out.Text, Usage{Model: out.Model, PromptTokens: out.InputTokens, CompletionTokens: out.OutputTokens}, err
+	}
+
 	u := Usage{Model: c.Model}
 	if !c.Configured() {
 		return "", u, errors.New("AI is not configured")
