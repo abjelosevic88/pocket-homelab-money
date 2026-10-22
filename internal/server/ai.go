@@ -16,6 +16,7 @@ import (
 func (s *Server) aiOrFail(w http.ResponseWriter, r *http.Request) *clients {
 	c := s.clients(r.Context())
 	c.ai.Pocket, _ = s.inferenceFor(r.Context(), actorID(r.Context()), c.st.AIProvider, c.st.AIKey != "")
+	c.ai.Pocket = c.ai.Pocket.WithModel(c.st.AIPocketModel)
 	if !c.ai.Configured() {
 		writeErr(w, http.StatusBadRequest, "connect Pocket AI or add an OpenAI key under Settings → AI")
 		return nil

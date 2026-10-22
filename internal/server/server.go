@@ -487,6 +487,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/webhooks/{id}/deliveries", s.handleWebhookDeliveries)
 
 			r.Post("/integrations/test", s.handleIntegrationTest)
+			r.Get("/ai/models", s.handleInferenceModels)
 			r.Post("/notify/test", s.handleNotifyTest)
 			r.Post("/notify/run", s.handleNotifyRun)
 			r.Get("/travel/trips", s.handleTravelTrips)

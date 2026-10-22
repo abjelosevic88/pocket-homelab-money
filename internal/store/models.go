@@ -23,6 +23,7 @@ type APIToken struct {
 // Settings are server-wide preferences plus integration credentials.
 type Settings struct {
 	AIProvider    string `json:"ai_provider"`
+	AIPocketModel string `json:"ai_pocket_model"`
 	Title         string `json:"title"`
 	HomeCurrency  string `json:"home_currency"`
 	DateFormat    string `json:"date_format"`

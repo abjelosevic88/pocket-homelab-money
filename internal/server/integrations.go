@@ -44,7 +44,7 @@ func (s *Server) publicSettings(ctx context.Context, u *store.User, st store.Set
 	travelMode, travelVia, travelDetail := s.connStatus(ctx, u, "travel", "Pocket Travel", st.TravelMode, st.TravelToken, travelScopes)
 	_, aiStatus := s.inferenceFor(ctx, u.ID, st.AIProvider, st.AIKey != "")
 	return map[string]any{
-		"ai_provider": aiStatus.Provider, "ai_status": aiStatus, "ai_configured": aiStatus.Ready, "ai_transcribe_configured": st.AIKey != "",
+		"ai_provider": aiStatus.Provider, "ai_pocket_model": st.AIPocketModel, "ai_status": aiStatus, "ai_configured": aiStatus.Ready, "ai_transcribe_configured": st.AIKey != "",
 		"core_configured": s.core.Configured(),
 		"title":           st.Title, "home_currency": st.HomeCurrency, "date_format": st.DateFormat, "time_format": st.TimeFormat,
 		"week_start": st.WeekStart, "month_start_day": st.MonthStartDay, "fx_auto": st.FXAuto, "fx_provider": s.cfg.FXProvider,
@@ -162,6 +162,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	flag("notify_digest", &cur.NotifyDigest, in.NotifyDigest)
 	url("ai_url", &cur.AIURL, in.AIURL)
 	secret("ai_key", &cur.AIKey, in.AIKey)
+	if keys["ai_pocket_model"] {
+		if !validPocketModel(in.AIPocketModel) {
+			writeErr(w, 400, "invalid Pocket AI model")
+			return
+		}
+		cur.AIPocketModel = in.AIPocketModel
+	}
 	if keys["ai_provider"] {
 		if !validAIProvider(in.AIProvider) {
 			writeErr(w, 400, "choose automatic, Pocket AI or OpenAI")

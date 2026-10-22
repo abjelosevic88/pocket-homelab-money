@@ -6,7 +6,7 @@ export interface APIToken { id: number; name: string; prefix: string; last_used_
 export type ConnMode = 'core' | 'direct' | 'off'
 
 export interface Settings {
-  ai_provider: string; ai_status: { provider: string; selected: string; ready: boolean; detail: string }; ai_transcribe_configured: boolean
+  ai_provider: string; ai_pocket_model: string; ai_status: { provider: string; selected: string; ready: boolean; detail: string }; ai_transcribe_configured: boolean
 
   title: string; home_currency: string; date_format: string; time_format: string; week_start: number; month_start_day: number
   fx_auto: boolean; fx_provider: string; default_account_id: number; quick_lang: string
