@@ -12,6 +12,7 @@ import { TxModal } from './TxEditor'
 import { AccountForm } from '../pages/Accounts'
 import { SubForm } from '../pages/Subscriptions'
 import { Avatar, type MenuItem, MenuButton, modalOpen, useIsMobile, useMediaQuery } from './ui'
+import { AskButton } from './AskButton'
 
 const SIDEBAR_KEY = 'pm-sidebar'
 
@@ -156,6 +157,7 @@ function TopBar({ onMenu, onPalette, mobile, compact, sidebarOpen }: { onMenu: (
       </h1>
       <span className="spacer" />
       <button type="button" className="btn ghost icon-only" onClick={onPalette} aria-label="Search" title="Search (⌘K or /)"><Icon name="search" size={18} /></button>
+      {mobile && <AskButton />}
       <MenuButton label="Account" className="avatar-btn" align="right" width={220} items={avatarMenu}>
         <Avatar name={user?.name} email={user?.email} size={30} />
       </MenuButton>
