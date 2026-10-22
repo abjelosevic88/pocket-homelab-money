@@ -214,6 +214,7 @@ function Notifications() {
 }
 
 function AI() {
+  const [showDictation, setShowDictation] = useState(false)
   const { f, setF, save, busy } = useSettingsForm()
   const { run, status } = useIntegrationTest()
   if (!f) return <Loading />
@@ -221,21 +222,27 @@ function AI() {
     <div className="stack loose">
       <Section title="AI provider" icon="sparkles" actions={badge(f.ai_configured)} sub="Turns free text and voice notes into transactions (several at once, in Bosnian or English), and answers questions about your money under Reports → Ask. Pocket AI is preferred when connected through Core.">
         <div className="stack">
-          <Field label="Text generation" help="Automatic prefers your enabled Pocket AI connection. Without one, it uses your saved OpenAI settings."><select value={f.ai_provider || 'auto'} onChange={e => setF({ ...f, ai_provider: e.target.value })}><option value="auto">Automatic — prefer Pocket AI</option><option value="pocket">Pocket AI</option><option value="openai">OpenAI / compatible API</option></select></Field>
+          <Field group label="Text generation" help="Automatic prefers your enabled Pocket AI connection. Without one, it uses your saved OpenAI settings."><Select ariaLabel="Text generation provider" value={f.ai_provider || 'auto'} onChange={v => { setF({ ...f, ai_provider: v }); setShowDictation(false) }} options={[{ value: 'auto', label: 'Automatic — prefer Pocket AI' }, { value: 'pocket', label: 'Pocket AI' }, { value: 'openai', label: 'OpenAI / compatible API' }]} /></Field>
           <p className="muted small" role="status">Saved selection: {f.ai_status?.detail}. Pocket AI uses your Claude account and model from Pocket AI settings.</p>
-          <p className="muted small">OpenAI settings below apply when OpenAI is selected and are required separately for dictation. Pocket AI does not transcribe audio.</p>
-          <Field label="OpenAI API key"><input value={f.ai_key} onChange={e => setF({ ...f, ai_key: e.target.value })} autoComplete="off" /></Field>
-          <div className="two-col tight">
+          {f.ai_provider === 'openai' && <div className="stack">
+            <Field label="OpenAI API key"><input value={f.ai_key} onChange={e => setF({ ...f, ai_key: e.target.value })} autoComplete="off" /></Field>
             <Field label="Model" help={`Empty = ${f.ai_model_effective}`}><input value={f.ai_model} onChange={e => setF({ ...f, ai_model: e.target.value })} placeholder={f.ai_model_effective} /></Field>
             <Field label="Base URL" help="Empty = api.openai.com"><input value={f.ai_url} onChange={e => setF({ ...f, ai_url: e.target.value })} placeholder="https://api.openai.com/v1" /></Field>
-          </div>
-          <div className="two-col tight">
-            <Field label="Dictation language" help="ISO code (bs, hr, sr, en); empty = detect"><input value={f.ai_language} onChange={e => setF({ ...f, ai_language: e.target.value })} /></Field>
-            <Field label="Transcription model"><input value={f.ai_transcribe_model} onChange={e => setF({ ...f, ai_transcribe_model: e.target.value })} placeholder="gpt-4o-mini-transcribe" /></Field>
-          </div>
+            <div className="row wrap"><button type="button" className="btn sm" onClick={() => run('ai', f.ai_url, f.ai_key, { model: f.ai_model })} disabled={!f.ai_key}>Test key</button>{status('ai')}</div>
+          </div>}
           <Field label="Words the AI should know" help='e.g. "maraka = BAM; sa unicredit = account UniCredit; selo = trips to the village"'><textarea value={f.ai_context} onChange={e => setF({ ...f, ai_context: e.target.value })} rows={2} /></Field>
-          <div className="row wrap"><button type="button" className="btn sm" onClick={() => run('ai', f.ai_url, f.ai_key, { model: f.ai_model })} disabled={!f.ai_key}>Test key</button>{status('ai')}</div>
         </div>
+      </Section>
+      <Section title="Dictation" icon="mic" sub="Voice transcription uses OpenAI separately from text generation. Pocket AI does not transcribe audio.">
+        <button type="button" className="btn sm" aria-expanded={showDictation} aria-controls="dictation-settings" onClick={() => setShowDictation(v => !v)}>{showDictation ? 'Hide dictation settings' : 'Configure dictation'}</button>
+        {showDictation && <div id="dictation-settings" className="stack mt-sm">
+          {f.ai_provider !== 'openai' && <>
+            <Field label="OpenAI API key"><input value={f.ai_key} onChange={e => setF({ ...f, ai_key: e.target.value })} autoComplete="off" /></Field>
+            <Field label="Base URL" help="Empty = api.openai.com"><input value={f.ai_url} onChange={e => setF({ ...f, ai_url: e.target.value })} placeholder="https://api.openai.com/v1" /></Field>
+          </>}
+          <Field label="Dictation language" help="ISO code (bs, hr, sr, en); empty = detect"><input value={f.ai_language} onChange={e => setF({ ...f, ai_language: e.target.value })} /></Field>
+          <Field label="Transcription model"><input value={f.ai_transcribe_model} onChange={e => setF({ ...f, ai_transcribe_model: e.target.value })} placeholder="gpt-4o-mini-transcribe" /></Field>
+        </div>}
       </Section>
       <div className="row"><button type="button" className="btn primary" onClick={() => save()} disabled={busy}>Save changes</button></div>
     </div>
