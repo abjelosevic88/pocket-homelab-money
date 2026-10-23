@@ -45,8 +45,8 @@ func (s *Server) publicSettings(ctx context.Context, u *store.User, st store.Set
 	_, aiStatus := s.inferenceFor(ctx, u.ID, st.AIProvider, st.AIKey != "")
 	return map[string]any{
 		"ai_provider": aiStatus.Provider, "ai_pocket_model": st.AIPocketModel, "ai_status": aiStatus, "ai_configured": aiStatus.Ready, "ai_transcribe_configured": st.AIKey != "",
-		"core_configured": s.core.Configured(),
-		"title":           st.Title, "home_currency": st.HomeCurrency, "date_format": st.DateFormat, "time_format": st.TimeFormat,
+		"core_configured": s.core.Configured(), "core_registered": s.coreStatus()["registered"],
+		"title": st.Title, "home_currency": st.HomeCurrency, "date_format": st.DateFormat, "time_format": st.TimeFormat,
 		"week_start": st.WeekStart, "month_start_day": st.MonthStartDay, "fx_auto": st.FXAuto, "fx_provider": s.cfg.FXProvider,
 		"default_account_id": st.DefaultAcct, "quick_lang": st.QuickLang,
 		"firefly_url": st.FireflyURL, "firefly_token": mask(st.FireflyToken), "firefly_configured": st.FireflyURL != "" && st.FireflyToken != "",

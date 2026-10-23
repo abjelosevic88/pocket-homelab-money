@@ -14,7 +14,7 @@ export interface Settings {
   notify_url: string; notify_format: string; notify_hour: number; notify_digest: boolean; notify_configured: boolean
   ai_url: string; ai_key: string; ai_model: string; ai_model_effective: string; ai_transcribe_model: string; ai_language: string; ai_context: string; ai_configured: boolean
   travel_url: string; travel_public_url: string; travel_token: string; travel_configured: boolean; travel_auto_tag: boolean
-  travel_mode: ConnMode; travel_via: '' | 'core' | 'direct'; travel_detail: string; core_configured: boolean
+  travel_mode: ConnMode; travel_via: '' | 'core' | 'direct'; travel_detail: string; core_configured: boolean; core_registered?: boolean
   max_upload_bytes: number; setup_complete: boolean; base_url: string
 }
 

@@ -6,7 +6,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import type { APIToken, ConnMode, Settings as SettingsT, User } from '../lib/types'
 import { DATE_FORMATS, TIME_FORMATS, fmtBytes, fmtDateTime } from '../lib/format'
-import { Confirm, Field, Loading, Modal, Segmented, SettingRow, Switch, Tabs, useAsync, useIsMobile, useToast } from '../components/ui'
+import { Confirm, CoreHint, Field, Loading, Modal, Segmented, SettingRow, Switch, Tabs, useAsync, useIsMobile, useToast } from '../components/ui'
 import { Icon } from '../components/icons'
 import { Select } from '../components/Select'
 import { CurrencySelect } from '../components/Money'
@@ -219,13 +219,17 @@ function AI() {
   const { f, setF, save, busy } = useSettingsForm()
   const { run, status } = useIntegrationTest()
   if (!f) return <Loading />
+  // Pocket AI is reached through Pocket Core: without a Core it stays in the
+  // list, greyed out, and the hint below says why
+  const coreOn = f.core_configured && f.core_registered !== false
   return (
     <div className="stack loose">
       <Section title="AI provider" icon="sparkles" actions={badge(f.ai_configured)} sub="Turns free text and voice notes into transactions (several at once, in Bosnian or English), and answers questions about your money under Reports → Ask. Pocket AI is preferred when connected through Core.">
         <div className="stack">
-          <Field group label="Text generation" help="Automatic prefers your enabled Pocket AI connection. Without one, it uses your saved OpenAI settings."><Select ariaLabel="Text generation provider" value={f.ai_provider || 'auto'} onChange={v => { setF({ ...f, ai_provider: v }); setShowDictation(false) }} options={[{ value: 'auto', label: 'Automatic — prefer Pocket AI' }, { value: 'pocket', label: 'Pocket AI' }, { value: 'openai', label: 'OpenAI / compatible API' }]} /></Field>
+          <Field group label="Text generation" help="Automatic prefers your enabled Pocket AI connection. Without one, it uses your saved OpenAI settings."><Select ariaLabel="Text generation provider" value={f.ai_provider || 'auto'} onChange={v => { setF({ ...f, ai_provider: v }); setShowDictation(false) }} options={[{ value: 'auto', label: 'Automatic — prefer Pocket AI' }, { value: 'pocket', label: 'Pocket AI', hint: coreOn ? undefined : 'needs Pocket Core', disabled: !coreOn }, { value: 'openai', label: 'OpenAI / compatible API' }]} /></Field>
           <p className="muted small" role="status">Saved selection: {f.ai_status?.detail}. Pocket AI uses your connected Claude account.</p>
-          {f.ai_provider !== 'openai' && <PocketModelSelect value={f.ai_pocket_model || ''} onChange={v => setF({ ...f, ai_pocket_model: v })} />}
+          {!coreOn && <CoreHint />}
+          {coreOn && f.ai_provider !== 'openai' && <PocketModelSelect value={f.ai_pocket_model || ''} onChange={v => setF({ ...f, ai_pocket_model: v })} />}
           {f.ai_provider === 'openai' && <div className="stack">
             <Field label="OpenAI API key"><input value={f.ai_key} onChange={e => setF({ ...f, ai_key: e.target.value })} autoComplete="off" /></Field>
             <Field label="Model" help={`Empty = ${f.ai_model_effective}`}><input value={f.ai_model} onChange={e => setF({ ...f, ai_model: e.target.value })} placeholder={f.ai_model_effective} /></Field>
@@ -255,10 +259,14 @@ function Integrations() {
   const { f, setF, save, busy } = useSettingsForm()
   const { run, status } = useIntegrationTest()
   if (!f) return <Loading />
+  // Pocket Core needs a Core this box is registered with; without one a saved
+  // "core" shows as off (it comes back once Core is connected)
+  const coreOn = f.core_configured && f.core_registered !== false
+  const travelMode: ConnMode = !coreOn && f.travel_mode === 'core' ? 'off' : f.travel_mode
   return (
     <div className="stack loose">
-      <Section title="Pocket Travel" icon="plane" actions={connBadge(f.travel_mode, f.travel_via)} sub="While a trip is running, new expenses get the trip's tag automatically — Pocket Travel then shows them in the trip budget.">
-        <Connection app="Pocket Travel" mode={f.travel_mode} via={f.travel_via} detail={f.travel_detail} core={f.core_configured} hasToken={!!f.travel_token}
+      <Section title="Pocket Travel" icon="plane" actions={connBadge(travelMode, f.travel_via)} sub="While a trip is running, new expenses get the trip's tag automatically — Pocket Travel then shows them in the trip budget.">
+        <Connection app="Pocket Travel" mode={travelMode} via={f.travel_via} detail={f.travel_detail} core={coreOn} hasToken={!!f.travel_token}
           onMode={m => save({ travel_mode: m })} onDisconnect={() => save({ travel_url: '', travel_token: '', travel_public_url: '' })}
           test={<><button type="button" className="btn sm" onClick={() => run('travel', f.travel_url, f.travel_token)}>Test connection</button>{status('travel')}</>}
           direct={<>
@@ -268,7 +276,7 @@ function Integrations() {
             </div>
             <Field label="Public URL (optional)" help="What the browser opens for trip links when the URL above is internal."><input value={f.travel_public_url} onChange={e => setF({ ...f, travel_public_url: e.target.value })} placeholder="https://travel.example.com" /></Field>
           </>} />
-        {f.travel_mode !== 'off' && <div className="mt-sm"><SettingRow title="Tag new expenses with the running trip"><Switch checked={f.travel_auto_tag} onChange={v => setF({ ...f, travel_auto_tag: v })} label="Tag new expenses with the running trip" /></SettingRow></div>}
+        {travelMode !== 'off' && <div className="mt-sm"><SettingRow title="Tag new expenses with the running trip"><Switch checked={f.travel_auto_tag} onChange={v => setF({ ...f, travel_auto_tag: v })} label="Tag new expenses with the running trip" /></SettingRow></div>}
       </Section>
       <Section title="Firefly III" icon="database" actions={badge(f.firefly_configured)} sub="Only needed to import (Settings → Import) or to keep mirroring while both run side by side.">
         <div className="stack">
@@ -297,7 +305,7 @@ function Connection({ app, mode, via, detail, core, onMode, onDisconnect, hasTok
   app: string; mode: ConnMode; via: string; detail: string; core: boolean; onMode: (m: ConnMode) => void; onDisconnect: () => void
   hasToken: boolean; test: React.ReactNode; direct: React.ReactNode
 }) {
-  const ok = via !== ''
+  const ok = via !== '' && mode !== 'off'
   const [advanced, setAdvanced] = useState(false)
   const showDirect = !core || mode === 'direct' || advanced
   const line = mode === 'off' ? `Off: Money does not talk to ${app}.`
@@ -307,12 +315,13 @@ function Connection({ app, mode, via, detail, core, onMode, onDisconnect, hasTok
     <div className="conn-block">
       <div className="conn-mode">
         <Segmented size="sm" value={mode} onChange={m => onMode(m)} options={[
-          { value: 'core' as ConnMode, label: 'Pocket Core', title: core ? 'Through Pocket Core: per person, nothing to paste' : 'There is no Pocket Core on this box' },
+          { value: 'core' as ConnMode, label: 'Pocket Core', title: core ? 'Through Pocket Core: per person, nothing to paste' : 'Needs Pocket Core: there is none on this box', disabled: !core },
           ...(showDirect ? [{ value: 'direct' as ConnMode, label: 'Direct', title: 'Your own URL and API token' }] : []),
           { value: 'off' as ConnMode, label: 'Off' },
         ]} />
         {!showDirect && <button type="button" className="conn-advanced" onClick={() => setAdvanced(true)}>Advanced: connect directly with a URL and key</button>}
       </div>
+      {!core && <CoreHint />}
       <div className={`conn-status ${mode === 'off' ? '' : ok ? 'ok' : 'bad'}`}><span className="dot" />{line}</div>
       {mode === 'direct' && <>
         {direct}
