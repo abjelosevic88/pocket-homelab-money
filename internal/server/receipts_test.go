@@ -104,6 +104,18 @@ func TestReceiptScanning(t *testing.T) {
 	}
 	c.do("PUT", "/api/v1/receipts/settings", map[string]any{"card_account_id": bank.ID, "attach_manual": true}, nil)
 
+	// a preview books nothing and logs nothing
+	var peek peekOut
+	c.do("POST", "/api/v1/receipts/peek", map[string]any{"url": sufTestLink(1, 11.80)}, &peek)
+	if !peek.Supported || !peek.Complete || peek.Shop != "Primjer Market" || peek.Total != 1180 || len(peek.Items) != 2 || peek.Items[0].Category != "Hrana" || peek.AccountName != "UniCredit" || peek.Existing != nil {
+		t.Fatalf("peek %+v", peek)
+	}
+	var promo peekOut
+	c.do("POST", "/api/v1/receipts/peek", map[string]any{"url": "https://centrumshop.ba/"}, &promo)
+	if promo.Supported {
+		t.Fatal("a shop's own QR code previewed as a receipt")
+	}
+
 	// a card receipt: booked on the card account with shop, time and items
 	var res scanOut
 	if code := c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(1, 11.80), "source": "test"}, &res); code != 201 || res.Status != "booked" {
@@ -115,6 +127,11 @@ func TestReceiptScanning(t *testing.T) {
 	}
 	if res.Receipt == nil || len(res.Receipt.Items) != 2 || res.Receipt.Items[0].GroupName != "Milk" || res.Receipt.Items[1].GroupID != nil {
 		t.Fatalf("receipt %+v", res.Receipt)
+	}
+	var again peekOut
+	c.do("POST", "/api/v1/receipts/peek", map[string]any{"url": sufTestLink(1, 11.80)}, &again)
+	if again.Existing == nil || again.Existing.TransactionID == nil || *again.Existing.TransactionID != tx.ID {
+		t.Fatalf("peek of a stored receipt: %+v", again.Existing)
 	}
 	// the same QR again: a duplicate, nothing new booked
 	var dup scanOut

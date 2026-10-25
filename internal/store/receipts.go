@@ -295,6 +295,37 @@ func (s *Store) UpsertMerchant(ctx context.Context, userID int64, country string
 	return scanMerchant(s.DB.QueryRowContext(ctx, `SELECT `+merchantCols+` FROM merchants m WHERE m.user_id = ? AND m.country = ? AND m.tax_id = ?`, userID, country, in.TaxID))
 }
 
+// MerchantByTaxID finds the person's shop by country and tax id.
+func (s *Store) MerchantByTaxID(ctx context.Context, userID int64, country, taxID string) (*Merchant, error) {
+	return scanMerchant(s.DB.QueryRowContext(ctx, `SELECT `+merchantCols+` FROM merchants m WHERE m.user_id = ? AND m.country = ? AND m.tax_id = ?`, userID, country, taxID))
+}
+
+// ProductCategory is the category a product name already has for the
+// person: the product's own, else its group's (by keyword when the product
+// is new). nil when none.
+func (s *Store) ProductCategory(ctx context.Context, userID int64, key string, groups []ProductGroup) (*int64, string) {
+	var own, group sql.NullInt64
+	var src string
+	err := s.DB.QueryRowContext(ctx, `SELECT p.category_id, p.category_source, g.category_id FROM products p LEFT JOIN product_groups g ON g.id = p.group_id WHERE p.user_id = ? AND p.key = ?`, userID, key).
+		Scan(&own, &src, &group)
+	switch {
+	case err == nil && own.Valid:
+		return &own.Int64, src
+	case err == nil && group.Valid:
+		return &group.Int64, "group"
+	case err == nil:
+		return nil, ""
+	}
+	if gid := GroupFor(key, groups); gid != nil {
+		for _, g := range groups {
+			if g.ID == *gid && g.CategoryID != nil {
+				return g.CategoryID, "group"
+			}
+		}
+	}
+	return nil, ""
+}
+
 // GetMerchant returns one of the person's shops.
 func (s *Store) GetMerchant(ctx context.Context, userID, id int64) (*Merchant, error) {
 	return scanMerchant(s.DB.QueryRowContext(ctx, `SELECT `+merchantCols+` FROM merchants m WHERE m.id = ? AND m.user_id = ?`, id, userID))

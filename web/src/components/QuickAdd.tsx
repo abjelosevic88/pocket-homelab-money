@@ -4,6 +4,7 @@ import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
 import type { Currency, Draft, QuickSuggestion, ScanResult, Transaction } from '../lib/types'
 import { useDebounce, useToast } from './ui'
+import { RECEIPT_URL } from '../lib/receipts'
 import { Icon } from './icons'
 
 /** The words at the start of the line being typed that can still name a
@@ -18,9 +19,6 @@ function leadWords(text: string): string {
   }
   return out.join(' ')
 }
-
-/** A fiscal receipt's QR link (pasted, or typed by a barcode scanner). */
-const RECEIPT_URL = /^\s*https?:\/\/(suf\.poreskaupravars\.org|suf\.purs\.gov\.rs|mapr\.tax\.gov\.me|efi\.porezi\.me|(www\.)?porezna\.gov\.hr)\//i
 
 /** One line → one (or more, split by ";" or new lines) transactions.
  *  Parsed on the server as you type; Enter books it. Templates that fit the

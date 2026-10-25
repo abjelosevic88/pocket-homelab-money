@@ -444,3 +444,163 @@ func (s *Server) handleApplyGuess(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetReceiptReason(ctx, rec.ID, g.Reason)
 	writeJSON(w, http.StatusOK, map[string]any{"transaction": updated, "reason": g.Reason})
 }
+
+// ---- preview before booking ----
+
+type peekItem struct {
+	Name     string  `json:"name"`
+	Quantity float64 `json:"quantity"`
+	Unit     string  `json:"unit"`
+	Total    int64   `json:"total"`
+	Category string  `json:"category,omitempty"`
+}
+
+type peekOut struct {
+	Supported   bool       `json:"supported"`
+	Provider    string     `json:"provider"`
+	Country     string     `json:"country"`
+	Message     string     `json:"message,omitempty"`
+	Complete    bool       `json:"complete"` // the tax office answered
+	Shop        string     `json:"shop"`
+	Location    string     `json:"location"`
+	Date        string     `json:"date"`
+	Time        string     `json:"time"`
+	Total       int64      `json:"total"`
+	Currency    string     `json:"currency"`
+	Method      string     `json:"method"`
+	Kind        string     `json:"kind"`
+	Number      string     `json:"invoice_number"`
+	Items       []peekItem `json:"items"`
+	AccountName string     `json:"account_name"`
+	CategoryID  *int64     `json:"category_id"`
+	Category    string     `json:"category"`
+	Reason      string     `json:"reason"`
+	Description string     `json:"description"`
+	Existing    *struct {
+		ReceiptID     int64  `json:"receipt_id"`
+		TransactionID *int64 `json:"transaction_id"`
+		Description   string `json:"description"`
+		Date          string `json:"date"`
+		ScannedAt     string `json:"scanned_at"`
+	} `json:"existing,omitempty"`
+}
+
+// handlePeekReceipt reads a receipt without booking or logging anything:
+// what the scanner shows for the person to confirm.
+func (s *Server) handlePeekReceipt(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	uid := actorID(ctx)
+	var in struct {
+		URL string `json:"url"`
+	}
+	if err := decode(r, &in); err != nil || strings.TrimSpace(in.URL) == "" {
+		writeErr(w, http.StatusBadRequest, "send the receipt link as url")
+		return
+	}
+	p, u, err := fiscal.Find(in.URL)
+	if err != nil {
+		writeJSON(w, http.StatusOK, peekOut{Message: err.Error(), Items: []peekItem{}})
+		return
+	}
+	out := peekOut{Supported: true, Provider: p.ID(), Country: p.Country(), Items: []peekItem{}}
+	existing := func(key string) bool {
+		rec := s.existingReceipt(ctx, uid, p.ID(), key)
+		if rec == nil {
+			return false
+		}
+		out.Existing = &struct {
+			ReceiptID     int64  `json:"receipt_id"`
+			TransactionID *int64 `json:"transaction_id"`
+			Description   string `json:"description"`
+			Date          string `json:"date"`
+			ScannedAt     string `json:"scanned_at"`
+		}{ReceiptID: rec.ID, TransactionID: rec.TransactionID, Date: rec.Date, ScannedAt: rec.CreatedAt[:10]}
+		if rec.TransactionID != nil {
+			if t, err := s.store.GetTransaction(ctx, *rec.TransactionID); err == nil && s.canSee(ctx, t.AccountID) {
+				out.Existing.Description = firstNonBlank(t.Description, t.Payee)
+			}
+		}
+		out.Shop, out.Total, out.Currency, out.Date, out.Time, out.Number, out.Complete = payeeFor(rec), rec.Total, rec.Currency, rec.Date, rec.Time, rec.InvoiceNumber, rec.Complete
+		for _, it := range rec.Items {
+			out.Items = append(out.Items, peekItem{Name: firstNonBlank(it.ProductName, it.Name), Quantity: it.Quantity, Unit: it.Unit, Total: it.Total, Category: it.CategoryName})
+		}
+		return true
+	}
+	decoded, _ := p.Decode(u)
+	if decoded != nil && decoded.Key != "" && existing(decoded.Key) {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	fctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	rec, _, ferr := p.Fetch(fctx, s.receiptHTTP(), u)
+	cancel()
+	if ferr == nil && existing(rec.Key) {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	switch {
+	case ferr == nil:
+		out.Complete = true
+	case decoded != nil && decoded.Total > 0:
+		rec = decoded
+		out.Message = "The tax office did not answer (" + ferr.Error() + "). Booking now takes the total and time from the QR code; the shop and items follow later."
+	default:
+		out.Supported = false
+		out.Message = ferr.Error()
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	if rec.InvoiceType == "proforma" || rec.InvoiceType == "training" {
+		out.Message = fmt.Sprintf("This is a %s receipt: nothing was paid, nothing will be booked.", rec.InvoiceType)
+	}
+	out.Total, out.Currency, out.Method, out.Kind, out.Number = rec.Total, rec.Currency, rec.Method(), rec.Kind, rec.InvoiceNumber
+	if !rec.IssuedAt.IsZero() {
+		out.Date, out.Time = rec.IssuedAt.Format("2006-01-02"), rec.IssuedAt.Format("15:04")
+	}
+	out.Location = fiscal.Latinize(fiscal.ShortLocation(rec.Merchant.Location, rec.Merchant.Name))
+	// what booking would do, from what is known already (no AI here)
+	tmp := &store.Receipt{UserID: uid, Provider: rec.Provider, Total: rec.Total, Currency: rec.Currency, Method: rec.Method(), Location: out.Location, InvoiceNumber: rec.InvoiceNumber}
+	if rec.Merchant.TaxID != "" {
+		if m, err := s.store.MerchantByTaxID(ctx, uid, rec.Country, rec.Merchant.TaxID); err == nil {
+			tmp.Merchant = m
+		} else if rec.Merchant.Name != "" {
+			nm := &store.Merchant{Name: rec.Merchant.Name, DisplayName: fiscal.MerchantName(rec.Merchant.Name)}
+			rules, _ := s.shopRules(ctx, s.store.GetReceiptSettings(ctx, uid))
+			if id, _ := matchShopRule(rules, rec.Merchant.Name+" "+out.Location); id > 0 {
+				nm.CategoryID, nm.CategorySource = &id, "rule"
+			}
+			tmp.Merchant = nm
+		}
+	} else if m, err := s.store.MerchantForDevice(ctx, uid, rec.Provider, rec.Device); err == nil {
+		tmp.Merchant = m
+	}
+	cats, _ := s.store.ListCategories(ctx, uid)
+	catName := map[int64]string{}
+	for _, c := range cats {
+		catName[c.ID] = c.Name
+	}
+	groups, _ := s.store.ListGroups(ctx, uid)
+	for _, it := range rec.Items {
+		cat, src := s.store.ProductCategory(ctx, uid, fiscal.ProductKey(it.Name), groups)
+		ri := store.ReceiptItem{Name: it.Name, Total: it.Total, CategoryID: cat, CategorySource: src}
+		if cat != nil {
+			ri.CategoryName = catName[*cat]
+		}
+		tmp.Items = append(tmp.Items, ri)
+		out.Items = append(out.Items, peekItem{Name: fiscal.ProductName(it.Name), Quantity: it.Quantity, Unit: it.Unit, Total: it.Total, Category: ri.CategoryName})
+	}
+	out.Shop = payeeFor(tmp)
+	g := s.guessReceipt(ctx, tmp)
+	out.CategoryID, out.Reason, out.Description = g.CategoryID, g.Reason, g.Description
+	if g.CategoryID != nil {
+		out.Category = catName[*g.CategoryID]
+	}
+	if acct, writable := s.receiptAccount(ctx, tmp, nil); acct > 0 {
+		for _, a := range writable {
+			if a.ID == acct {
+				out.AccountName = a.Name
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
