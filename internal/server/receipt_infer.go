@@ -302,6 +302,9 @@ var (
 	geoMu   sync.Mutex
 	geoLast time.Time
 	noNum   = regexp.MustCompile(`(?i)\s*\b(bb|b\.\s?b\.?|бб)\s*$`)
+	street  = regexp.MustCompile(`(?i)^(ulica|ul\.)\s+`)
+	houseNo = regexp.MustCompile(`(\d+)\s+([A-Za-z])\b`)
+	numbers = regexp.MustCompile(`\s*\d+\s*[A-Za-z]?\s*$`)
 )
 
 var geoCountry = map[string]string{"BA-SRP": "ba", "BA": "ba", "RS": "rs", "ME": "me", "HR": "hr"}
@@ -314,8 +317,14 @@ func (s *Server) placeShop(ctx context.Context, m *store.Merchant) {
 	}
 	city := fiscal.Latinize(m.City)
 	queries := []string{}
-	if addr := strings.TrimSpace(noNum.ReplaceAllString(fiscal.Latinize(m.Address), "")); addr != "" && city != "" {
+	// "Ulica Marije Dimić 7 A" → "Marije Dimić 7a", then the street alone, then the shop by name
+	addr := strings.TrimSpace(noNum.ReplaceAllString(fiscal.Latinize(m.Address), ""))
+	addr = houseNo.ReplaceAllString(street.ReplaceAllString(addr, ""), "$1$2")
+	if addr != "" && city != "" {
 		queries = append(queries, addr+", "+city)
+		if bare := strings.TrimSpace(numbers.ReplaceAllString(addr, "")); bare != "" && bare != addr {
+			queries = append(queries, bare+", "+city)
+		}
 	}
 	if city != "" {
 		queries = append(queries, m.DisplayName+", "+city)
@@ -613,4 +622,33 @@ func (s *Server) handlePeekReceipt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// locateReceipts gives transactions booked from receipts before shops were
+// put on the map their shop's pin (a few per run: the map service allows
+// one lookup a second). Goes through the normal update, so webhooks (Pocket
+// Day) see the change.
+func (s *Server) locateReceipts(ctx context.Context) {
+	if !s.store.GetReceiptSettings(ctx, actorID(ctx)).Geocode {
+		return
+	}
+	recs, err := s.store.ReceiptsWithoutPlace(ctx, actorID(ctx), 10)
+	if err != nil {
+		return
+	}
+	for i := range recs {
+		m, err := s.store.GetMerchant(ctx, recs[i].UserID, *recs[i].MerchantID)
+		if err != nil {
+			continue
+		}
+		s.placeShop(ctx, m)
+		if m.Lat == nil || m.Lng == nil || recs[i].TransactionID == nil {
+			continue
+		}
+		t, err := s.store.GetTransaction(ctx, *recs[i].TransactionID)
+		if err != nil || t.Lat != nil || !s.canWrite(ctx, t.AccountID) {
+			continue
+		}
+		s.updateTxFrom(ctx, t, &txIn{Lat: m.Lat, Lng: m.Lng})
+	}
 }

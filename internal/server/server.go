@@ -284,6 +284,7 @@ func (s *Server) runJobs(ctx context.Context, mirror bool) {
 		uctx := context.WithValue(ctx, userKey, &users[i])
 		s.maybeNotify(uctx)
 		s.maybeProductCheck(uctx)
+		s.locateReceipts(uctx)
 	}
 }
 

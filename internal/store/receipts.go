@@ -1311,3 +1311,24 @@ func (s *Store) ProductCheckRuns(ctx context.Context, userID int64, limit int) (
 	}
 	return out, rows.Err()
 }
+
+// ReceiptsWithoutPlace are the person's receipts whose transaction has no
+// location yet (booked before shops were put on the map).
+func (s *Store) ReceiptsWithoutPlace(ctx context.Context, userID int64, limit int) ([]Receipt, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+receiptCols+` FROM receipts r JOIN transactions t ON t.id = r.transaction_id
+		WHERE r.user_id = ? AND r.merchant_id IS NOT NULL AND t.lat IS NULL ORDER BY r.id DESC LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	var out []Receipt
+	for rows.Next() {
+		r, err := scanReceipt(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	rows.Close()
+	return out, rows.Err()
+}
