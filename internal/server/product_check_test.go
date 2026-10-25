@@ -104,6 +104,17 @@ func TestProductCheck(t *testing.T) {
 	if len(runs.Runs) != 3 || runs.Ungrouped != 0 {
 		t.Fatalf("runs %d ungrouped %d", len(runs.Runs), runs.Ungrouped)
 	}
+	// a new receipt is grouped as it is scanned: a sibling of the apples joins Fruit right away
+	fake.receipts[22] = sufTestJSON(22, 2, [3]any{"JABUKA CRVENA/KG", 1.0, 2.5})
+	var res2 scanOut
+	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(22, 2.5)}, &res2)
+	if res2.Receipt == nil || res2.Receipt.Items[0].GroupID == nil || *res2.Receipt.Items[0].GroupID != fruit.Group.ID {
+		t.Fatalf("grouped on scan: %+v", res2.Receipt)
+	}
+	c.do("GET", "/api/v1/products/check", nil, &runs)
+	if runs.Runs[0].Trigger != "scan" || runs.Runs[0].BySimilar != 1 {
+		t.Fatalf("scan report %+v", runs.Runs[0])
+	}
 	// the AI placement survives keyword regrouping, and shows its source
 	c.do("GET", fmt.Sprintf("/api/v1/products?group=%d", coffee.Group.ID), nil, &prods)
 	if len(prods) != 1 || prods[0].GroupSource != "ai" {

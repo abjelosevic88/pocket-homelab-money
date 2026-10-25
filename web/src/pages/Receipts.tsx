@@ -265,6 +265,7 @@ function Setup() {
         <SettingRow title="Check" help={st.group_job === 'ai' && !st.ai_ready ? <span className="bad">{st.ai_detail}</span> : st.group_job === 'ai' ? `Names of products it cannot place otherwise are sent once. ${st.ai_detail}.` : 'No AI: keywords and similar products only.'}>
           <Segmented size="sm" value={st.group_job} onChange={v => save({ group_job: v })} options={[{ value: 'off', label: 'Off' }, { value: 'keywords', label: 'Keywords' }, { value: 'ai', label: '+ AI', disabled: !st.ai_ready && st.group_job !== 'ai' }]} />
         </SettingRow>
+        <SettingRow title="Also on every scan" help={`A receipt's new products are grouped the moment it is scanned (keywords and similar products${st.group_job === 'ai' ? ', then AI' : ''}); the daily check catches what is left.`}><Switch checked={st.group_on_scan} onChange={v => save({ group_on_scan: v })} /></SettingRow>
         {st.group_job !== 'off' && <>
           <SettingRow title="At" help="Runs once a day from this hour, only when there are products without a group.">
             <div style={{ width: 110 }}><Select value={String(st.group_job_hour)} onChange={v => save({ group_job_hour: Number(v) })} options={Array.from({ length: 24 }, (_, h) => ({ value: String(h), label: `${String(h).padStart(2, '0')}:00` }))} ariaLabel="Hour" /></div>

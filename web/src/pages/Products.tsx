@@ -149,14 +149,14 @@ function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit, o
         actions={<div className="search" style={{ width: 200 }}><input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter…" /></div>}>
         {!products ? <Loading /> : products.length === 0 ? <div className="muted small" style={{ padding: 14 }}>None.</div> : (
           <table className="table compact">
-            <thead><tr><th>Product</th><th>Bought</th><th style={{ textAlign: 'right' }}>Spent</th><th style={{ textAlign: 'right' }}>Last price</th><th>Category</th><th>Group</th></tr></thead>
+            <thead><tr><th>Product</th><th>Bought</th><th style={{ textAlign: 'right' }}>Spent</th><th style={{ textAlign: 'right' }} className="hide-sm">Last price</th><th>Category</th><th>Group</th></tr></thead>
             <tbody>
               {products.map(p => (
                 <tr key={p.key}>
-                  <td>{p.key > 0 ? <button type="button" className="link-btn" onClick={() => onProduct(p.key)}>{p.name}</button> : p.name}</td>
+                  <td style={{ minWidth: 140 }}>{p.key > 0 ? <button type="button" className="link-btn" onClick={() => onProduct(p.key)}>{p.name}</button> : p.name}</td>
                   <td className="muted nowrap">{p.purchases}× · {qtyLabel(p.quantity, p.unit)}</td>
                   <td style={{ textAlign: 'right' }}>{fmtMoney(p.spent, home, dec)}</td>
-                  <td style={{ textAlign: 'right' }} className="muted">{p.last_currency ? fmtMoney(p.last_price, p.last_currency, decimalsOf(p.last_currency, currencies)) : ''}</td>
+                  <td style={{ textAlign: 'right' }} className="muted hide-sm">{p.last_currency ? fmtMoney(p.last_price, p.last_currency, decimalsOf(p.last_currency, currencies)) : ''}</td>
                   <td style={{ width: 180 }}>
                     {p.key > 0 && <div className="row" style={{ gap: 4 }}><CategorySelect value={p.category_id ?? null} onChange={id => setCat(p, id)} kind="expense" placeholder={g?.category_id ? 'Group’s' : 'None'} clearLabel={g?.category_id ? 'Group’s' : 'None'} />{p.category_source === 'ai' && <span className="badge" title="Sorted by AI">AI</span>}</div>}
                   </td>
@@ -179,9 +179,9 @@ function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit, o
               {purchases.slice(0, 100).map((p, i) => (
                 <tr key={i}>
                   <td className="nowrap muted">{fmtDate(p.date, false)}</td>
-                  <td>{p.name}<div className="muted small">{p.merchant}</div></td>
-                  <td className="muted nowrap">{fmtQty(p.quantity, p.unit)} × {fmtMoney(p.unit_price, p.currency, decimalsOf(p.currency, currencies), { code: false })}</td>
-                  <td style={{ textAlign: 'right' }}>{fmtMoney(p.total, p.currency, decimalsOf(p.currency, currencies))}</td>
+                  <td>{p.name}<div className="muted small">{p.merchant}<span className="show-sm"> · {fmtQty(p.quantity, p.unit)} × {fmtMoney(p.unit_price, p.currency, decimalsOf(p.currency, currencies), { code: false })}</span></div></td>
+                  <td className="muted nowrap hide-sm">{fmtQty(p.quantity, p.unit)} × {fmtMoney(p.unit_price, p.currency, decimalsOf(p.currency, currencies), { code: false })}</td>
+                  <td style={{ textAlign: 'right' }} className="nowrap">{fmtMoney(p.total, p.currency, decimalsOf(p.currency, currencies))}</td>
                   <td>{p.transaction_id && <Link className="btn ghost xs" to={`/transactions/${p.transaction_id}`} aria-label="Open the transaction"><Icon name="arrow-right" size={13} /></Link>}</td>
                 </tr>
               ))}
@@ -337,9 +337,9 @@ function ProductDetail({ id, from, merchant, groups, onClose, onChanged }: { id:
                 {buys.slice(0, 200).map((b, i) => (
                   <tr key={i}>
                     <td className="nowrap muted">{fmtDate(b.date, false)}</td>
-                    <td>{b.merchant}</td>
-                    <td className="muted nowrap">{fmtQty(b.quantity, b.unit)} × {fmtMoney(b.unit_price, b.currency, decimalsOf(b.currency, currencies), { code: false })}</td>
-                    <td style={{ textAlign: 'right' }}>{fmtMoney(b.total, b.currency, decimalsOf(b.currency, currencies))}</td>
+                    <td>{b.merchant}<div className="muted small show-sm">{fmtQty(b.quantity, b.unit)} × {fmtMoney(b.unit_price, b.currency, decimalsOf(b.currency, currencies), { code: false })}</div></td>
+                    <td className="muted nowrap hide-sm">{fmtQty(b.quantity, b.unit)} × {fmtMoney(b.unit_price, b.currency, decimalsOf(b.currency, currencies), { code: false })}</td>
+                    <td style={{ textAlign: 'right' }} className="nowrap">{fmtMoney(b.total, b.currency, decimalsOf(b.currency, currencies))}</td>
                     <td>{b.transaction_id && <Link className="btn ghost xs" to={`/transactions/${b.transaction_id}`} aria-label="Open the transaction"><Icon name="arrow-right" size={13} /></Link>}</td>
                   </tr>
                 ))}
@@ -390,7 +390,7 @@ function CheckReport({ onClose, onChanged, onProduct }: { onClose: () => void; o
         <div className="filters">
           {runs.slice(0, 10).map(r => (
             <button key={r.id} type="button" className={`chip ${shown?.id === r.id ? 'active' : ''}`} onClick={() => setOpen(r.id)}>
-              {fmtDate(r.started_at.slice(0, 10), false)} {r.started_at.slice(11, 16)}{r.trigger === 'manual' ? ' · by hand' : ''}
+              {fmtDate(r.started_at.slice(0, 10), false)} {r.started_at.slice(11, 16)}{r.trigger === 'manual' ? ' · by hand' : r.trigger === 'scan' ? ' · on scan' : ''}
             </button>
           ))}
         </div>

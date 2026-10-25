@@ -181,7 +181,7 @@ export interface ReceiptSettings {
   card_account_id: number | null; cash_account_id: number | null; split_items: boolean; attach_manual: boolean
   ai_items: boolean; own_words: boolean; geocode: boolean; shop_rules: ShopRule[]; shop_rules_default: boolean
   ai_ready: boolean; ai_detail: string; unsorted_products: number
-  group_job: 'off' | 'keywords' | 'ai'; group_job_hour: number; group_job_notify: boolean
+  group_job: 'off' | 'keywords' | 'ai'; group_job_hour: number; group_job_notify: boolean; group_on_scan: boolean
 }
 export interface ItemStats {
   key: number; name: string; icon: string; group_id?: number | null; purchases: number; lines: number; quantity: number; unit: string
@@ -195,7 +195,7 @@ export interface Purchase {
 export interface CheckMove { product_id: number; product: string; group_id: number; group: string; icon: string; how: 'keywords' | 'similar' | 'ai' }
 export interface CheckSuggestion { name: string; icon: string; keywords: string; products: string[]; product_ids: number[] }
 export interface ProductCheckRun {
-  id: number; trigger: 'daily' | 'manual'; mode: string; started_at: string; finished_at: string
+  id: number; trigger: 'daily' | 'manual' | 'scan'; mode: string; started_at: string; finished_at: string
   checked: number; by_keywords: number; by_similar: number; by_ai: number; categorized: number; still_ungrouped: number
   report: { moves: CheckMove[]; suggestions: CheckSuggestion[]; left: string[]; ai_note?: string }; error: string
 }

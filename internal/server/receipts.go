@@ -421,6 +421,23 @@ func (s *Server) receiptAccount(ctx context.Context, r *store.Receipt, hint *int
 // and, when switched on, the AI sorting of products nobody categorised yet.
 func (s *Server) prepareReceipt(ctx context.Context, r *store.Receipt, rs store.ReceiptSettings) *store.Receipt {
 	s.placeShop(ctx, r.Merchant)
+	if rs.GroupOnScan {
+		var ids []int64
+		for _, it := range r.Items {
+			if it.GroupID == nil && it.ProductID != nil {
+				ids = append(ids, *it.ProductID)
+			}
+		}
+		if len(ids) > 0 {
+			if run, err := s.runProductCheck(ctx, "scan", ids); err != nil {
+				s.log.Warn("receipt: grouping", "receipt", r.ID, "err", err)
+			} else if run.ByKeywords+run.BySimilar+run.ByAI > 0 {
+				if full, err := s.store.GetReceipt(ctx, r.ID); err == nil {
+					r = full
+				}
+			}
+		}
+	}
 	if !rs.AIItems {
 		return r
 	}
@@ -939,7 +956,7 @@ func (s *Server) receiptSettingsOut(ctx context.Context) map[string]any {
 	return map[string]any{"card_account_id": rs.CardAccountID, "cash_account_id": rs.CashAccountID, "split_items": rs.SplitItems, "attach_manual": rs.AttachManual,
 		"ai_items": rs.AIItems, "own_words": rs.OwnWords, "geocode": rs.Geocode, "shop_rules": rules, "shop_rules_default": defaults,
 		"ai_ready": client != nil, "ai_detail": detail, "unsorted_products": len(unsorted),
-		"group_job": rs.GroupJob, "group_job_hour": rs.GroupJobHour, "group_job_notify": rs.GroupJobNotify}
+		"group_job": rs.GroupJob, "group_job_hour": rs.GroupJobHour, "group_job_notify": rs.GroupJobNotify, "group_on_scan": rs.GroupOnScan}
 }
 
 func (s *Server) handleGetReceiptSettings(w http.ResponseWriter, r *http.Request) {
@@ -967,6 +984,7 @@ func (s *Server) handlePutReceiptSettings(w http.ResponseWriter, r *http.Request
 	keep("own_words", &in.OwnWords, cur.OwnWords)
 	keep("geocode", &in.Geocode, cur.Geocode)
 	keep("group_job_notify", &in.GroupJobNotify, cur.GroupJobNotify)
+	keep("group_on_scan", &in.GroupOnScan, cur.GroupOnScan)
 	if !keys["group_job"] {
 		in.GroupJob = cur.GroupJob
 	} else if in.GroupJob != "off" && in.GroupJob != "keywords" && in.GroupJob != "ai" {

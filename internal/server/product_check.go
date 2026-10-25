@@ -64,7 +64,9 @@ func firstWord(key string) string {
 	return ""
 }
 
-func (s *Server) runProductCheck(ctx context.Context, trigger string) (*store.ProductCheckRun, error) {
+// runProductCheck runs the passes over every product without a group, or
+// only the given ones (a receipt just scanned). trigger: daily | manual | scan.
+func (s *Server) runProductCheck(ctx context.Context, trigger string, only []int64) (*store.ProductCheckRun, error) {
 	uid := actorID(ctx)
 	rs := s.store.GetReceiptSettings(ctx, uid)
 	run := &store.ProductCheckRun{Trigger: trigger, Mode: rs.GroupJob, StartedAt: store.Now()}
@@ -80,10 +82,27 @@ func (s *Server) runProductCheck(ctx context.Context, trigger string) (*store.Pr
 	for _, g := range groups {
 		byID[g.ID] = g
 	}
-	before, err := s.store.UngroupedProducts(ctx, uid)
+	scope := func(list []store.UngroupedProduct) []store.UngroupedProduct {
+		if only == nil {
+			return list
+		}
+		want := map[int64]bool{}
+		for _, id := range only {
+			want[id] = true
+		}
+		var out []store.UngroupedProduct
+		for _, p := range list {
+			if want[p.ID] {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	all, err := s.store.UngroupedProducts(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
+	before := scope(all)
 	run.Checked = len(before)
 	move := func(p store.UngroupedProduct, gid int64, how string) {
 		g := byID[gid]
@@ -94,7 +113,8 @@ func (s *Server) runProductCheck(ctx context.Context, trigger string) (*store.Pr
 	if _, err := s.store.RegroupProducts(ctx, uid); err != nil {
 		return nil, err
 	}
-	after, _ := s.store.UngroupedProducts(ctx, uid)
+	afterAll, _ := s.store.UngroupedProducts(ctx, uid)
+	after := scope(afterAll)
 	still := map[int64]bool{}
 	for _, p := range after {
 		still[p.ID] = true
@@ -164,7 +184,7 @@ func (s *Server) runProductCheck(ctx context.Context, trigger string) (*store.Pr
 			}
 			left = rest
 		}
-		if rs.AIItems {
+		if rs.AIItems && trigger != "scan" { // a scan sorts its own products right after
 			if _, n, err := s.sortProducts(ctx, nil, 300); err == nil {
 				run.Categorized = n
 			}
@@ -180,8 +200,11 @@ func (s *Server) runProductCheck(ctx context.Context, trigger string) (*store.Pr
 	run.FinishedAt = store.Now()
 	b, _ := json.Marshal(rep)
 	run.Report = b
-	if err := s.store.SaveProductCheckRun(ctx, uid, run); err != nil {
-		return nil, err
+	// a scan leaves a report only when it placed or suggested something
+	if trigger != "scan" || len(rep.Moves) > 0 || len(rep.Suggestions) > 0 {
+		if err := s.store.SaveProductCheckRun(ctx, uid, run); err != nil {
+			return nil, err
+		}
 	}
 	if trigger == "daily" && rs.GroupJobNotify && (len(rep.Moves) > 0 || len(rep.Suggestions) > 0) { // a run by hand shows its report on screen
 		s.notifyProductCheck(ctx, run, rep)
@@ -340,7 +363,7 @@ func (s *Server) maybeProductCheck(ctx context.Context) {
 	if ungrouped, _ := s.store.UngroupedProducts(ctx, uid); len(ungrouped) == 0 {
 		return // nothing to do, no empty report
 	}
-	if run, err := s.runProductCheck(ctx, "daily"); err != nil {
+	if run, err := s.runProductCheck(ctx, "daily", nil); err != nil {
 		s.log.Warn("product check", "user", uid, "err", err)
 	} else {
 		s.log.Info("product check", "user", uid, "keywords", run.ByKeywords, "similar", run.BySimilar, "ai", run.ByAI, "left", run.StillUngrouped)
@@ -360,7 +383,7 @@ func (s *Server) handleProductCheckRuns(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleRunProductCheck(w http.ResponseWriter, r *http.Request) {
-	run, err := s.runProductCheck(r.Context(), "manual")
+	run, err := s.runProductCheck(r.Context(), "manual", nil)
 	if err != nil {
 		s.fail(w, err, "product check")
 		return
