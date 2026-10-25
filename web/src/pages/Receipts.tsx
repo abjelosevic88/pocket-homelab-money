@@ -223,10 +223,11 @@ function Setup() {
     try { setSt(await api.put<ReceiptSettings>(`${V1}/receipts/settings`, body)); toast('Saved') } catch (e) { toast(errMsg(e), 'err') }
   }
   const [sorting, setSorting] = useState(false)
-  const sortNow = async () => {
+  const sortNow = async (redo = false) => {
+    if (redo && !confirm('Forget what the AI said about your products and ask again? Categories you chose yourself stay.')) return
     setSorting(true)
     try {
-      const r = await api.post<{ asked: number; sorted: number }>(`${V1}/products/sort`)
+      const r = await api.post<{ asked: number; sorted: number }>(`${V1}/products/sort${redo ? '?redo=1' : ''}`)
       toast(`${r.sorted} of ${r.asked} products sorted`)
       setSt(await api.get<ReceiptSettings>(`${V1}/receipts/settings`))
     } catch (e) { toast(errMsg(e), 'err') } finally { setSorting(false) }
@@ -245,9 +246,12 @@ function Setup() {
         <SettingRow title="Sort new products with AI" help={<>Each product nobody has categorised yet is sent once — its name only, with your category list and a few of your own bookings as examples — and the answer is remembered. {st.ai_ready ? <b>{st.ai_detail}.</b> : <span className="bad">{st.ai_detail}</span>}</>}>
           <Switch checked={st.ai_items} disabled={!st.ai_ready && !st.ai_items} onChange={v => save({ ai_items: v })} />
         </SettingRow>
-        {st.ai_items && st.unsorted_products > 0 && (
-          <SettingRow title={`${st.unsorted_products} products still without a category`} help="Products from receipts scanned before the AI was on.">
-            <button type="button" className="btn sm" disabled={sorting} onClick={sortNow}><Icon name="sparkles" size={14} />{sorting ? 'Sorting…' : 'Sort them now'}</button>
+        {st.ai_items && (
+          <SettingRow title={st.unsorted_products > 0 ? `${st.unsorted_products} products not asked about yet` : 'Every product has been sorted'} help="Products from receipts scanned before the AI was on are sorted here. Asking again redoes the AI's answers (after you changed your categories, say); your own choices stay.">
+            <div className="row" style={{ gap: 6 }}>
+              {st.unsorted_products > 0 && <button type="button" className="btn sm" disabled={sorting} onClick={() => sortNow()}><Icon name="sparkles" size={14} />{sorting ? 'Sorting…' : 'Sort them now'}</button>}
+              <button type="button" className="btn ghost sm" disabled={sorting} onClick={() => sortNow(true)}>Ask again</button>
+            </div>
           </SettingRow>
         )}
         <SettingRow title="Describe it the way I do" help="The description is the one you use most for that category (“Nabavka za kuci” for groceries), not the shop's name."><Switch checked={st.own_words} onChange={v => save({ own_words: v })} /></SettingRow>

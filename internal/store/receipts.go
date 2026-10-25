@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -804,12 +805,15 @@ func (s *Store) SetProductCategory(ctx context.Context, userID, id int64, cat *i
 type ProductToSort struct {
 	ID   int64
 	Name string
+	Shop string // where it was last bought
 }
 
 // ProductsToSort lists the person's products the AI has not been asked
 // about and that have no category (own or group's); only ids when given.
 func (s *Store) ProductsToSort(ctx context.Context, userID int64, ids []int64, limit int) ([]ProductToSort, error) {
-	q := `SELECT p.id, p.name FROM products p LEFT JOIN product_groups g ON g.id = p.group_id
+	q := `SELECT p.id, p.name, COALESCE((SELECT COALESCE(NULLIF(m.display_name, ''), m.name) FROM receipt_items i JOIN receipts r ON r.id = i.receipt_id
+			JOIN merchants m ON m.id = r.merchant_id WHERE i.product_id = p.id ORDER BY r.id DESC LIMIT 1), '')
+		FROM products p LEFT JOIN product_groups g ON g.id = p.group_id
 		WHERE p.user_id = ? AND p.ai_checked = 0 AND p.category_id IS NULL AND g.category_id IS NULL`
 	args := []any{userID}
 	if ids != nil {
@@ -825,10 +829,58 @@ func (s *Store) ProductsToSort(ctx context.Context, userID int64, ids []int64, l
 	var out []ProductToSort
 	for rows.Next() {
 		var p ProductToSort
-		if err := rows.Scan(&p.ID, &p.Name); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Shop); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ForgetAISorting drops the categories the AI gave, so it is asked again
+// (the person's own choices stay).
+func (s *Store) ForgetAISorting(ctx context.Context, userID int64) (int, error) {
+	res, err := s.DB.ExecContext(ctx, `UPDATE products SET category_id = NULL, category_source = '', ai_checked = 0 WHERE user_id = ? AND (category_source = 'ai' OR (category_id IS NULL AND ai_checked = 1))`, userID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// CategoryUse is how a person uses one category: how often, and the
+// descriptions they write in it, most used first.
+type CategoryUse struct {
+	Count        int
+	Descriptions []string // "nabavka za kuci (60)"
+}
+
+// CategoryUses summarises the person's last year of expenses per category.
+func (s *Store) CategoryUses(ctx context.Context, userID int64, perCategory int) (map[int64]*CategoryUse, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.category_id, lower(t.description), COUNT(1) n FROM transactions t
+		WHERE t.user_id = ? AND t.kind = 'expense' AND t.category_id IS NOT NULL AND t.date >= date('now', '-365 days')
+		GROUP BY t.category_id, lower(t.description) ORDER BY t.category_id, n DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]*CategoryUse{}
+	for rows.Next() {
+		var id int64
+		var d string
+		var n int
+		if err := rows.Scan(&id, &d, &n); err != nil {
+			return nil, err
+		}
+		u := out[id]
+		if u == nil {
+			u = &CategoryUse{}
+			out[id] = u
+		}
+		u.Count += n
+		if d != "" && len(u.Descriptions) < perCategory {
+			u.Descriptions = append(u.Descriptions, fmt.Sprintf("%s (%d)", d, n))
+		}
 	}
 	return out, rows.Err()
 }

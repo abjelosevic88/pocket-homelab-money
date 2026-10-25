@@ -118,27 +118,24 @@ func (s *Server) sortProducts(ctx context.Context, ids []int64, limit int) (aske
 		return 0, 0, fmt.Errorf("AI is not available: %s", detail)
 	}
 	cats, _ := s.store.ListCategories(ctx, uid)
+	uses, _ := s.store.CategoryUses(ctx, uid, 8)
 	valid := map[int64]bool{}
 	var b strings.Builder
-	b.WriteString("Categories (id: name):\n")
+	b.WriteString("The person's categories, with how many times they used each in the last year and what they wrote in it:\n")
 	for _, c := range cats {
-		if !c.Archived && c.Kind != "income" {
-			valid[c.ID] = true
-			fmt.Fprintf(&b, "- %d: %s\n", c.ID, firstNonBlank(c.FullName, c.Name))
+		if c.Archived || c.Kind == "income" {
+			continue
 		}
-	}
-	if own, _ := s.store.OwnDescriptions(ctx, uid); len(own) > 0 {
-		names := map[int64]string{}
-		for _, c := range cats {
-			names[c.ID] = c.Name
+		valid[c.ID] = true
+		u := uses[c.ID]
+		if u == nil {
+			u = &store.CategoryUse{}
 		}
-		b.WriteString("\nHow this person books things (description → category):\n")
-		for i, d := range own {
-			if i == 30 {
-				break
-			}
-			fmt.Fprintf(&b, "- %s → %s\n", d.Description, names[d.CategoryID])
+		fmt.Fprintf(&b, "- id %d \"%s\": %d bookings", c.ID, firstNonBlank(c.FullName, c.Name), u.Count)
+		if len(u.Descriptions) > 0 {
+			fmt.Fprintf(&b, "; e.g. %s", strings.Join(u.Descriptions, ", "))
 		}
+		b.WriteString("\n")
 	}
 	for start := 0; start < len(todo); start += 60 {
 		batch := todo[start:min(start+60, len(todo))]
@@ -146,7 +143,11 @@ func (s *Server) sortProducts(ctx context.Context, ids []int64, limit int) (aske
 		u.WriteString(b.String())
 		u.WriteString("\nProducts:\n")
 		for i, p := range batch {
-			fmt.Fprintf(&u, "%d. %s\n", i+1, p.Name)
+			if p.Shop != "" {
+				fmt.Fprintf(&u, "%d. %s (bought at %s)\n", i+1, p.Name, p.Shop)
+			} else {
+				fmt.Fprintf(&u, "%d. %s\n", i+1, p.Name)
+			}
 		}
 		var out struct {
 			Items []struct {
@@ -155,7 +156,7 @@ func (s *Server) sortProducts(ctx context.Context, ids []int64, limit int) (aske
 			} `json:"items"`
 		}
 		actx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		usage, err := client.JSON(actx, `You sort the items of shop receipts into a person's spending categories. Receipts are from Bosnia and Herzegovina, Serbia, Montenegro or Croatia; item names are short and abbreviated ("VODA PR 0,5L VIVIA" is bottled water, "KESA" a shopping bag). Use the person's examples to learn what their categories mean. Answer only JSON: {"items":[{"n":<product number>,"category_id":<id from the list, or null when nothing fits>}]}.`, u.String(), &out)
+		usage, err := client.JSON(actx, sortPrompt, u.String(), &out)
 		cancel()
 		s.store.LogAI(ctx, uid, "receipt-items", usage.Model, usage.PromptTokens, usage.CompletionTokens)
 		if err != nil {
@@ -181,6 +182,14 @@ func (s *Server) sortProducts(ctx context.Context, ids []int64, limit int) (aske
 	}
 	return asked, sorted, nil
 }
+
+const sortPrompt = `You sort the items of shop receipts into one person's spending categories.
+
+Receipts are from Bosnia and Herzegovina, Serbia, Montenegro or Croatia; item names are short and abbreviated ("VODA PR 0,5L VIVIA" is bottled water, "KESA" a shopping bag, "ULJE SUNCOKRET" sunflower oil).
+
+A category means what the person books in it, not what its name suggests: judge every category by its examples and by how often it is used. A name can mislead ("alimentacija" can be child support, not food); a category with few bookings and no similar example is almost never right. When the person writes the item itself as a description in some category (they book "vode" in one category), use that category. Groceries and household goods bought in a supermarket go where the person books their regular shopping trips, unless their examples put that kind of item elsewhere. Use null when no category fits.
+
+Answer only JSON: {"items":[{"n":<product number>,"category_id":<id from the list, or null>}]}.`
 
 // ---- category and description ----
 
@@ -381,7 +390,19 @@ func (s *Server) learnFromEdit(ctx context.Context, oldCat *int64, oldDesc strin
 // ---- handlers ----
 
 // handleSortProducts asks the AI about every product still without a category.
+// With ?redo=1 the AI's earlier answers are dropped first (the person's
+// own choices stay).
 func (s *Server) handleSortProducts(w http.ResponseWriter, r *http.Request) {
+	if queryBool(r, "redo") {
+		if !s.store.GetReceiptSettings(r.Context(), actorID(r.Context())).AIItems {
+			writeErr(w, http.StatusBadRequest, "switch on AI sorting first")
+			return
+		}
+		if _, err := s.store.ForgetAISorting(r.Context(), actorID(r.Context())); err != nil {
+			s.fail(w, err, "sort products")
+			return
+		}
+	}
 	asked, sorted, err := s.sortProducts(r.Context(), nil, 600)
 	if err != nil && asked == 0 {
 		writeErr(w, http.StatusBadRequest, err.Error())

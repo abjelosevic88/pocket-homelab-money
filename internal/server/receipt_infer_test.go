@@ -25,7 +25,7 @@ func fakeAI(t *testing.T, groceries int64, calls *atomic.Int32) *httptest.Server
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		user := req.Messages[len(req.Messages)-1].Content
-		if !strings.Contains(user, "nabavka za kuci → Fasunga") {
+		if !strings.Contains(user, `"Fasunga": `) || !strings.Contains(user, "nabavka za kuci (") || !strings.Contains(user, "(bought at ") {
 			t.Errorf("the prompt lacks the person's examples: %s", user)
 		}
 		var items []string
