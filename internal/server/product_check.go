@@ -67,9 +67,19 @@ func firstWord(key string) string {
 // runProductCheck runs the passes over every product without a group, or
 // only the given ones (a receipt just scanned). trigger: daily | manual | scan.
 func (s *Server) runProductCheck(ctx context.Context, trigger string, only []int64) (*store.ProductCheckRun, error) {
+	return s.runProductCheckMode(ctx, trigger, only, "")
+}
+
+// runProductCheckMode runs the check in a given mode ("keywords" leaves the
+// AI out, "" is the person's setting): a scan places by keywords and similar
+// products before booking and asks the AI after (refineLater).
+func (s *Server) runProductCheckMode(ctx context.Context, trigger string, only []int64, mode string) (*store.ProductCheckRun, error) {
 	uid := actorID(ctx)
 	rs := s.store.GetReceiptSettings(ctx, uid)
-	run := &store.ProductCheckRun{Trigger: trigger, Mode: rs.GroupJob, StartedAt: store.Now()}
+	if mode == "" {
+		mode = rs.GroupJob
+	}
+	run := &store.ProductCheckRun{Trigger: trigger, Mode: mode, StartedAt: store.Now()}
 	if run.Mode == "off" {
 		run.Mode = "keywords" // "run now" works with the job switched off
 	}

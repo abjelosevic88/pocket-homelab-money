@@ -76,7 +76,13 @@ func TestReceiptInference(t *testing.T) {
 	// Konzum: the AI sorts water and oil into groceries, which is most of the money
 	var res scanOut
 	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(11, 8.10)}, &res)
-	tx, reason := res.Transaction, res.Receipt.CategoryReason
+	// booked at once; the AI and the map pin come right after, and the booking follows
+	c.settle()
+	var tx *store.Transaction
+	c.do("GET", fmt.Sprintf("/api/v1/transactions/%d", res.Transaction.ID), nil, &tx)
+	var konzum store.Receipt
+	c.do("GET", fmt.Sprintf("/api/v1/receipts/%d", res.Receipt.ID), nil, &konzum)
+	reason := konzum.CategoryReason
 	res = scanOut{}
 	if tx == nil || tx.CategoryID == nil || *tx.CategoryID != fasunga.ID {
 		t.Fatalf("konzum: %+v %s", tx, res.Message)
@@ -103,6 +109,7 @@ func TestReceiptInference(t *testing.T) {
 	if res.Transaction.CategoryID == nil || *res.Transaction.CategoryID != pekara.ID || res.Transaction.Description != "Kifle i voda" || !strings.Contains(res.Receipt.CategoryReason, "your choice for Konzum") {
 		t.Fatalf("learned: %+v %q %q", res.Transaction.CategoryID, res.Transaction.Description, res.Receipt.CategoryReason)
 	}
+	c.settle()
 	if fake.geocoded.Load() != 2 { // once per shop: Konzum, the pharmacy
 		t.Errorf("geocoded %d times", fake.geocoded.Load())
 	}
@@ -112,6 +119,7 @@ func TestReceiptInference(t *testing.T) {
 	before := calls.Load()
 	res = scanOut{}
 	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(14, 3.20)}, &res)
+	c.settle()
 	if calls.Load() != before {
 		t.Fatal("AI asked while switched off")
 	}

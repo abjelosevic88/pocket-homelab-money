@@ -45,7 +45,8 @@ type Server struct {
 	errors   atomic.Int64
 	fx       *fx.Client
 
-	jobMu         sync.Mutex // one background pass (or import) at a time
+	jobMu         sync.Mutex     // one background pass (or import) at a time
+	receiptWork   sync.WaitGroup // the slow part of receipts, after their booking was answered (refineLater)
 	importing     atomic.Bool
 	importingUser atomic.Int64
 	lastImportMu  sync.Mutex

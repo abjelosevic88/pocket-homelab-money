@@ -837,7 +837,12 @@ func (s *Store) SetProductCategory(ctx context.Context, userID, id int64, cat *i
 	if cat == nil {
 		source = ""
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE products SET category_id = ?, category_source = ?, ai_checked = 1 WHERE id = ? AND user_id = ?`, nullI(cat), source, id, userID)
+	q := `UPDATE products SET category_id = ?, category_source = ?, ai_checked = 1 WHERE id = ? AND user_id = ?`
+	if source == "ai" {
+		// the AI answers after the receipt was booked: a choice the person made meanwhile stays
+		q += ` AND category_source != 'you'`
+	}
+	_, err := s.DB.ExecContext(ctx, q, nullI(cat), source, id, userID)
 	return err
 }
 

@@ -417,26 +417,49 @@ func (s *Server) receiptAccount(ctx context.Context, r *store.Receipt, hint *int
 	return s.defaultAccount(ctx, st, writable), writable
 }
 
-// prepareReceipt does the slow lookups before booking: the shop's map pin
-// and, when switched on, the AI sorting of products nobody categorised yet.
+// prepareReceipt is what booking waits for: with grouping on scan, the
+// receipt's new products placed by the groups' keywords (a database pass), so
+// their groups' categories count. The slow lookups run after the booking was
+// answered (refineLater): a scan took 8 s waiting for two AI calls.
 func (s *Server) prepareReceipt(ctx context.Context, r *store.Receipt, rs store.ReceiptSettings) *store.Receipt {
+	if !rs.GroupOnScan {
+		return r
+	}
+	return s.groupOnScan(ctx, r, "keywords")
+}
+
+// groupOnScan runs the product check for the receipt's products that have
+// no group yet, in the given mode, and returns the receipt as it is then.
+func (s *Server) groupOnScan(ctx context.Context, r *store.Receipt, mode string) *store.Receipt {
+	var ids []int64
+	for _, it := range r.Items {
+		if it.GroupID == nil && it.ProductID != nil {
+			ids = append(ids, *it.ProductID)
+		}
+	}
+	if len(ids) == 0 {
+		return r
+	}
+	run, err := s.runProductCheckMode(ctx, "scan", ids, mode)
+	if err != nil {
+		s.log.Warn("receipt: grouping", "receipt", r.ID, "err", err)
+		return r
+	}
+	if run.ByKeywords+run.BySimilar+run.ByAI > 0 {
+		if full, err := s.store.GetReceipt(ctx, r.ID); err == nil {
+			return full
+		}
+	}
+	return r
+}
+
+// enrichReceipt does the slow lookups: the shop's map pin, the product
+// check's passes (similar products, the AI) for the receipt's new products
+// and, when switched on, the AI sorting of products nobody categorised yet.
+func (s *Server) enrichReceipt(ctx context.Context, r *store.Receipt, rs store.ReceiptSettings) *store.Receipt {
 	s.placeShop(ctx, r.Merchant)
-	if rs.GroupOnScan {
-		var ids []int64
-		for _, it := range r.Items {
-			if it.GroupID == nil && it.ProductID != nil {
-				ids = append(ids, *it.ProductID)
-			}
-		}
-		if len(ids) > 0 {
-			if run, err := s.runProductCheck(ctx, "scan", ids); err != nil {
-				s.log.Warn("receipt: grouping", "receipt", r.ID, "err", err)
-			} else if run.ByKeywords+run.BySimilar+run.ByAI > 0 {
-				if full, err := s.store.GetReceipt(ctx, r.ID); err == nil {
-					r = full
-				}
-			}
-		}
+	if rs.GroupOnScan && rs.GroupJob == "ai" {
+		r = s.groupOnScan(ctx, r, "ai")
 	}
 	if !rs.AIItems {
 		return r
@@ -488,6 +511,7 @@ func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64)
 				return nil, "", err
 			}
 			t = s.fillFromReceipt(ctx, t, r)
+			s.refineLater(ctx, r.ID, 0, nil, "")
 			return t, "Linked to your transaction “" + firstNonBlank(t.Description, t.Payee, "untitled") + "” of " + t.Date + ".", nil
 		}
 	}
@@ -532,6 +556,7 @@ func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64)
 	if t.CategoryID != nil {
 		_ = s.store.SetReceiptReason(ctx, r.ID, g.Reason)
 	}
+	s.refineLater(ctx, r.ID, t.ID, t.CategoryID, t.Description)
 	how := "Booked " + majorString(r.Total, r.Currency)
 	if payee != "" {
 		how += " at " + payee
@@ -543,6 +568,62 @@ func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64)
 		how += " as " + t.CategoryName
 	}
 	return t, how + ".", nil
+}
+
+// refineLater does the slow part of a receipt once its booking has been
+// answered (enrichReceipt: map pin, product check, AI sorting). When that
+// changes what the receipt says, the booking follows as Apply would, but only
+// while it still has the category and description it was booked with (not
+// changed since, not split); it gets the shop's pin when it has none.
+// txID 0: only the receipt's products and shop.
+func (s *Server) refineLater(ctx context.Context, receiptID, txID int64, bookedCat *int64, bookedDesc string) {
+	ctx = context.WithoutCancel(ctx)
+	s.receiptWork.Add(1)
+	go func() {
+		defer s.receiptWork.Done()
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer cancel()
+		r, err := s.store.GetReceipt(ctx, receiptID)
+		if err != nil {
+			return
+		}
+		r = s.enrichReceipt(ctx, r, s.store.GetReceiptSettings(ctx, actorID(ctx)))
+		if txID == 0 {
+			return
+		}
+		t, err := s.store.GetTransaction(ctx, txID)
+		if err != nil || !s.canWrite(ctx, t.AccountID) {
+			return
+		}
+		g := s.guessReceipt(ctx, r)
+		in, changed := txIn{}, false
+		untouched := len(t.Splits) == 0 && sameID(t.CategoryID, bookedCat)
+		if untouched && g.CategoryID != nil && !sameID(g.CategoryID, t.CategoryID) {
+			in.CategoryID, changed = g.CategoryID, true
+		}
+		if untouched && t.Source == "receipt" && t.Description == bookedDesc && g.Description != "" {
+			d := g.Description
+			if t.Kind == "income" {
+				d = "Refund · " + d
+			}
+			if d != t.Description {
+				in.Description, changed = &d, true
+			}
+		}
+		if t.Lat == nil && r.Merchant != nil && r.Merchant.Lat != nil && r.Merchant.Lng != nil {
+			in.Lat, in.Lng, changed = r.Merchant.Lat, r.Merchant.Lng, true
+		}
+		if changed {
+			t = s.updateTxFrom(ctx, t, &in)
+		}
+		if untouched && g.CategoryID != nil && sameID(g.CategoryID, t.CategoryID) {
+			_ = s.store.SetReceiptReason(ctx, r.ID, g.Reason)
+		}
+	}()
+}
+
+func sameID(a, b *int64) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
 func firstNonBlank(xs ...string) string {
@@ -590,7 +671,8 @@ func (s *Server) refreshFromReceipt(ctx context.Context, t *store.Transaction, r
 	if payee == "" {
 		return t
 	}
-	r = s.prepareReceipt(ctx, r, s.store.GetReceiptSettings(ctx, actorID(ctx)))
+	rs := s.store.GetReceiptSettings(ctx, actorID(ctx))
+	r = s.enrichReceipt(ctx, s.prepareReceipt(ctx, r, rs), rs)
 	g := s.guessReceipt(ctx, r)
 	desc := g.Description
 	if t.Kind == "income" {

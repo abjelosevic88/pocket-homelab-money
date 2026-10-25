@@ -91,9 +91,13 @@ func TestRuleMatching(t *testing.T) {
 // ---- end to end over HTTP ----
 
 type tc struct {
-	t  *testing.T
-	ts *httptest.Server
+	t   *testing.T
+	ts  *httptest.Server
+	srv *Server
 }
+
+// settle waits for the work a receipt does after its booking was answered.
+func (c *tc) settle() { c.srv.receiptWork.Wait() }
 
 func (c *tc) do(method, path string, body any, out any) int {
 	c.t.Helper()
@@ -140,7 +144,8 @@ func newTestServer(t *testing.T) *tc {
 	}
 	ts := httptest.NewServer(s.Router())
 	t.Cleanup(ts.Close)
-	return &tc{t: t, ts: ts}
+	t.Cleanup(s.receiptWork.Wait) // before the database closes
+	return &tc{t: t, ts: ts, srv: s}
 }
 
 func TestEndToEnd(t *testing.T) {
