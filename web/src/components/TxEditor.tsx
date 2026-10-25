@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, upload, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { addDays, decimalsOf, fmtBytes, fmtMoney, todayISO } from '../lib/format'
-import type { Attachment, Category, Kind, Subscription, Template, Transaction } from '../lib/types'
+import type { Attachment, Category, Kind, Receipt, Subscription, Template, Transaction } from '../lib/types'
+import { ReceiptCard } from './ReceiptCard'
 
 interface Part { category_id: number | null; amount: number | null; note: string }
 import { Field, Modal, useDebounce, useToast } from './ui'
@@ -358,14 +359,17 @@ export function TxEditor({ tx, seed, onSaved, onCancel, onDeleted, page = false 
 /** The editor in a modal; loads the full transaction (tags, receipts) first. */
 export function TxModal({ id, seed, onClose, onChanged }: { id?: number; seed?: TxSeed; onClose: () => void; onChanged: () => void }) {
   const [tx, setTx] = useState<Transaction | null>(null)
+  const [receipt, setReceipt] = useState<Receipt | null>(null)
   useEffect(() => { if (id) api.get<Transaction>(`${V1}/transactions/${id}`).then(setTx).catch(() => onClose()) }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tx?.receipt_id) api.get<Receipt>(`${V1}/transactions/${tx.id}/receipt`).then(setReceipt).catch(() => setReceipt(null)) }, [tx?.id, tx?.receipt_id])
   if (id && !tx) return null
   return (
     <Modal title={tx ? 'Transaction' : 'New transaction'} onClose={onClose}>
-      <TxEditor tx={tx || undefined} seed={seed} onCancel={onClose} onSaved={(_, again) => { onChanged(); if (!again) onClose() }} onDeleted={() => { onChanged(); onClose() }} />
+      {receipt && tx && <ReceiptCard receipt={receipt} tx={tx} onChanged={t => { setTx(t); onChanged() }} />}
+      <TxEditor key={tx?.updated_at} tx={tx || undefined} seed={seed} onCancel={onClose} onSaved={(_, again) => { onChanged(); if (!again) onClose() }} onDeleted={() => { onChanged(); onClose() }} />
     </Modal>
   )
 }
 
 // transactions another Pocket app booked through a Core link carry its slug
-const POCKET_SOURCES: Record<string, string> = { garage: 'Pocket Garage', kitchen: 'Pocket Kitchen', travel: 'Pocket Travel', split: 'Pocket Split', invoicing: 'Pocket Invoicing' }
+const POCKET_SOURCES: Record<string, string> = { receipt: 'a scanned fiscal receipt', garage: 'Pocket Garage', kitchen: 'Pocket Kitchen', travel: 'Pocket Travel', split: 'Pocket Split', invoicing: 'Pocket Invoicing' }

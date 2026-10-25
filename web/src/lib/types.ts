@@ -42,6 +42,8 @@ export interface Transaction {
   tags: string[]; account_name: string; currency: string; to_account_name?: string; to_currency?: string
   category_name: string; category_icon: string; category_color: string; subscription_name?: string; created_by_name?: string
   attachments?: Attachment[]; attachment_count: number; splits: Split[] | null; balance_after?: number
+  /** booked from (or linked to) a scanned fiscal receipt */
+  receipt_id?: number | null
 }
 export interface Split { id: number; category_id: number | null; amount: number; foreign_amount: number; amount_home: number; note: string; category_name: string; category_icon: string }
 export interface TxTotals { count: number; income: number; expense: number; transfers: number; net: number }
@@ -139,3 +141,43 @@ export interface AuditEntry {
 }
 export interface AuditActor { key: string; user_id: number | null; name: string }
 export interface AuditPage { items: AuditEntry[]; next_before: number | null; actors: AuditActor[] }
+
+// ---- fiscal receipts ----
+export interface ReceiptProvider { id: string; country: string; name: string; currency: string; items: boolean; note?: string }
+export interface Merchant {
+  id: number; country: string; tax_id: string; name: string; display_name: string; address: string; city: string
+  category_id: number | null; account_id: number | null; created_at: string
+  receipts: number; spent: number; currency: string; last_date: string; category_name: string; category_icon: string
+}
+export interface ReceiptItem {
+  id: number; line: number; name: string; gtin: string; quantity: number; unit: string; unit_price: number; total: number; tax_label: string
+  product_id: number | null; product_name: string; group_id: number | null; group_name: string; group_icon: string; category_id: number | null
+}
+export type PayMethod = 'cash' | 'card' | 'transfer' | 'voucher' | 'check' | 'other' | ''
+export interface Receipt {
+  id: number; user_id: number; provider: string; country: string; receipt_key: string; invoice_number: string; merchant_id: number | null; location: string
+  issued_at: string; date: string; time: string; currency: string; total: number; tax_total: number; method: PayMethod; payments: { method: PayMethod; amount: number }[]
+  kind: 'sale' | 'refund'; invoice_type: string; referent: string; cashier: string; device: string; journal?: string; url: string
+  complete: boolean; has_items: boolean; transaction_id: number | null; created_at: string; updated_at: string
+  items: ReceiptItem[]; merchant?: Merchant; item_count: number
+}
+export type ScanStatus = 'pending' | 'done' | 'partial' | 'duplicate' | 'invalid' | 'skipped' | 'unsupported' | 'failed'
+export interface ReceiptScan {
+  id: number; provider: string; country: string; url: string; receipt_key: string; status: ScanStatus; message: string; attempts: number; next_try_at: string
+  receipt_id: number | null; source: string; account_id: number | null; created_at: string; updated_at: string
+  has_raw: boolean; transaction_id: number | null; merchant_name: string; total: number; currency: string
+}
+export interface ScanResult {
+  status: 'booked' | 'linked' | 'duplicate' | 'partial' | 'pending' | 'invalid' | 'skipped' | 'unsupported' | 'failed'
+  message: string; scan: ReceiptScan; receipt?: Receipt; transaction?: Transaction
+}
+export interface ReceiptSettings { card_account_id: number | null; cash_account_id: number | null; split_items: boolean; attach_manual: boolean }
+export interface ItemStats {
+  key: number; name: string; icon: string; group_id?: number | null; purchases: number; lines: number; quantity: number; unit: string
+  spent: number; avg_price: number; last_date: string; last_price: number; last_currency: string; products: number
+  category_id?: number | null; keywords?: string; locked?: boolean
+}
+export interface Purchase {
+  date: string; time: string; receipt_id: number; transaction_id: number | null; product_id: number | null; name: string; quantity: number; unit: string
+  unit_price: number; total: number; currency: string; home: number; merchant_id: number | null; merchant: string
+}

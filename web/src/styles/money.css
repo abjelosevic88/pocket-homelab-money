@@ -447,3 +447,47 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 /* stacked forms: one column that never grows past the dialog (a long nowrap button would widen it on phones) */
 .grid { grid-template-columns: minmax(0, 1fr); }
 .btn.wrap-btn { white-space: normal; text-align: left; height: auto; min-height: 28px; padding-top: 4px; padding-bottom: 4px; max-width: 100%; }
+
+/* ---- fiscal receipts ---- */
+.scan { display: grid; gap: 12px; }
+.scan-view { position: relative; aspect-ratio: 4 / 3; background: #0b0f14; border-radius: var(--radius-lg); overflow: hidden; display: grid; place-items: center; }
+.scan-view video { width: 100%; height: 100%; object-fit: cover; display: none; }
+.scan-view.on video { display: block; }
+.scan-idle { display: grid; gap: 10px; justify-items: center; color: #cbd5e1; text-align: center; padding: 16px; }
+.scan-frame { position: absolute; inset: 14% 18%; border: 3px solid rgba(255, 255, 255, .85); border-radius: 18px; box-shadow: 0 0 0 999px rgba(0, 0, 0, .35); pointer-events: none; }
+.scan-busy { position: absolute; inset: 0; display: flex; gap: 10px; align-items: center; justify-content: center; background: rgba(11, 15, 20, .7); color: #fff; font-weight: 600; }
+.scan-result { display: grid; gap: 12px; }
+.scan-result-head { display: flex; gap: 12px; align-items: flex-start; }
+.scan-result-head .big { font-size: 30px; line-height: 1; }
+.scan-sum { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: grid; gap: 6px; background: var(--surface-2); }
+.scan-items { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
+.scan-items li { display: flex; justify-content: space-between; gap: 10px; }
+
+.receipt-card { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 14px; display: grid; gap: 10px; background: var(--surface-2); }
+.rc-head { display: flex; gap: 10px; align-items: flex-start; }
+.rc-icon { font-size: 22px; line-height: 1.2; }
+.rc-shop { flex: 1; min-width: 0; }
+.rc-total { text-align: right; white-space: nowrap; }
+.rc-note { font-size: 12.5px; color: var(--text-2); background: var(--surface); border-radius: 8px; padding: 6px 10px; }
+.rc-items { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rc-items td { padding: 4px 0; border-bottom: 1px dashed var(--hairline); vertical-align: top; }
+.rc-items tr:last-child td { border-bottom: 0; }
+.rc-name { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.rc-qty { font-size: 12px; white-space: nowrap; padding-left: 8px !important; }
+.rc-amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 10px !important; }
+.rc-group { font-weight: 550; }
+.rc-group.muted { background: transparent; border: 1px dashed var(--border); color: var(--muted); }
+.rc-foot { display: flex; gap: 12px; flex-wrap: wrap; }
+.rc-journal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.35; background: var(--surface); border-radius: 8px; padding: 10px; overflow-x: auto; margin: 0; white-space: pre; }
+
+.prod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.prod-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; cursor: pointer; display: grid; gap: 3px; }
+.prod-card:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.prod-card.unused { opacity: .65; }
+.prod-top { display: flex; align-items: center; gap: 8px; }
+.prod-top b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-ico { font-size: 20px; line-height: 1; }
+.prod-big { font-size: 20px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.item-strip { background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; align-items: center; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.steps code { font-size: 12px; }

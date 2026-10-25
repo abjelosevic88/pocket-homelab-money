@@ -180,6 +180,7 @@ type Transaction struct {
 	CreatedByName   string       `json:"created_by_name,omitempty"`
 	Attachments     []Attachment `json:"attachments,omitempty"`
 	AttachmentCount int          `json:"attachment_count"`
+	ReceiptID       *int64       `json:"receipt_id"` // booked from (or linked to) a scanned fiscal receipt
 	Splits          []Split      `json:"splits"`
 	BalanceAfter    *int64       `json:"balance_after,omitempty"` // account balance after it (single-account lists)
 }

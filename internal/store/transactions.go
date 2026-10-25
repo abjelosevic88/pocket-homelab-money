@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
+	"github.com/abjelosevic88/pocket-homelab-money/internal/fiscal"
 	"strings"
 )
 
@@ -26,6 +27,9 @@ type TxFilter struct {
 	SubscriptionID int64
 	Source         string
 	ExternalPrefix string
+	ProductGroupID int64 // has a receipt line in this product group
+	ProductID      int64 // has a receipt line of this product
+	HasReceipt     bool
 	Limit, Offset  int
 	Oldest         bool
 }
@@ -34,7 +38,8 @@ const txSelect = `SELECT t.id, COALESCE(t.user_id, 0), t.kind, t.date, t.time, t
 	t.amount_home, t.fx_rate, t.description, t.payee, t.category_id, t.notes, t.subscription_id, t.source, t.external_id, t.lat, t.lng,
 	t.created_by, t.created_at, t.updated_at,
 	a.name, a.currency, COALESCE(b.name, ''), COALESCE(b.currency, ''), COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(c.color, ''),
-	COALESCE(s.name, ''), COALESCE(u.name, u.email, ''), (SELECT COUNT(1) FROM attachments x WHERE x.transaction_id = t.id)
+	COALESCE(s.name, ''), COALESCE(u.name, u.email, ''), (SELECT COUNT(1) FROM attachments x WHERE x.transaction_id = t.id),
+	(SELECT r.id FROM receipts r WHERE r.transaction_id = t.id ORDER BY r.id LIMIT 1)
 	FROM transactions t
 	JOIN accounts a ON a.id = t.account_id
 	LEFT JOIN accounts b ON b.id = t.to_account_id
@@ -48,7 +53,7 @@ func scanTx(row interface{ Scan(...any) error }) (*Transaction, error) {
 		&t.AmountHome, &t.FXRate, &t.Description, &t.Payee, &t.CategoryID, &t.Notes, &t.SubscriptionID, &t.Source, &t.ExternalID, &t.Lat, &t.Lng,
 		&t.CreatedBy, &t.CreatedAt, &t.UpdatedAt,
 		&t.AccountName, &t.Currency, &t.ToAccountName, &t.ToCurrency, &t.CategoryName, &t.CategoryIcon, &t.CategoryColor,
-		&t.SubscriptionNm, &t.CreatedByName, &t.AttachmentCount)
+		&t.SubscriptionNm, &t.CreatedByName, &t.AttachmentCount, &t.ReceiptID)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -106,9 +111,10 @@ func (f *TxFilter) where() (string, []any) {
 	}
 	if q := strings.TrimSpace(f.Q); q != "" {
 		for _, w := range strings.Fields(strings.ToLower(q)) {
-			conds = append(conds, "(lower(t.description) LIKE ? OR lower(t.payee) LIKE ? OR lower(t.notes) LIKE ? OR lower(COALESCE(c.name,'')) LIKE ? OR EXISTS (SELECT 1 FROM transaction_tags x JOIN tags g ON g.id = x.tag_id WHERE x.transaction_id = t.id AND lower(g.name) LIKE ?))")
+			conds = append(conds, "(lower(t.description) LIKE ? OR lower(t.payee) LIKE ? OR lower(t.notes) LIKE ? OR lower(COALESCE(c.name,'')) LIKE ? OR EXISTS (SELECT 1 FROM transaction_tags x JOIN tags g ON g.id = x.tag_id WHERE x.transaction_id = t.id AND lower(g.name) LIKE ?)"+
+				" OR EXISTS (SELECT 1 FROM receipts r JOIN receipt_items i ON i.receipt_id = r.id WHERE r.transaction_id = t.id AND i.norm LIKE ?))")
 			like := "%" + w + "%"
-			args = append(args, like, like, like, like, like)
+			args = append(args, like, like, like, like, like, "%"+fiscal.Fold(w)+"%")
 		}
 	}
 	if f.Payee != "" {
@@ -130,6 +136,17 @@ func (f *TxFilter) where() (string, []any) {
 	if f.Source != "" {
 		conds = append(conds, "t.source = ?")
 		args = append(args, f.Source)
+	}
+	if f.ProductGroupID > 0 {
+		conds = append(conds, "EXISTS (SELECT 1 FROM receipts r JOIN receipt_items i ON i.receipt_id = r.id JOIN products p ON p.id = i.product_id WHERE r.transaction_id = t.id AND p.group_id = ?)")
+		args = append(args, f.ProductGroupID)
+	}
+	if f.ProductID > 0 {
+		conds = append(conds, "EXISTS (SELECT 1 FROM receipts r JOIN receipt_items i ON i.receipt_id = r.id WHERE r.transaction_id = t.id AND i.product_id = ?)")
+		args = append(args, f.ProductID)
+	}
+	if f.HasReceipt {
+		conds = append(conds, "EXISTS (SELECT 1 FROM receipts r WHERE r.transaction_id = t.id)")
 	}
 	if f.ExternalPrefix != "" {
 		conds = append(conds, "t.external_id LIKE ? || '%'")

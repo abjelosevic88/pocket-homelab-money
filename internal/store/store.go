@@ -175,6 +175,7 @@ func (s *Store) CountsFor(ctx context.Context, userID int64) map[string]int {
 		"rules":         `SELECT COUNT(1) FROM rules WHERE owner_id = ?`,
 		"attachments":   `SELECT COUNT(1) FROM attachments x JOIN transactions t ON t.id = x.transaction_id WHERE t.user_id = ?`,
 		"api_tokens":    `SELECT COUNT(1) FROM api_tokens WHERE user_id = ?`,
+		"receipts":      `SELECT COUNT(1) FROM receipts WHERE user_id = ?`,
 	}
 	out := map[string]int{}
 	for k, sq := range q {

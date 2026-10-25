@@ -8,6 +8,7 @@ import { Icon } from './icons'
 import { Sidebar } from './Sidebar'
 import { CommandPalette, type PaletteCommand } from './CommandPalette'
 import { ShortcutsSheet } from './ShortcutsSheet'
+import { ReceiptScanner } from './ReceiptScanner'
 import { TxModal } from './TxEditor'
 import { AccountForm } from '../pages/Accounts'
 import { SubForm } from '../pages/Subscriptions'
@@ -16,7 +17,7 @@ import { AskButton } from './AskButton'
 
 const SIDEBAR_KEY = 'pm-sidebar'
 
-export type CreateKind = Kind | 'page' | 'account' | 'subscription'
+export type CreateKind = Kind | 'page' | 'account' | 'subscription' | 'receipt'
 
 export default function Layout() {
   const { accounts, reloadAccounts } = useApp()
@@ -68,6 +69,7 @@ export default function Layout() {
         case 'n': e.preventDefault(); createRef.current('expense'); break
         case 'i': e.preventDefault(); createRef.current('income'); break
         case 'x': e.preventDefault(); createRef.current('transfer'); break
+        case 'q': e.preventDefault(); createRef.current('receipt'); break
         case 'h': go('/'); break
         case 't': go('/transactions'); break
         case 'a': go('/accounts'); break
@@ -87,6 +89,9 @@ export default function Layout() {
     { id: 'expense', label: 'New expense', icon: 'arrow-up', hint: 'N', keywords: 'add transaction spend pay', run: () => create('expense') },
     { id: 'income', label: 'New income', icon: 'arrow-down', hint: 'I', keywords: 'add transaction salary', run: () => create('income') },
     { id: 'transfer', label: 'New transfer', icon: 'transfer', hint: 'X', keywords: 'add transaction move', run: () => create('transfer') },
+    { id: 'receipt', label: 'Scan a receipt', icon: 'camera', hint: 'Q', keywords: 'qr fiscal racun račun bill scan', run: () => create('receipt') },
+    { id: 'receipts', label: 'Receipts & scan log', icon: 'receipt', keywords: 'fiscal racun shops merchants', run: () => navigate('/receipts') },
+    { id: 'products', label: 'Products', icon: 'package', keywords: 'items groceries milk mlijeko groups prices', run: () => navigate('/products') },
     { id: 'add', label: 'Quick entry page', icon: 'zap', keywords: 'add quick templates', run: () => navigate('/add') },
     { id: 'account', label: 'New account', icon: 'bank', keywords: 'create bank cash card', run: () => create('account') },
     { id: 'subscription', label: 'New subscription or bill', icon: 'repeat', keywords: 'create recurring rent', run: () => create('subscription') },
@@ -118,13 +123,14 @@ export default function Layout() {
       {palette && <CommandPalette onClose={() => setPalette(false)} commands={commands} />}
       {shortcuts && <ShortcutsSheet onClose={() => setShortcuts(false)} />}
       {txKind && <TxModal seed={{ kind: txKind, ...(modal?.account ? { account_id: modal.account.id } : {}) }} onClose={() => setModal(null)} onChanged={changed} />}
+      {modal?.kind === 'receipt' && <ReceiptScanner onClose={() => { setModal(null); changed() }} />}
       {modal?.kind === 'account' && <AccountForm onClose={() => setModal(null)} onSaved={a => { setModal(null); reloadAccounts().catch(() => {}); navigate(`/accounts/${a.id}`) }} />}
       {modal?.kind === 'subscription' && <SubForm sub={{}} onClose={() => setModal(null)} onSaved={s => { setModal(null); navigate(`/subscriptions/${s.id}`); setRev(r => r + 1) }} />}
     </div>
   )
 }
 
-const SECTION: Record<string, string> = { '': 'Home', add: 'Add', transactions: 'Transactions', accounts: 'Accounts', budgets: 'Budgets', subscriptions: 'Subscriptions', goals: 'Goals', reports: 'Reports', audit: 'Audit log' }
+const SECTION: Record<string, string> = { '': 'Home', add: 'Add', transactions: 'Transactions', accounts: 'Accounts', budgets: 'Budgets', subscriptions: 'Subscriptions', goals: 'Goals', reports: 'Reports', audit: 'Audit log', receipts: 'Receipts', products: 'Products' }
 
 function TopBar({ onMenu, onPalette, mobile, compact, sidebarOpen }: { onMenu: () => void; onPalette: () => void; mobile: boolean; compact: boolean; sidebarOpen: boolean }) {
   const { user, themeMode, setThemeMode, status, setUser, accounts } = useApp()

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-money/internal/currency"
+	"github.com/abjelosevic88/pocket-homelab-money/internal/fiscal"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/quick"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
@@ -588,6 +589,9 @@ func (s *Server) txFilter(r *http.Request) store.TxFilter {
 		Q: q.Get("q"), Payee: q.Get("payee"), Source: q.Get("source"), Limit: queryInt(r, "limit"), Offset: queryInt(r, "offset"), Oldest: queryBool(r, "oldest")}
 	f.AccountID, _ = strconv.ParseInt(q.Get("account"), 10, 64)
 	f.SubscriptionID, _ = strconv.ParseInt(q.Get("subscription"), 10, 64)
+	f.ProductGroupID, _ = strconv.ParseInt(q.Get("product_group"), 10, 64)
+	f.ProductID, _ = strconv.ParseInt(q.Get("product"), 10, 64)
+	f.HasReceipt = queryBool(r, "receipt")
 	if c := q.Get("category"); c == "none" {
 		f.Uncategorized = true
 	} else if c != "" {
@@ -1141,10 +1145,29 @@ func (s *Server) handleQuickAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	drafts := in.Drafts
+	created := []*store.Transaction{}
 	if len(drafts) == 0 {
 		c, _ := s.quickContext(ctx)
 		for _, line := range splitLines(in.Text) {
+			if fiscal.IsReceiptURL(line) {
+				// a fiscal receipt's QR link: read and book the receipt
+				res, err := s.scanReceipt(ctx, line, scanOptions{Source: "quick"})
+				if err != nil {
+					s.fail(w, err, "scan receipt")
+					return
+				}
+				if res.Transaction == nil {
+					writeErr(w, http.StatusBadRequest, res.Message)
+					return
+				}
+				created = append(created, res.Transaction)
+				continue
+			}
 			drafts = append(drafts, quick.Parse(line, c))
+		}
+		if len(drafts) == 0 && len(created) > 0 {
+			writeJSON(w, http.StatusCreated, created)
+			return
 		}
 	}
 	if len(drafts) == 0 {
@@ -1157,7 +1180,6 @@ func (s *Server) handleQuickAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	created := []*store.Transaction{}
 	for i, d := range drafts {
 		ti := draftToIn(d, "quick")
 		t, msg, err := s.createTx(ctx, &ti)

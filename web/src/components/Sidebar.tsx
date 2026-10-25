@@ -29,6 +29,7 @@ export function Sidebar({ onCreate, onNavigate, rev }: { onCreate: (k: CreateKin
     { label: 'Expense', icon: 'arrow-up', hint: 'N', onSelect: () => onCreate('expense') },
     { label: 'Income', icon: 'arrow-down', hint: 'I', onSelect: () => onCreate('income') },
     { label: 'Transfer', icon: 'transfer', hint: 'X', onSelect: () => onCreate('transfer') },
+    { label: 'Scan a receipt', icon: 'camera', hint: 'Q', onSelect: () => onCreate('receipt') },
     { label: 'Quick entry page', icon: 'zap', onSelect: () => onCreate('page') },
     'sep',
     { label: 'Account', icon: 'bank', onSelect: () => onCreate('account') },
@@ -42,6 +43,8 @@ export function Sidebar({ onCreate, onNavigate, rev }: { onCreate: (k: CreateKin
     { to: '/subscriptions', label: 'Subscriptions', icon: 'repeat', badge: due },
     { to: '/goals', label: 'Goals', icon: 'target' },
     { to: '/reports', label: 'Reports', icon: 'chart' },
+    { to: '/receipts', label: 'Receipts', icon: 'receipt' },
+    { to: '/products', label: 'Products', icon: 'package' },
     ...(ownsAny ? [{ to: '/audit', label: 'Audit log', icon: 'history' }] : []),
   ]
   return (

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, upload, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
-import type { Currency, Draft, QuickSuggestion, Transaction } from '../lib/types'
+import type { Currency, Draft, QuickSuggestion, ScanResult, Transaction } from '../lib/types'
 import { useDebounce, useToast } from './ui'
 import { Icon } from './icons'
 
@@ -18,6 +18,9 @@ function leadWords(text: string): string {
   }
   return out.join(' ')
 }
+
+/** A fiscal receipt's QR link (pasted, or typed by a barcode scanner). */
+const RECEIPT_URL = /^\s*https?:\/\/(suf\.poreskaupravars\.org|suf\.purs\.gov\.rs|mapr\.tax\.gov\.me|efi\.porezi\.me|(www\.)?porezna\.gov\.hr)\//i
 
 /** One line → one (or more, split by ";" or new lines) transactions.
  *  Parsed on the server as you type; Enter books it. Templates that fit the
@@ -40,9 +43,10 @@ export function QuickAdd({ onAdded, autoFocus = false, placeholder }: { onAdded:
   const dq = useDebounce(text, 160)
   const ai = settings?.ai_configured
 
+  const isReceipt = RECEIPT_URL.test(text)
   useEffect(() => {
     if (aiDrafts) return
-    if (!dq.trim()) { setDrafts([]); setSugs([]); return }
+    if (!dq.trim() || RECEIPT_URL.test(dq)) { setDrafts([]); setSugs([]); return }
     api.post<Draft[]>(`${V1}/quick/parse`, { text: dq }).then(setDrafts).catch(() => setDrafts([]))
     api.post<{ suggestions: QuickSuggestion[] }>(`${V1}/quick/suggest`, { text: dq })
       .then(r => { setSugs(r.suggestions); setActive(-1) }).catch(() => setSugs([]))
@@ -59,10 +63,19 @@ export function QuickAdd({ onAdded, autoFocus = false, placeholder }: { onAdded:
     setText(next); setClosedLead(leadWords(next)); setActive(-1)
     input.current?.focus()
   }
-  const ready = shown.length > 0 && shown.every(d => d.ready)
+  const ready = isReceipt || (shown.length > 0 && shown.every(d => d.ready))
   const book = async () => {
     if (!text.trim() || busy) return
     setBusy(true)
+    if (isReceipt) {
+      try {
+        const r = await api.post<ScanResult>(`${V1}/receipts/scan`, { url: text.trim(), source: 'quick' })
+        toast(r.message, r.transaction ? undefined : 'err')
+        setText('')
+        if (r.transaction) { reloadAccounts(); onAdded([r.transaction]) }
+      } catch (e) { toast((e as Error).message, 'err') } finally { setBusy(false) }
+      return
+    }
     try {
       const body = aiDrafts ? { drafts: aiDrafts } : { text }
       const out = await api.post<Transaction[]>(`${V1}/quick`, body)
@@ -129,6 +142,7 @@ export function QuickAdd({ onAdded, autoFocus = false, placeholder }: { onAdded:
         {ai && text.trim() && !aiDrafts && <button type="button" className="btn ghost sm" onClick={() => askAI()} disabled={busy} title="Let the AI read it (several items, any wording)"><Icon name="sparkles" size={15} />AI</button>}
         <button type="button" className="btn primary" onClick={book} disabled={!ready || busy}>{busy ? '…' : shown.length > 1 ? `Add ${shown.length}` : 'Add'}</button>
       </div>
+      {isReceipt && <div className="drafts"><div className="draft"><span style={{ fontSize: 18 }}>🧾</span><span className="what">Fiscal receipt</span><span className="bits"><span>Enter reads it from the tax office and books it</span></span></div></div>}
       {showSugs && (
         <div className="tpl-suggest" id="quick-suggest" role="listbox" aria-label="Templates">
           {sugs.map((sg, i) => (

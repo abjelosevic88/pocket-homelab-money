@@ -44,7 +44,7 @@ Another Pocket app can act for a person here with a `pcx_` token from Pocket Cor
 
 | | |
 |---|---|
-| `GET /transactions` | filters: `account, kind, category (ids, comma separated, or none), tag, from, to, q, payee, min, max (home minor units), subscription, source, limit (≤1000), offset, oldest`. Returns `{items, totals:{count, income, expense, transfers, net}, has_more}`. With `account`, every item has `balance_after` — the account's balance after it. A category filter matches split parts and totals count only those parts |
+| `GET /transactions` | filters: `account, kind, category (ids, comma separated, or none), tag, from, to, q, payee, min, max (home minor units), subscription, source, product_group, product, receipt (1 = booked from a receipt), limit (≤1000), offset, oldest`. `q` also matches the item names of the transaction's receipt. Every item has `receipt_id` when it was booked from (or linked to) a scanned receipt. Returns `{items, totals:{count, income, expense, transfers, net}, has_more}`. With `account`, every item has `balance_after` — the account's balance after it. A category filter matches split parts and totals count only those parts |
 | `POST /transactions` | `kind (expense/income/transfer), date, time, account_id, amount, currency, account_amount, to_account_id, to_amount, description, payee, category_id, tags, notes, subscription_id, lat, lng, template_id, skip_rules, splits` — see below |
 | `GET/PUT/DELETE /transactions/{id}` · `POST /transactions/{id}/duplicate` | |
 | `POST /transactions/bulk` `{ids, action: delete|category|add_tags|remove_tags, category_id, tags}` | |
@@ -57,12 +57,42 @@ Another Pocket app can act for a person here with a `pcx_` token from Pocket Cor
 
 **Pipeline on create:** rules → running Pocket Travel trip tag (see [Pocket Travel](#pocket-travel)) → insert → link to the subscription it pays (name/match words, amount ±20 %, around the due date) → template use counter.
 
+## Fiscal receipts
+
+| | |
+|---|---|
+| `POST /receipts/scan` `{url, account_id?, source?}` (JSON or a form) | reads a receipt's QR link, books it; `?format=text` answers one line for a phone notification. Returns `{status, message, scan, receipt, transaction}` with status `booked` (201) · `linked` (to a matching hand-typed transaction, 201) · `partial` (booked from the QR code alone, the tax office is retried, 201) · `duplicate` · `pending` · `skipped` (proforma/training) · `invalid` (422) · `unsupported` (422) · `failed` |
+| `GET /receipts/providers` | supported countries |
+| `GET /receipts` `?q, merchant, from, to, limit, offset` · `GET /receipts/{id}` · `DELETE /receipts/{id}[?transaction=1]` | receipts with items, shop and payments |
+| `POST /receipts/{id}/book` `{account_id?}` | book a receipt whose transaction was deleted |
+| `POST /receipts/{id}/split[?undo=1]` | split its transaction by the categories of the items' product groups (or join it back) |
+| `GET /transactions/{id}/receipt` | the receipt behind a transaction |
+| `GET /receipts/scans` `?status, limit, offset` · `POST /receipts/scans/{id}/retry` · `GET /receipts/scans/{id}/raw` | the scan log, every scan as it came in, with the tax office's raw answer |
+| `GET/PUT /receipts/settings` | `card_account_id, cash_account_id, split_items, attach_manual` |
+| `GET /merchants` · `PUT /merchants/{id}` `{display_name, category_id, account_id, apply}` | shops; `apply` also renames and re-categorises what was booked from them |
+
+**How a scan is booked.** The link is decoded offline first (Serbia/Republika Srpska: receipt number, total and time are in the code; Montenegro and Croatia: in the URL). The receipt is fetched from the tax office (`/v/?vl=…` with `Accept: application/json`, Montenegro's `/ic/api/verifyInvoice`); a receipt already stored is a duplicate. The account is: the one passed, else the shop's, else the card or cash account from the settings (cash: the first cash account), else the default. The category is the shop's, else the one learned for that payee, else the items' group category when they all agree. With `attach_manual`, an unlinked expense with the same amount (in the receipt's currency) within a day is linked instead of booking a second one, and its empty payee/category are filled in. Scans the tax office could not answer are retried by the background job after 10 min, 30 min, 2 h, 6 h, 12 h, then daily, eight times.
+
+**Adding a country** is one file in `internal/fiscal` implementing `Provider` (`Match`, `Decode`, `Fetch`, `Parse`) and a line in the `providers` list.
+
+## Products (receipt items)
+
+| | |
+|---|---|
+| `GET /products/groups` `?from, to, merchant` | every group with `purchases, quantity, unit, spent (home), avg_price, products, last_date`; “no group” is `key: 0` |
+| `POST /products/groups` `{name, icon, keywords, category_id}` · `PUT/DELETE /products/groups/{id}` · `POST /products/groups/starter` | groups; saving regroups the products not placed by hand (`moved`) |
+| `GET /products` `?group (id or none), merchant, from, to, q` · `PUT /products/{id}` `{name, group_id, auto}` | products with the same statistics; `group_id` places one by hand, `auto` hands it back to keyword matching |
+| `GET /products/purchases` `?group, product, merchant, from, to` | every line, newest first (price history) |
+| `GET /products/summary` `?product_group | product, from, to` | one total, for a filtered transaction list |
+
+A product is an item name folded to lowercase Latin without diacritics and without the unit suffix (`MLIJEKO 2.8% 1L/KO` → `mlijeko 2.8% 1l`). A product joins the group whose keyword starts a word in its name; the longest matching keyword wins.
+
 ## Quick add
 
 | | |
 |---|---|
 | `POST /quick/parse` `{text}` | one draft per line (`;` or newline): kind, amount, currency, date, account, category, tags, template, what was recognised, `account_amount`, `ready` |
-| `POST /quick` `{text}` or `{drafts}` | books them |
+| `POST /quick` `{text}` or `{drafts}` | books them; a line that is a fiscal receipt link is scanned like `POST /receipts/scan` |
 
 Grammar: `[template or words] amount[currency] [currency word] [date] [@account] [>to-account] [#tag]`, e.g. `kafa 3,5`, `cg hrana 20 eur`, `+1500 plata`, `gorivo 80 juče`, `taxi 12 usd @cash #lisbon`, `100 >savings`. Dates: `today/danas`, `yesterday/juče`, `prekjuče`, weekday names, `-2d`, `12.10.`, `2026-10-12`. Templates match by the start of their name or an alias.
 

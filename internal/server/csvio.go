@@ -420,7 +420,20 @@ func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
 	tpls, _ := s.store.ListTemplates(ctx, uid)
 	rules, _ := s.store.ListRules(ctx, uid)
 	st, _ := s.store.GetSettings(ctx, actorID(ctx))
+	recs, _, _ := s.store.ListReceipts(ctx, store.ReceiptFilter{UserID: uid, Limit: 500})
+	for off := 500; len(recs) == off; off += 500 {
+		more, _, _ := s.store.ListReceipts(ctx, store.ReceiptFilter{UserID: uid, Limit: 500, Offset: off})
+		recs = append(recs, more...)
+	}
+	for i := range recs {
+		if full, err := s.store.GetReceipt(ctx, recs[i].ID); err == nil {
+			recs[i] = *full
+		}
+	}
+	merchants, _ := s.store.ListMerchants(ctx, uid)
+	groups, _ := s.store.ListGroups(ctx, uid)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="pocket-money-%s.json"`, store.Today()))
 	writeJSON(w, http.StatusOK, map[string]any{"app": "pocket-money", "version": Version, "exported_at": store.Now(), "home_currency": st.HomeCurrency,
-		"accounts": accts, "categories": cats, "tags": tags, "transactions": txs, "subscriptions": subs, "budgets": budgets, "goals": goals, "templates": tpls, "rules": rules})
+		"accounts": accts, "categories": cats, "tags": tags, "transactions": txs, "subscriptions": subs, "budgets": budgets, "goals": goals, "templates": tpls, "rules": rules,
+		"receipts": recs, "merchants": merchants, "product_groups": groups})
 }

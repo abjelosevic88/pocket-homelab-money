@@ -278,6 +278,7 @@ func (s *Server) runJobs(ctx context.Context, mirror bool) {
 	// while someone's Firefly is still the source, its own recurrences book theirs
 	s.bookDueSubscriptions(ctx, mirrored)
 	s.bookDueInterest(ctx)
+	s.retryReceiptScans(ctx)
 	for i := range users {
 		s.maybeNotify(context.WithValue(ctx, userKey, &users[i]))
 	}
@@ -402,6 +403,32 @@ func (s *Server) Router() http.Handler {
 			r.Post("/transactions/{id}/attachments", s.handleUploadAttachment)
 			r.Get("/attachments/{id}", s.handleGetAttachment)
 			r.Delete("/attachments/{id}", s.handleDeleteAttachment)
+			r.Get("/transactions/{id}/receipt", s.handleTransactionReceipt)
+
+			r.Get("/receipts/providers", s.handleReceiptProviders)
+			r.Post("/receipts/scan", s.handleScanReceipt)
+			r.Get("/receipts/scans", s.handleListScans)
+			r.Post("/receipts/scans/{id}/retry", s.handleRetryScan)
+			r.Get("/receipts/scans/{id}/raw", s.handleScanRaw)
+			r.Get("/receipts/settings", s.handleGetReceiptSettings)
+			r.Put("/receipts/settings", s.handlePutReceiptSettings)
+			r.Get("/receipts", s.handleListReceipts)
+			r.Get("/receipts/{id}", s.handleGetReceipt)
+			r.Delete("/receipts/{id}", s.handleDeleteReceipt)
+			r.Post("/receipts/{id}/book", s.handleBookReceipt)
+			r.Post("/receipts/{id}/split", s.handleSplitReceipt)
+			r.Get("/merchants", s.handleListMerchants)
+			r.Put("/merchants/{id}", s.handleUpdateMerchant)
+			r.Get("/products/groups", s.handleProductGroups)
+			r.Post("/products/groups", s.handleCreateProductGroup)
+			r.Post("/products/groups/starter", s.handleStarterGroups)
+			r.Put("/products/groups/{id}", s.handleUpdateProductGroup)
+			r.Delete("/products/groups/{id}", s.handleDeleteProductGroup)
+			r.Get("/products/summary", s.handleProductSummary)
+			r.Get("/products/purchases", s.handlePurchases)
+			r.Get("/products", s.handleProducts)
+			r.Put("/products/{id}", s.handleUpdateProduct)
+
 			r.Get("/suggest", s.handleSuggest)
 			r.Get("/payees", s.handlePayees)
 
