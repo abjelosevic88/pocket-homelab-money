@@ -332,7 +332,7 @@ input.bare, textarea.bare { border-color: transparent; background: transparent; 
 .modal-head { display: flex; align-items: center; gap: 10px; padding: 16px 16px 6px 22px; }
 .modal-head h2 { flex: 1; font-size: 16.5px; }
 .modal-body { padding: 10px 22px 20px; overflow-y: auto; }
-.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--surface); }
+.modal-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--surface); }
 .confirm-msg { color: var(--text-2); line-height: 1.55; }
 @media (max-width: 767px) {
   .modal-backdrop { padding: 0; place-items: end stretch; }

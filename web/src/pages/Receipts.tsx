@@ -4,7 +4,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, decimalsOf, fmtDate, fmtMoney } from '../lib/format'
 import type { Merchant, Receipt, ReceiptProvider, ReceiptScan, ReceiptSettings, ScanStatus, ShopRule } from '../lib/types'
-import { Card, CopyField, Empty, Field, Loading, Modal, PageHeader, SettingRow, Switch, Tabs, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
+import { Card, CopyField, Empty, Field, Loading, MenuButton, Modal, PageHeader, SettingRow, Switch, Tabs, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
 import { AccountSelect, CategorySelect } from '../components/pickers'
 import { ReceiptCard } from '../components/ReceiptCard'
 import { ReceiptScanner } from '../components/ReceiptScanner'
@@ -86,8 +86,10 @@ function ReceiptModal({ id, onClose, onChanged }: { id: number; onClose: () => v
   }
   return (
     <Modal title="Receipt" onClose={onClose} footer={<>
-      <button type="button" className="btn ghost danger-text" onClick={() => del(false)}>Delete receipt</button>
-      {r.transaction_id && <button type="button" className="btn ghost danger-text" onClick={() => del(true)}>…and its transaction</button>}
+      <MenuButton label="Delete" className="btn ghost" width={270} items={[
+        { label: r.transaction_id ? 'Delete the receipt, keep the transaction' : 'Delete the receipt', icon: 'trash', onSelect: () => del(false) },
+        ...(r.transaction_id ? [{ label: 'Delete the receipt and its transaction', icon: 'trash', danger: true, onSelect: () => del(true) }] : []),
+      ]}><Icon name="trash" size={15} />Delete…</MenuButton>
       <span className="spacer" />
       {r.transaction_id ? <button type="button" className="btn primary" onClick={() => navigate(`/transactions/${r.transaction_id}`)}>Open the transaction</button>
         : <button type="button" className="btn primary" onClick={book}>Book it</button>}
