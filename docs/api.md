@@ -62,6 +62,7 @@ Another Pocket app can act for a person here with a `pcx_` token from Pocket Cor
 | | |
 |---|---|
 | `POST /receipts/scan` `{url, account_id?, source?}` (JSON or a form) | reads a receipt's QR link, books it; `?format=text` answers one line for a phone notification. Returns `{status, message, scan, receipt, transaction}` with status `booked` (201) · `linked` (to a matching hand-typed transaction, 201) · `partial` (booked from the QR code alone, the tax office is retried, 201) · `duplicate` · `pending` · `skipped` (proforma/training) · `invalid` (422) · `unsupported` (422) · `failed` |
+| `POST /receipts/peek` `{url}` | reads a receipt without booking or logging it, for a preview: `supported, message, complete, shop, location, date, time, total, currency, method, kind, invoice_number, items [{name, quantity, unit, total, category, category_id, category_icon, category_source (you · ai · group)}], account_name, category_id, category, category_icon, reason, description, existing {receipt_id, transaction_id, description, date, scanned_at}` |
 | `GET /receipts/providers` | supported countries |
 | `GET /receipts` `?q, merchant, from, to, limit, offset` · `GET /receipts/{id}` · `DELETE /receipts/{id}[?transaction=1]` | receipts with items, shop and payments |
 | `POST /receipts/{id}/book` `{account_id?}` | book a receipt whose transaction was deleted |

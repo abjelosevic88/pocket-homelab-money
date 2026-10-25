@@ -453,30 +453,35 @@ type peekItem struct {
 	Unit     string  `json:"unit"`
 	Total    int64   `json:"total"`
 	Category string  `json:"category,omitempty"`
+	// where the category comes from, so a preview can mark the AI's: you | ai | group
+	CategoryID     *int64 `json:"category_id,omitempty"`
+	CategoryIcon   string `json:"category_icon,omitempty"`
+	CategorySource string `json:"category_source,omitempty"`
 }
 
 type peekOut struct {
-	Supported   bool       `json:"supported"`
-	Provider    string     `json:"provider"`
-	Country     string     `json:"country"`
-	Message     string     `json:"message,omitempty"`
-	Complete    bool       `json:"complete"` // the tax office answered
-	Shop        string     `json:"shop"`
-	Location    string     `json:"location"`
-	Date        string     `json:"date"`
-	Time        string     `json:"time"`
-	Total       int64      `json:"total"`
-	Currency    string     `json:"currency"`
-	Method      string     `json:"method"`
-	Kind        string     `json:"kind"`
-	Number      string     `json:"invoice_number"`
-	Items       []peekItem `json:"items"`
-	AccountName string     `json:"account_name"`
-	CategoryID  *int64     `json:"category_id"`
-	Category    string     `json:"category"`
-	Reason      string     `json:"reason"`
-	Description string     `json:"description"`
-	Existing    *struct {
+	Supported    bool       `json:"supported"`
+	Provider     string     `json:"provider"`
+	Country      string     `json:"country"`
+	Message      string     `json:"message,omitempty"`
+	Complete     bool       `json:"complete"` // the tax office answered
+	Shop         string     `json:"shop"`
+	Location     string     `json:"location"`
+	Date         string     `json:"date"`
+	Time         string     `json:"time"`
+	Total        int64      `json:"total"`
+	Currency     string     `json:"currency"`
+	Method       string     `json:"method"`
+	Kind         string     `json:"kind"`
+	Number       string     `json:"invoice_number"`
+	Items        []peekItem `json:"items"`
+	AccountName  string     `json:"account_name"`
+	CategoryID   *int64     `json:"category_id"`
+	Category     string     `json:"category"`
+	CategoryIcon string     `json:"category_icon,omitempty"`
+	Reason       string     `json:"reason"`
+	Description  string     `json:"description"`
+	Existing     *struct {
 		ReceiptID     int64  `json:"receipt_id"`
 		TransactionID *int64 `json:"transaction_id"`
 		Description   string `json:"description"`
@@ -522,7 +527,8 @@ func (s *Server) handlePeekReceipt(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Shop, out.Total, out.Currency, out.Date, out.Time, out.Number, out.Complete = payeeFor(rec), rec.Total, rec.Currency, rec.Date, rec.Time, rec.InvoiceNumber, rec.Complete
 		for _, it := range rec.Items {
-			out.Items = append(out.Items, peekItem{Name: firstNonBlank(it.ProductName, it.Name), Quantity: it.Quantity, Unit: it.Unit, Total: it.Total, Category: it.CategoryName})
+			out.Items = append(out.Items, peekItem{Name: firstNonBlank(it.ProductName, it.Name), Quantity: it.Quantity, Unit: it.Unit, Total: it.Total, Category: it.CategoryName,
+				CategoryID: it.CategoryID, CategoryIcon: it.CategoryIcon, CategorySource: it.CategorySource})
 		}
 		return true
 	}
@@ -575,9 +581,9 @@ func (s *Server) handlePeekReceipt(w http.ResponseWriter, r *http.Request) {
 		tmp.Merchant = m
 	}
 	cats, _ := s.store.ListCategories(ctx, uid)
-	catName := map[int64]string{}
+	catName, catIcon := map[int64]string{}, map[int64]string{}
 	for _, c := range cats {
-		catName[c.ID] = c.Name
+		catName[c.ID], catIcon[c.ID] = c.Name, c.Icon
 	}
 	groups, _ := s.store.ListGroups(ctx, uid)
 	for _, it := range rec.Items {
@@ -587,13 +593,17 @@ func (s *Server) handlePeekReceipt(w http.ResponseWriter, r *http.Request) {
 			ri.CategoryName = catName[*cat]
 		}
 		tmp.Items = append(tmp.Items, ri)
-		out.Items = append(out.Items, peekItem{Name: fiscal.ProductName(it.Name), Quantity: it.Quantity, Unit: it.Unit, Total: it.Total, Category: ri.CategoryName})
+		pi := peekItem{Name: fiscal.ProductName(it.Name), Quantity: it.Quantity, Unit: it.Unit, Total: it.Total, Category: ri.CategoryName}
+		if cat != nil {
+			pi.CategoryID, pi.CategoryIcon, pi.CategorySource = cat, catIcon[*cat], src
+		}
+		out.Items = append(out.Items, pi)
 	}
 	out.Shop = payeeFor(tmp)
 	g := s.guessReceipt(ctx, tmp)
 	out.CategoryID, out.Reason, out.Description = g.CategoryID, g.Reason, g.Description
 	if g.CategoryID != nil {
-		out.Category = catName[*g.CategoryID]
+		out.Category, out.CategoryIcon = catName[*g.CategoryID], catIcon[*g.CategoryID]
 	}
 	if acct, writable := s.receiptAccount(ctx, tmp, nil); acct > 0 {
 		for _, a := range writable {
