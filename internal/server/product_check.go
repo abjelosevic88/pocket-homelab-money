@@ -183,7 +183,7 @@ func (s *Server) runProductCheck(ctx context.Context, trigger string) (*store.Pr
 	if err := s.store.SaveProductCheckRun(ctx, uid, run); err != nil {
 		return nil, err
 	}
-	if rs.GroupJobNotify && (len(rep.Moves) > 0 || len(rep.Suggestions) > 0) {
+	if trigger == "daily" && rs.GroupJobNotify && (len(rep.Moves) > 0 || len(rep.Suggestions) > 0) { // a run by hand shows its report on screen
 		s.notifyProductCheck(ctx, run, rep)
 	}
 	return run, nil
