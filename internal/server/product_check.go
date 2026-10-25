@@ -262,7 +262,7 @@ func (s *Server) aiGroupProducts(ctx context.Context, ask []store.UngroupedProdu
 			if name == "" {
 				continue
 			}
-			sg := checkSuggestion{Name: name, Icon: strings.TrimSpace(ng.Icon), Keywords: strings.TrimSpace(ng.Keywords)}
+			sg := checkSuggestion{Name: name, Icon: strings.TrimSpace(ng.Icon), Keywords: tidyKeywords(ng.Keywords)}
 			for _, n := range ng.Products {
 				if n >= 1 && n <= len(batch) {
 					if _, done := placed[batch[n-1].ID]; !done {
@@ -277,6 +277,20 @@ func (s *Server) aiGroupProducts(ctx context.Context, ask []store.UngroupedProdu
 		}
 	}
 	return placed, sugg, ""
+}
+
+// tidyKeywords writes a keyword list as "a, b, c" without repeats.
+func tidyKeywords(list string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, k := range strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ';' || r == '\n' }) {
+		k = strings.TrimSpace(k)
+		if k != "" && !seen[fiscal.Fold(k)] {
+			seen[fiscal.Fold(k)] = true
+			out = append(out, k)
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 const groupPrompt = `You sort products from shop receipts into a person's product groups ("Milk", "Coffee"…). Receipts are from Bosnia and Herzegovina, Serbia, Montenegro or Croatia; names are short and abbreviated ("VODA PR 0,5L" is bottled water, "KESA" a shopping bag).

@@ -505,3 +505,5 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 .rc-item-link { color: inherit; }
 .rc-item-link:hover { color: var(--accent-ink); text-decoration: underline; }
 .check-sugg { display: flex; gap: 10px; align-items: center; justify-content: space-between; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+.check-sugg > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.check-sugg > .btn, .check-sugg > .badge { flex-shrink: 0; }

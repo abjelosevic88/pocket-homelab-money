@@ -408,7 +408,7 @@ function CheckReport({ onClose, onChanged, onProduct }: { onClose: () => void; o
               <div style={{ display: 'grid', gap: 10 }}>
                 {shown.report.suggestions.map(sg => (
                   <div key={sg.name} className="check-sugg">
-                    <div><b>{sg.icon} {sg.name}</b> <span className="muted small">· {sg.keywords}</span><div className="small">{sg.products.join(', ')}</div></div>
+                    <div><b>{sg.icon} {sg.name}</b> <span className="muted small">· {sg.keywords.split(',').map(k => k.trim()).filter(Boolean).join(', ')}</span><div className="small">{sg.products.join(', ')}</div></div>
                     {done.has(sg.name) ? <span className="badge ok">created</span> : <button type="button" className="btn sm" onClick={() => create(sg)}><Icon name="plus" size={14} />Create</button>}
                   </div>
                 ))}
