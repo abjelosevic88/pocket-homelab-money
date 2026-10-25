@@ -106,7 +106,7 @@ export function ReceiptCard({ receipt, tx, onChanged }: { receipt: Receipt; tx?:
                   {it.product_id && (
                     <button type="button" className={`badge rc-cat ${it.category_id ? '' : 'none'}`} title={it.category_id ? `${it.category_name} · ${SOURCE_HINT[it.category_source] || ''} · change` : 'Give this product a category'}
                       onClick={e => setPicking({ item: it, at: rectOf(e.currentTarget) })}>
-                      {it.category_id ? <>{it.category_icon} {it.category_name}{it.category_source === 'ai' && <span className="rc-ai">AI</span>}</> : '+ category'}
+                      {it.category_id ? <>{it.category_icon} {it.category_name}{it.category_source === 'ai' && <Icon name="sparkles" size={12} strokeWidth={2} className="ai-ico" />}</> : '+ category'}
                     </button>
                   )}
                 </td>
@@ -135,6 +135,7 @@ export function ReceiptCard({ receipt, tx, onChanged }: { receipt: Receipt; tx?:
           <div style={{ padding: 10, display: 'grid', gap: 8 }}>
             <b className="small">{picking.item.product_name || picking.item.name}</b>
             <CategorySelect value={picking.item.category_source === 'group' ? null : picking.item.category_id} onChange={id => setItemCategory(picking.item, id)} kind="expense" placeholder="Category…" clearLabel={picking.item.group_id ? 'Use the group’s' : 'No category'} />
+            {picking.item.category_source === 'ai' && <span className="small ai-note"><Icon name="sparkles" size={12} strokeWidth={2} /> Sorted by AI — pick one to make it yours.</span>}
             <span className="muted small">Remembered for this product on every receipt from now on.</span>
           </div>
         </Popover>

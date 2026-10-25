@@ -10,6 +10,7 @@ import { Select } from '../components/Select'
 import { Line } from '../components/Charts'
 import { fmtQty, perUnit, qtyLabel } from '../components/ReceiptCard'
 import { Icon } from '../components/icons'
+import { HowPill, SourceMark } from '../components/SourceMark'
 
 const RANGES = [
   { id: '', label: 'All time' },
@@ -149,22 +150,20 @@ function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit, o
         actions={<div className="search" style={{ width: 200 }}><input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter…" /></div>}>
         {!products ? <Loading /> : products.length === 0 ? <div className="muted small" style={{ padding: 14 }}>None.</div> : (
           <table className="table compact">
-            <thead><tr><th>Product</th><th>Bought</th><th style={{ textAlign: 'right' }}>Spent</th><th style={{ textAlign: 'right' }} className="hide-sm">Last price</th><th>Category</th><th>Group</th></tr></thead>
+            <thead><tr><th>Product</th><th>Bought</th><th style={{ textAlign: 'right' }}>Spent</th><th>Category</th><th>Group</th></tr></thead>
             <tbody>
               {products.map(p => (
                 <tr key={p.key}>
                   <td style={{ minWidth: 140 }}>{p.key > 0 ? <button type="button" className="link-btn" onClick={() => onProduct(p.key)}>{p.name}</button> : p.name}</td>
                   <td className="muted nowrap">{p.purchases}× · {qtyLabel(p.quantity, p.unit)}</td>
                   <td style={{ textAlign: 'right' }}>{fmtMoney(p.spent, home, dec)}</td>
-                  <td style={{ textAlign: 'right' }} className="muted hide-sm">{p.last_currency ? fmtMoney(p.last_price, p.last_currency, decimalsOf(p.last_currency, currencies)) : ''}</td>
-                  <td style={{ width: 180 }}>
-                    {p.key > 0 && <div className="row" style={{ gap: 4 }}><CategorySelect value={p.category_id ?? null} onChange={id => setCat(p, id)} kind="expense" placeholder={g?.category_id ? 'Group’s' : 'None'} clearLabel={g?.category_id ? 'Group’s' : 'None'} />{p.category_source === 'ai' && <span className="badge" title="Sorted by AI">AI</span>}</div>}
+                  <td className="pick-td">
+                    {p.key > 0 && <div className="pick-cell"><div className="pick-field"><CategorySelect value={p.category_id ?? null} onChange={id => setCat(p, id)} kind="expense" placeholder={g?.category_id ? 'Group’s' : 'None'} clearLabel={g?.category_id ? 'Group’s' : 'None'} /></div><SourceMark source={p.category_source} what="category" slot /></div>}
                   </td>
-                  <td style={{ width: 190 }}>
-                    {p.key > 0 && (p.group_source === 'ai' || p.group_source === 'similar') && <span className="badge" style={{ marginBottom: 4 }} title={p.group_source === 'ai' ? 'Placed by AI' : 'Placed next to similar products'}>{p.group_source === 'ai' ? 'AI' : 'similar'}</span>}
-                    {p.key > 0 && <Select value={p.group_id ? String(p.group_id) : ''} onChange={v => move(p, v)} ariaLabel="Group"
+                  <td className="pick-td">
+                    {p.key > 0 && <div className="pick-cell"><div className="pick-field"><Select value={p.group_id ? String(p.group_id) : ''} onChange={v => move(p, v)} ariaLabel="Group"
                       options={[...(p.locked ? [{ value: 'auto', label: p.group_source === 'you' ? '↺ By keywords' : '↺ Undo, back to keywords' }] : []), ...groups.map(x => ({ value: String(x.key), label: `${x.icon || '📦'} ${x.name}` }))]}
-                      placeholder="No group" clearLabel="No group" />}
+                      placeholder="No group" clearLabel="No group" /></div><SourceMark source={p.group_source} what="group" slot /></div>}
                   </td>
                 </tr>
               ))}
@@ -291,11 +290,10 @@ function ProductDetail({ id, from, merchant, groups, onClose, onChanged }: { id:
       <Link className="btn primary" to={`/transactions?product=${id}${from ? `&from=${from}` : ''}`}>Show the transactions</Link>
     </>}>
       {!sum || !buys ? <Loading /> : <>
-        <div className="row wrap" style={{ gap: 10, marginBottom: 12 }}>
-          <div style={{ width: 210 }}><CategorySelect value={sum.category_id ?? null} onChange={c => save({ category_id: c || 0 }, 'Category remembered')} kind="expense" placeholder={group?.category_id ? 'Group’s category' : 'No category'} clearLabel={group?.category_id ? 'Group’s category' : 'No category'} /></div>
-          {sum.category_source === 'ai' && <span className="badge" title="Sorted by AI">AI</span>}
-          <div style={{ width: 210 }}><Select value={sum.group_id ? String(sum.group_id) : ''} onChange={v => save(v === 'auto' ? { auto: true } : { group_id: Number(v) || 0 }, 'Moved')} ariaLabel="Group"
-            options={[...(sum.locked ? [{ value: 'auto', label: '↺ By keywords' }] : []), ...groups.map(g => ({ value: String(g.key), label: `${g.icon || '📦'} ${g.name}` }))]} placeholder="No group" clearLabel="No group" /></div>
+        <div className="pick-row">
+          <div><div className="pick-label">Category</div><div className="pick-cell"><div className="pick-field"><CategorySelect value={sum.category_id ?? null} onChange={c => save({ category_id: c || 0 }, 'Category remembered')} kind="expense" placeholder={group?.category_id ? 'Group’s category' : 'No category'} clearLabel={group?.category_id ? 'Group’s category' : 'No category'} /></div><SourceMark source={sum.category_source} what="category" slot /></div></div>
+          <div><div className="pick-label">Group</div><div className="pick-cell"><div className="pick-field"><Select value={sum.group_id ? String(sum.group_id) : ''} onChange={v => save(v === 'auto' ? { auto: true } : { group_id: Number(v) || 0 }, 'Moved')} ariaLabel="Group"
+            options={[...(sum.locked ? [{ value: 'auto', label: sum.group_source === 'you' ? '↺ By keywords' : '↺ Undo, back to keywords' }] : []), ...groups.map(g => ({ value: String(g.key), label: `${g.icon || '📦'} ${g.name}` }))]} placeholder="No group" clearLabel="No group" /></div><SourceMark source={sum.group_source} what="group" slot /></div></div>
         </div>
         {sum.purchases === 0 || !st ? <Empty title="Not bought in this period">Pick “All time” on the Products page.</Empty> : <>
           <div className="stats">
@@ -351,8 +349,6 @@ function ProductDetail({ id, from, merchant, groups, onClose, onChanged }: { id:
     </Modal>
   )
 }
-
-const HOW: Record<string, string> = { keywords: 'keywords', similar: 'similar product', ai: 'AI' }
 
 /** The daily product check's reports: what each run placed and how, the
  *  groups the AI suggests (one click creates them), what is left. */
@@ -422,7 +418,7 @@ function CheckReport({ onClose, onChanged, onProduct }: { onClose: () => void; o
                   <tr key={m.product_id}>
                     <td><button type="button" className="link-btn" onClick={() => onProduct(m.product_id)}>{m.product}</button></td>
                     <td>{m.icon} {m.group}</td>
-                    <td><span className={`badge ${m.how === 'ai' ? 'accent' : ''}`}>{HOW[m.how] || m.how}</span></td>
+                    <td style={{ textAlign: 'right' }}><HowPill how={m.how} /></td>
                   </tr>
                 ))}</tbody>
               </table>
