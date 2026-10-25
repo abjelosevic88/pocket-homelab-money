@@ -242,6 +242,13 @@ func TestReceiptScanning(t *testing.T) {
 		t.Fatalf("log %d %+v", log.Total, log.Items[0])
 	}
 
+	// places: the receipt-booked purchases carry the shop's pin (none here: the fake geocoder only answers in the inference test)
+	var places struct {
+		Items []placeItem `json:"items"`
+	}
+	if c.do("GET", "/api/v1/places?from=2026-10-01&to=2026-10-31", nil, &places) != 200 {
+		t.Fatal("places")
+	}
 	// quick add takes a receipt link too
 	var quick []store.Transaction
 	fake.receipts[5] = sufTestJSON(5, 2, [3]any{"Kesa/KO", 1.0, 0.1})

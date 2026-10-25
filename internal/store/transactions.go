@@ -30,6 +30,7 @@ type TxFilter struct {
 	ProductGroupID int64 // has a receipt line in this product group
 	ProductID      int64 // has a receipt line of this product
 	HasReceipt     bool
+	HasLocation    bool // lat/lng set
 	Limit, Offset  int
 	Oldest         bool
 }
@@ -144,6 +145,9 @@ func (f *TxFilter) where() (string, []any) {
 	if f.ProductID > 0 {
 		conds = append(conds, "EXISTS (SELECT 1 FROM receipts r JOIN receipt_items i ON i.receipt_id = r.id WHERE r.transaction_id = t.id AND i.product_id = ?)")
 		args = append(args, f.ProductID)
+	}
+	if f.HasLocation {
+		conds = append(conds, "t.lat IS NOT NULL AND t.lng IS NOT NULL")
 	}
 	if f.HasReceipt {
 		conds = append(conds, "EXISTS (SELECT 1 FROM receipts r WHERE r.transaction_id = t.id)")

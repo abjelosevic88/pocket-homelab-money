@@ -407,6 +407,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/attachments/{id}", s.handleGetAttachment)
 			r.Delete("/attachments/{id}", s.handleDeleteAttachment)
 			r.Get("/transactions/{id}/receipt", s.handleTransactionReceipt)
+			r.Get("/places", s.handlePlaces)
 
 			r.Get("/receipts/providers", s.handleReceiptProviders)
 			r.Post("/receipts/scan", s.handleScanReceipt)

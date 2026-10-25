@@ -18,7 +18,7 @@ import (
 var linkOffers = []core.Offer{
 	{Scope: "accounts:read", Name: "See accounts and categories", Description: "List your accounts (names, currencies, balances) and categories, so the app can ask where a cost is booked."},
 	{Scope: "transactions:write", Name: "Book transactions", Description: "Create transactions on accounts you can book on, and change or delete only the ones that app created."},
-	{Scope: "transactions:read", Name: "See your transactions", Description: "Read your transactions, tags, accounts and categories (including through the Firefly-compatible API), for trip costs and your journal. Nothing can be changed with it."},
+	{Scope: "transactions:read", Name: "See your transactions", Description: "Read your transactions, tags, accounts and categories (including through the Firefly-compatible API) and where you paid, for trip costs, your journal and your map. Nothing can be changed with it."},
 }
 
 type linkRoute struct {
@@ -44,6 +44,7 @@ var linkRoutes = []linkRoute{
 	{"GET", regexp.MustCompile(`^/api/v1/tags$`), "transactions:read"},
 	{"GET", regexp.MustCompile(`^/api/v1/accounts$`), "transactions:read"},
 	{"GET", regexp.MustCompile(`^/api/v1/categories$`), "transactions:read"},
+	{"GET", regexp.MustCompile(`^/api/v1/places$`), "transactions:read"}, // purchases with a location (Pocket Movement's map, Pocket Day's stops)
 	{"GET", regexp.MustCompile(`^/firefly/api/v1/(about|about/user|currencies)$`), "transactions:read"},
 	{"GET", regexp.MustCompile(`^/firefly/api/v1/accounts(/\d+(/transactions)?)?$`), "transactions:read"},
 	{"GET", regexp.MustCompile(`^/firefly/api/v1/categories(/\d+)?$`), "transactions:read"},

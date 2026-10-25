@@ -94,6 +94,13 @@ func TestReceiptInference(t *testing.T) {
 		t.Fatalf("reason %q, %d AI calls", reason, calls.Load())
 	}
 
+	var places struct {
+		Items []placeItem `json:"items"`
+	}
+	c.do("GET", "/api/v1/places?from=2026-10-20&to=2026-10-20", nil, &places)
+	if len(places.Items) != 1 || places.Items[0].Shop != "Konzum" || places.Items[0].Lat != 44.7722 || !places.Items[0].TimeKnown || places.Items[0].Items != 3 {
+		t.Fatalf("places %+v", places.Items)
+	}
 	// a pharmacy by its name
 	res = scanOut{}
 	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(12, 6.50)}, &res)
