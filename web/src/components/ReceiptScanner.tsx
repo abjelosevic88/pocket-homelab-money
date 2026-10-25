@@ -10,25 +10,16 @@ import { Icon } from './icons'
 
 type Detector = { detect: (src: CanvasImageSource) => Promise<{ rawValue: string }[]> }
 
-/** Reads a QR code from a canvas: the browser's BarcodeDetector when it has
- *  one (Chrome, Android), else jsQR (Safari on iPhone), loaded on demand. */
-async function decodeCanvas(c: HTMLCanvasElement, detector: Detector | null): Promise<string | null> {
-  if (detector) {
-    try {
-      const r = await detector.detect(c)
-      if (r[0]?.rawValue) return r[0].rawValue
-    } catch { /* fall through to jsQR */ }
-  }
-  const ctx = c.getContext('2d', { willReadFrequently: true })
-  if (!ctx) return null
-  const { default: jsQR } = await import('jsqr')
-  const img = ctx.getImageData(0, 0, c.width, c.height)
-  return jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' })?.data || null
-}
-
+/** The browser's own QR reader where there is one (Chrome on Android uses
+ *  the system's); everywhere else, and when it finds nothing, ZXing. */
 function makeDetector(): Detector | null {
   const BD = (window as unknown as { BarcodeDetector?: new (o: { formats: string[] }) => Detector }).BarcodeDetector
   try { return BD ? new BD({ formats: ['qr_code'] }) : null } catch { return null }
+}
+
+async function detect(detector: Detector | null, src: CanvasImageSource): Promise<string | null> {
+  if (!detector) return null
+  try { return (await detector.detect(src))[0]?.rawValue || null } catch { return null }
 }
 
 const STATUS_ICON: Record<ScanResult['status'], string> = { booked: '✅', linked: '🔗', duplicate: '♻️', partial: '⏳', pending: '⏳', invalid: '⛔', skipped: '➖', unsupported: '❓', failed: '⚠️' }
@@ -74,36 +65,46 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
     } finally { busyRef.current = false; setBusy(false) }
   }
 
+  const [slow, setSlow] = useState(false)
   const start = async () => {
-    setResult(null); setError(''); setCamError('')
+    setResult(null); setError(''); setCamError(''); setSlow(false)
     setCamera('starting')
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false })
       stream.current = s
+      // keep refocusing where the phone allows it
+      s.getVideoTracks()[0]?.applyConstraints({ advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet] }).catch(() => {})
       const v = video.current!
       v.srcObject = s
       await v.play()
       setCamera('on')
       const detector = makeDetector()
+      const qr = await import('../lib/qr')
       canvas.current = canvas.current || document.createElement('canvas')
+      const started = Date.now()
+      let frame = 0
       const tick = async () => {
-        if (!stream.current || busyRef.current) return
-        const c = canvas.current!
-        const w = v.videoWidth, h = v.videoHeight
-        if (w && h) {
-          // receipt codes are dense: keep enough pixels, but not 4K
-          const scale = Math.min(1, 1280 / Math.max(w, h))
-          c.width = Math.round(w * scale); c.height = Math.round(h * scale)
-          c.getContext('2d', { willReadFrequently: true })!.drawImage(v, 0, 0, c.width, c.height)
-          const text = await decodeCanvas(c, detector)
-          if (text && stream.current) {
-            stop()
-            navigator.vibrate?.(60)
-            await submit(text, 'camera')
-            return
-          }
+        if (!stream.current) return
+        if (!busyRef.current) {
+          try {
+            const c = canvas.current!
+            const w = v.videoWidth, h = v.videoHeight
+            if (w && h) {
+              // full resolution: a receipt code needs every pixel
+              if (c.width !== w || c.height !== h) { c.width = w; c.height = h }
+              c.getContext('2d', { willReadFrequently: true })!.drawImage(v, 0, 0, w, h)
+              const text = (await detect(detector, c)) || (await qr.decodeFrame(c, frame++))
+              if (text && stream.current) {
+                stop()
+                navigator.vibrate?.(60)
+                await submit(text, 'camera')
+                return
+              }
+              if (Date.now() - started > 7000) setSlow(true)
+            }
+          } catch { /* one bad frame must not stop the scanning */ }
         }
-        if (stream.current) setTimeout(tick, 180)
+        if (stream.current) setTimeout(tick, 60)
       }
       tick()
     } catch (e) {
@@ -115,20 +116,15 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
 
   const fromPhoto = async (f: File) => {
     setResult(null); setError('')
+    stop()
     setBusy(true)
     try {
       const bmp = await createImageBitmap(f)
-      const c = document.createElement('canvas')
-      const detector = makeDetector()
-      // try the photo at a few sizes: jsQR likes ~1000–2000 px
-      for (const max of [1600, 2400, 1000]) {
-        const scale = Math.min(1, max / Math.max(bmp.width, bmp.height))
-        c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale)
-        c.getContext('2d', { willReadFrequently: true })!.drawImage(bmp, 0, 0, c.width, c.height)
-        const text = await decodeCanvas(c, detector)
-        if (text) { setBusy(false); await submit(text, 'photo'); return }
-      }
-      setError('No QR code found in that photo. Get closer so the code fills most of the picture.')
+      const qr = await import('../lib/qr')
+      const text = (await detect(makeDetector(), bmp)) || (await qr.decodeImage(bmp))
+      setBusy(false)
+      if (text) { await submit(text, 'photo'); return }
+      setError('No QR code found in that photo. Take it closer, straight on, so the code fills most of the picture and is sharp.')
     } catch (e) { setError(errMsg(e)) } finally { setBusy(false) }
   }
 
@@ -151,10 +147,11 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
               </div>
             )}
             {busy && <div className="scan-busy"><Spinner size={22} /> Reading the receipt…</div>}
+            {camera === 'on' && slow && !busy && <div className="scan-tip">Hold the phone closer so the code fills the frame, and keep it still. Still nothing? Use <b>Take a photo</b>.</div>}
           </div>
           <div className="row wrap" style={{ gap: 8 }}>
             {camera === 'on' && <button type="button" className="btn" onClick={stop}>Stop camera</button>}
-            <label className="btn"><Icon name="upload" size={15} />From a photo<input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) fromPhoto(f); e.target.value = '' }} /></label>
+            <label className="btn"><Icon name="camera" size={15} />Take a photo<input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) fromPhoto(f); e.target.value = '' }} /></label>
             <span className="spacer" />
             <div style={{ minWidth: 200 }}><Select value={account} onChange={setAccount} options={writable.map(a => ({ value: String(a.id), label: a.name, hint: a.currency }))} placeholder="Account: automatic" clearLabel="Automatic (by payment)" ariaLabel="Account" /></div>
           </div>
@@ -163,7 +160,7 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
             <button className="btn" disabled={!link.trim() || busy}>Read</button>
           </form>
           {error && <div className="bad small">{error}</div>}
-          <p className="muted small">Point the camera at the QR code at the bottom of the receipt. Pocket Money asks the tax office for the shop and every item, books the purchase and links it to a matching transaction you already typed.</p>
+          <p className="muted small">Hold the phone close so the QR code at the bottom of the receipt fills the frame — receipt codes are dense. On an iPhone, <b>Take a photo</b> is the most reliable. Pocket Money asks the tax office for the shop and every item, books the purchase and links it to a matching transaction you already typed.</p>
         </>}
         {result && (
           <div className={`scan-result ${result.status}`}>
