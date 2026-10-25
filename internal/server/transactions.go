@@ -673,6 +673,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	oldSub := t.SubscriptionID
+	oldCat, oldDesc := t.CategoryID, t.Description
 	before := snapTx(t)
 	var in txIn
 	if err := decode(r, &in); err != nil {
@@ -693,6 +694,7 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request)
 	t, _ = s.store.GetTransaction(ctx, t.ID)
 	s.auditTx(ctx, before, snapTx(t))
 	s.emitTx(ctx, "transaction.updated", t)
+	s.learnFromEdit(ctx, oldCat, oldDesc, t)
 	writeJSON(w, http.StatusOK, t)
 }
 

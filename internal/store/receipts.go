@@ -38,17 +38,22 @@ type ReceiptScan struct {
 
 // Merchant is a shop receipts came from.
 type Merchant struct {
-	ID          int64  `json:"id"`
-	UserID      int64  `json:"user_id"`
-	Country     string `json:"country"`
-	TaxID       string `json:"tax_id"`
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	Address     string `json:"address"`
-	City        string `json:"city"`
-	CategoryID  *int64 `json:"category_id"`
-	AccountID   *int64 `json:"account_id"`
-	CreatedAt   string `json:"created_at"`
+	ID             int64    `json:"id"`
+	UserID         int64    `json:"user_id"`
+	Country        string   `json:"country"`
+	TaxID          string   `json:"tax_id"`
+	Name           string   `json:"name"`
+	DisplayName    string   `json:"display_name"`
+	Address        string   `json:"address"`
+	City           string   `json:"city"`
+	CategoryID     *int64   `json:"category_id"`
+	AccountID      *int64   `json:"account_id"`
+	CreatedAt      string   `json:"created_at"`
+	CategorySource string   `json:"category_source"` // you | rule | ''
+	Description    string   `json:"description"`
+	Lat            *float64 `json:"lat"`
+	Lng            *float64 `json:"lng"`
+	Geocoded       bool     `json:"geocoded"`
 
 	Receipts     int    `json:"receipts"`
 	Spent        int64  `json:"spent"` // in Currency, the one most receipts are in
@@ -60,38 +65,40 @@ type Merchant struct {
 
 // Receipt is a stored fiscal receipt.
 type Receipt struct {
-	ID            int64             `json:"id"`
-	UserID        int64             `json:"user_id"`
-	Provider      string            `json:"provider"`
-	Country       string            `json:"country"`
-	Key           string            `json:"receipt_key"`
-	InvoiceNumber string            `json:"invoice_number"`
-	MerchantID    *int64            `json:"merchant_id"`
-	Location      string            `json:"location"`
-	IssuedAt      string            `json:"issued_at"`
-	Date          string            `json:"date"`
-	Time          string            `json:"time"`
-	Currency      string            `json:"currency"`
-	Total         int64             `json:"total"`
-	TaxTotal      int64             `json:"tax_total"`
-	Method        string            `json:"method"`
-	Payments      []fiscal.Payment  `json:"payments"`
-	Kind          string            `json:"kind"`
-	InvoiceType   string            `json:"invoice_type"`
-	Referent      string            `json:"referent"`
-	Cashier       string            `json:"cashier"`
-	Device        string            `json:"device"`
-	Journal       string            `json:"journal,omitempty"`
-	URL           string            `json:"url"`
-	Complete      bool              `json:"complete"`
-	HasItems      bool              `json:"has_items"`
-	TransactionID *int64            `json:"transaction_id"`
-	CreatedAt     string            `json:"created_at"`
-	UpdatedAt     string            `json:"updated_at"`
-	Items         []ReceiptItem     `json:"items"`
-	Merchant      *Merchant         `json:"merchant,omitempty"`
-	ItemCount     int               `json:"item_count"`
-	Extra         map[string]string `json:"extra,omitempty"`
+	ID             int64             `json:"id"`
+	UserID         int64             `json:"user_id"`
+	Provider       string            `json:"provider"`
+	Country        string            `json:"country"`
+	Key            string            `json:"receipt_key"`
+	InvoiceNumber  string            `json:"invoice_number"`
+	MerchantID     *int64            `json:"merchant_id"`
+	Location       string            `json:"location"`
+	IssuedAt       string            `json:"issued_at"`
+	Date           string            `json:"date"`
+	Time           string            `json:"time"`
+	Currency       string            `json:"currency"`
+	Total          int64             `json:"total"`
+	TaxTotal       int64             `json:"tax_total"`
+	Method         string            `json:"method"`
+	Payments       []fiscal.Payment  `json:"payments"`
+	Kind           string            `json:"kind"`
+	InvoiceType    string            `json:"invoice_type"`
+	Referent       string            `json:"referent"`
+	Cashier        string            `json:"cashier"`
+	Device         string            `json:"device"`
+	Journal        string            `json:"journal,omitempty"`
+	URL            string            `json:"url"`
+	Complete       bool              `json:"complete"`
+	HasItems       bool              `json:"has_items"`
+	TransactionID  *int64            `json:"transaction_id"`
+	CreatedAt      string            `json:"created_at"`
+	UpdatedAt      string            `json:"updated_at"`
+	CategoryReason string            `json:"category_reason"`
+	Items          []ReceiptItem     `json:"items"`
+	Merchant       *Merchant         `json:"merchant,omitempty"`
+	ItemCount      int               `json:"item_count"`
+	Guess          map[string]any    `json:"guess,omitempty"` // what the receipt says today (the server fills it in)
+	Extra          map[string]string `json:"extra,omitempty"`
 }
 
 // ReceiptItem is one line of a receipt.
@@ -109,11 +116,14 @@ type ReceiptItem struct {
 	TaxLabel  string  `json:"tax_label"`
 	ProductID *int64  `json:"product_id"`
 
-	ProductName string `json:"product_name"`
-	GroupID     *int64 `json:"group_id"`
-	GroupName   string `json:"group_name"`
-	GroupIcon   string `json:"group_icon"`
-	CategoryID  *int64 `json:"category_id"` // the group's
+	ProductName    string `json:"product_name"`
+	GroupID        *int64 `json:"group_id"`
+	GroupName      string `json:"group_name"`
+	GroupIcon      string `json:"group_icon"`
+	CategoryID     *int64 `json:"category_id"`     // the product's own, else its group's
+	CategorySource string `json:"category_source"` // you | ai | group | ''
+	CategoryName   string `json:"category_name"`
+	CategoryIcon   string `json:"category_icon"`
 }
 
 // ProductGroup collects products ("Milk").
@@ -130,22 +140,34 @@ type ProductGroup struct {
 
 // Product is the same article across receipts.
 type Product struct {
-	ID          int64  `json:"id"`
-	UserID      int64  `json:"user_id"`
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Unit        string `json:"unit"`
-	GroupID     *int64 `json:"group_id"`
-	GroupLocked bool   `json:"group_locked"`
-	CreatedAt   string `json:"created_at"`
+	ID             int64  `json:"id"`
+	UserID         int64  `json:"user_id"`
+	Key            string `json:"key"`
+	Name           string `json:"name"`
+	Unit           string `json:"unit"`
+	GroupID        *int64 `json:"group_id"`
+	GroupLocked    bool   `json:"group_locked"`
+	CreatedAt      string `json:"created_at"`
+	CategoryID     *int64 `json:"category_id"`
+	CategorySource string `json:"category_source"`
 }
 
 // ReceiptSettings are one person's receipt preferences.
 type ReceiptSettings struct {
-	CardAccountID *int64 `json:"card_account_id"`
-	CashAccountID *int64 `json:"cash_account_id"`
-	SplitItems    bool   `json:"split_items"`
-	AttachManual  bool   `json:"attach_manual"`
+	CardAccountID *int64     `json:"card_account_id"`
+	CashAccountID *int64     `json:"cash_account_id"`
+	SplitItems    bool       `json:"split_items"`
+	AttachManual  bool       `json:"attach_manual"`
+	AIItems       bool       `json:"ai_items"`   // sort new products into categories with the AI
+	OwnWords      bool       `json:"own_words"`  // describe receipts the way the person does
+	Geocode       bool       `json:"geocode"`    // put shops on the map
+	ShopRules     []ShopRule `json:"shop_rules"` // nil = the defaults
+}
+
+// ShopRule is "shops with one of these words in their name go to this category".
+type ShopRule struct {
+	Keywords   string `json:"keywords"`
+	CategoryID int64  `json:"category_id"`
 }
 
 // ---- scan log ----
@@ -245,11 +267,13 @@ func (s *Store) DueScans(ctx context.Context, now string, limit int) ([]ReceiptS
 
 // ---- merchants ----
 
-const merchantCols = `m.id, m.user_id, m.country, m.tax_id, m.name, m.display_name, m.address, m.city, m.category_id, m.account_id, m.created_at`
+const merchantCols = `m.id, m.user_id, m.country, m.tax_id, m.name, m.display_name, m.address, m.city, m.category_id, m.account_id, m.created_at,
+	m.category_source, m.description, m.lat, m.lng, m.geocoded`
 
 func scanMerchant(row interface{ Scan(...any) error }, extra ...any) (*Merchant, error) {
 	var m Merchant
-	dst := []any{&m.ID, &m.UserID, &m.Country, &m.TaxID, &m.Name, &m.DisplayName, &m.Address, &m.City, &m.CategoryID, &m.AccountID, &m.CreatedAt}
+	dst := []any{&m.ID, &m.UserID, &m.Country, &m.TaxID, &m.Name, &m.DisplayName, &m.Address, &m.City, &m.CategoryID, &m.AccountID, &m.CreatedAt,
+		&m.CategorySource, &m.Description, &m.Lat, &m.Lng, &m.Geocoded}
 	if err := row.Scan(append(dst, extra...)...); err != nil {
 		return nil, notFound(err)
 	}
@@ -319,8 +343,29 @@ func (s *Store) ListMerchants(ctx context.Context, userID int64) ([]Merchant, er
 
 // UpdateMerchant saves the person's choices for a shop.
 func (s *Store) UpdateMerchant(ctx context.Context, m *Merchant) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE merchants SET display_name = ?, category_id = ?, account_id = ? WHERE id = ? AND user_id = ?`,
-		m.DisplayName, nullI(m.CategoryID), nullI(m.AccountID), m.ID, m.UserID)
+	_, err := s.DB.ExecContext(ctx, `UPDATE merchants SET display_name = ?, category_id = ?, account_id = ?, category_source = ?, description = ? WHERE id = ? AND user_id = ?`,
+		m.DisplayName, nullI(m.CategoryID), nullI(m.AccountID), m.CategorySource, m.Description, m.ID, m.UserID)
+	return err
+}
+
+// SetMerchantCategory records how a shop is categorised (source you | rule).
+func (s *Store) SetMerchantCategory(ctx context.Context, id int64, cat *int64, source string) error {
+	if cat == nil {
+		source = ""
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE merchants SET category_id = ?, category_source = ? WHERE id = ?`, nullI(cat), source, id)
+	return err
+}
+
+// SetMerchantDescription remembers the person's own words for a shop.
+func (s *Store) SetMerchantDescription(ctx context.Context, id int64, desc string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE merchants SET description = ? WHERE id = ?`, desc, id)
+	return err
+}
+
+// SetMerchantPlace stores where a shop is (nil: looked up, not found).
+func (s *Store) SetMerchantPlace(ctx context.Context, id int64, lat, lng *float64) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE merchants SET lat = ?, lng = ?, geocoded = 1 WHERE id = ?`, nullF(lat), nullF(lng), id)
 	return err
 }
 
@@ -328,14 +373,14 @@ func (s *Store) UpdateMerchant(ctx context.Context, m *Merchant) error {
 
 const receiptCols = `r.id, r.user_id, r.provider, r.country, r.receipt_key, r.invoice_number, r.merchant_id, r.location, r.issued_at, r.date, r.time, r.currency,
 	r.total, r.tax_total, r.method, r.payments, r.kind, r.invoice_type, r.referent, r.cashier, r.device, r.journal, r.url, r.complete, r.has_items, r.transaction_id,
-	r.created_at, r.updated_at, (SELECT COUNT(1) FROM receipt_items i WHERE i.receipt_id = r.id)`
+	r.created_at, r.updated_at, (SELECT COUNT(1) FROM receipt_items i WHERE i.receipt_id = r.id), r.category_reason`
 
 func scanReceipt(row interface{ Scan(...any) error }) (*Receipt, error) {
 	var r Receipt
 	var payments string
 	if err := row.Scan(&r.ID, &r.UserID, &r.Provider, &r.Country, &r.Key, &r.InvoiceNumber, &r.MerchantID, &r.Location, &r.IssuedAt, &r.Date, &r.Time, &r.Currency,
 		&r.Total, &r.TaxTotal, &r.Method, &payments, &r.Kind, &r.InvoiceType, &r.Referent, &r.Cashier, &r.Device, &r.Journal, &r.URL, &r.Complete, &r.HasItems, &r.TransactionID,
-		&r.CreatedAt, &r.UpdatedAt, &r.ItemCount); err != nil {
+		&r.CreatedAt, &r.UpdatedAt, &r.ItemCount, &r.CategoryReason); err != nil {
 		return nil, notFound(err)
 	}
 	_ = json.Unmarshal([]byte(payments), &r.Payments)
@@ -371,8 +416,11 @@ func (s *Store) ReceiptForTransaction(ctx context.Context, txID int64) (*Receipt
 
 func (s *Store) fillReceipt(ctx context.Context, r *Receipt) error {
 	rows, err := s.DB.QueryContext(ctx, `SELECT i.id, i.receipt_id, i.line, i.name, i.norm, i.gtin, i.quantity, i.unit, i.unit_price, i.total, i.tax_label, i.product_id,
-		COALESCE(p.name, ''), p.group_id, COALESCE(g.name, ''), COALESCE(g.icon, ''), g.category_id
+		COALESCE(p.name, ''), p.group_id, COALESCE(g.name, ''), COALESCE(g.icon, ''), COALESCE(p.category_id, g.category_id),
+		CASE WHEN p.category_id IS NOT NULL THEN p.category_source WHEN g.category_id IS NOT NULL THEN 'group' ELSE '' END,
+		COALESCE(c.name, ''), COALESCE(c.icon, '')
 		FROM receipt_items i LEFT JOIN products p ON p.id = i.product_id LEFT JOIN product_groups g ON g.id = p.group_id
+		LEFT JOIN categories c ON c.id = COALESCE(p.category_id, g.category_id)
 		WHERE i.receipt_id = ? ORDER BY i.line`, r.ID)
 	if err != nil {
 		return err
@@ -380,7 +428,7 @@ func (s *Store) fillReceipt(ctx context.Context, r *Receipt) error {
 	for rows.Next() {
 		var it ReceiptItem
 		if err := rows.Scan(&it.ID, &it.ReceiptID, &it.Line, &it.Name, &it.Norm, &it.GTIN, &it.Quantity, &it.Unit, &it.UnitPrice, &it.Total, &it.TaxLabel, &it.ProductID,
-			&it.ProductName, &it.GroupID, &it.GroupName, &it.GroupIcon, &it.CategoryID); err != nil {
+			&it.ProductName, &it.GroupID, &it.GroupName, &it.GroupIcon, &it.CategoryID, &it.CategorySource, &it.CategoryName, &it.CategoryIcon); err != nil {
 			rows.Close()
 			return err
 		}
@@ -603,18 +651,28 @@ func (s *Store) UnreceiptedMatch(ctx context.Context, accountIDs []int64, date s
 
 // GetReceiptSettings returns the person's receipt preferences (defaults when unset).
 func (s *Store) GetReceiptSettings(ctx context.Context, userID int64) ReceiptSettings {
-	st := ReceiptSettings{AttachManual: true}
-	_ = s.DB.QueryRowContext(ctx, `SELECT card_account_id, cash_account_id, split_items, attach_manual FROM receipt_settings WHERE user_id = ?`, userID).
-		Scan(&st.CardAccountID, &st.CashAccountID, &st.SplitItems, &st.AttachManual)
+	st := ReceiptSettings{AttachManual: true, OwnWords: true, Geocode: true}
+	var rules string
+	_ = s.DB.QueryRowContext(ctx, `SELECT card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules FROM receipt_settings WHERE user_id = ?`, userID).
+		Scan(&st.CardAccountID, &st.CashAccountID, &st.SplitItems, &st.AttachManual, &st.AIItems, &st.OwnWords, &st.Geocode, &rules)
+	if rules != "" {
+		_ = json.Unmarshal([]byte(rules), &st.ShopRules)
+	}
 	return st
 }
 
 // SaveReceiptSettings stores the person's receipt preferences.
 func (s *Store) SaveReceiptSettings(ctx context.Context, userID int64, st ReceiptSettings) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO receipt_settings (user_id, card_account_id, cash_account_id, split_items, attach_manual) VALUES (?,?,?,?,?)
+	rules := ""
+	if st.ShopRules != nil {
+		b, _ := json.Marshal(st.ShopRules)
+		rules = string(b)
+	}
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO receipt_settings (user_id, card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules) VALUES (?,?,?,?,?,?,?,?,?)
 		ON CONFLICT (user_id) DO UPDATE SET card_account_id = excluded.card_account_id, cash_account_id = excluded.cash_account_id,
-		split_items = excluded.split_items, attach_manual = excluded.attach_manual`,
-		userID, nullI(st.CardAccountID), nullI(st.CashAccountID), boolInt(st.SplitItems), boolInt(st.AttachManual))
+		split_items = excluded.split_items, attach_manual = excluded.attach_manual, ai_items = excluded.ai_items, own_words = excluded.own_words,
+		geocode = excluded.geocode, shop_rules = excluded.shop_rules`,
+		userID, nullI(st.CardAccountID), nullI(st.CashAccountID), boolInt(st.SplitItems), boolInt(st.AttachManual), boolInt(st.AIItems), boolInt(st.OwnWords), boolInt(st.Geocode), rules)
 	return err
 }
 
@@ -721,8 +779,8 @@ func (s *Store) RegroupProducts(ctx context.Context, userID int64) (int, error) 
 // GetProduct returns one of the person's products.
 func (s *Store) GetProduct(ctx context.Context, userID, id int64) (*Product, error) {
 	var p Product
-	err := s.DB.QueryRowContext(ctx, `SELECT id, user_id, key, name, unit, group_id, group_locked, created_at FROM products WHERE id = ? AND user_id = ?`, id, userID).
-		Scan(&p.ID, &p.UserID, &p.Key, &p.Name, &p.Unit, &p.GroupID, &p.GroupLocked, &p.CreatedAt)
+	err := s.DB.QueryRowContext(ctx, `SELECT id, user_id, key, name, unit, group_id, group_locked, created_at, category_id, category_source FROM products WHERE id = ? AND user_id = ?`, id, userID).
+		Scan(&p.ID, &p.UserID, &p.Key, &p.Name, &p.Unit, &p.GroupID, &p.GroupLocked, &p.CreatedAt, &p.CategoryID, &p.CategorySource)
 	return &p, notFound(err)
 }
 
@@ -731,6 +789,93 @@ func (s *Store) UpdateProduct(ctx context.Context, p *Product) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE products SET name = ?, group_id = ?, group_locked = ? WHERE id = ? AND user_id = ?`,
 		p.Name, nullI(p.GroupID), boolInt(p.GroupLocked), p.ID, p.UserID)
 	return err
+}
+
+// SetProductCategory gives a product its own category (source you | ai).
+func (s *Store) SetProductCategory(ctx context.Context, userID, id int64, cat *int64, source string) error {
+	if cat == nil {
+		source = ""
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE products SET category_id = ?, category_source = ?, ai_checked = 1 WHERE id = ? AND user_id = ?`, nullI(cat), source, id, userID)
+	return err
+}
+
+// ProductToSort is a product with no category of its own or from its group.
+type ProductToSort struct {
+	ID   int64
+	Name string
+}
+
+// ProductsToSort lists the person's products the AI has not been asked
+// about and that have no category (own or group's); only ids when given.
+func (s *Store) ProductsToSort(ctx context.Context, userID int64, ids []int64, limit int) ([]ProductToSort, error) {
+	q := `SELECT p.id, p.name FROM products p LEFT JOIN product_groups g ON g.id = p.group_id
+		WHERE p.user_id = ? AND p.ai_checked = 0 AND p.category_id IS NULL AND g.category_id IS NULL`
+	args := []any{userID}
+	if ids != nil {
+		in, a := inList(ids)
+		q += ` AND p.id IN ` + in
+		args = append(args, a...)
+	}
+	rows, err := s.DB.QueryContext(ctx, q+` ORDER BY p.id LIMIT ?`, append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProductToSort
+	for rows.Next() {
+		var p ProductToSort
+		if err := rows.Scan(&p.ID, &p.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// MarkProductsAsked records that the AI was asked about products.
+func (s *Store) MarkProductsAsked(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	in, args := inList(ids)
+	_, err := s.DB.ExecContext(ctx, `UPDATE products SET ai_checked = 1 WHERE id IN `+in, args...)
+	return err
+}
+
+// SetReceiptReason stores why the receipt's transaction got its category.
+func (s *Store) SetReceiptReason(ctx context.Context, id int64, reason string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE receipts SET category_reason = ? WHERE id = ?`, reason, id)
+	return err
+}
+
+// DescribedAs is how the person described their own bookings in a category.
+type DescribedAs struct {
+	Description string
+	CategoryID  int64
+	Count       int
+}
+
+// OwnDescriptions are the person's most used descriptions per category over
+// the last year (hand-typed and template bookings, at least three times).
+func (s *Store) OwnDescriptions(ctx context.Context, userID int64) ([]DescribedAs, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.description, t.category_id, COUNT(1) n FROM transactions t
+		WHERE t.user_id = ? AND t.kind = 'expense' AND t.category_id IS NOT NULL AND t.description != '' AND t.source NOT IN ('receipt')
+		AND t.date >= date('now', '-365 days')
+		GROUP BY lower(t.description), t.category_id HAVING n >= 3 ORDER BY n DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DescribedAs
+	for rows.Next() {
+		var d DescribedAs
+		if err := rows.Scan(&d.Description, &d.CategoryID, &d.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 // ---- statistics ----
@@ -749,23 +894,24 @@ type ItemStatsFilter struct {
 // currency: each line's share of the transaction it was booked as (or the
 // receipt total when it was not booked).
 type ItemStats struct {
-	Key        int64   `json:"key"` // group or product id; 0 = no group
-	Name       string  `json:"name"`
-	Icon       string  `json:"icon"`
-	GroupID    *int64  `json:"group_id,omitempty"`
-	Purchases  int     `json:"purchases"` // receipts it was on
-	Lines      int     `json:"lines"`
-	Quantity   float64 `json:"quantity"`
-	Unit       string  `json:"unit"` // when all lines share one
-	Spent      int64   `json:"spent"`
-	AvgPrice   int64   `json:"avg_price"` // home currency per unit
-	LastDate   string  `json:"last_date"`
-	LastPrice  int64   `json:"last_price"` // receipt currency
-	LastCur    string  `json:"last_currency"`
-	Products   int     `json:"products"`
-	CategoryID *int64  `json:"category_id,omitempty"`
-	Keywords   string  `json:"keywords,omitempty"`
-	Locked     bool    `json:"locked,omitempty"`
+	Key            int64   `json:"key"` // group or product id; 0 = no group
+	Name           string  `json:"name"`
+	Icon           string  `json:"icon"`
+	GroupID        *int64  `json:"group_id,omitempty"`
+	Purchases      int     `json:"purchases"` // receipts it was on
+	Lines          int     `json:"lines"`
+	Quantity       float64 `json:"quantity"`
+	Unit           string  `json:"unit"` // when all lines share one
+	Spent          int64   `json:"spent"`
+	AvgPrice       int64   `json:"avg_price"` // home currency per unit
+	LastDate       string  `json:"last_date"`
+	LastPrice      int64   `json:"last_price"` // receipt currency
+	LastCur        string  `json:"last_currency"`
+	Products       int     `json:"products"`
+	CategoryID     *int64  `json:"category_id,omitempty"`
+	Keywords       string  `json:"keywords,omitempty"`
+	Locked         bool    `json:"locked,omitempty"`
+	CategorySource string  `json:"category_source,omitempty"` // products: you | ai
 }
 
 // share of a line in the home currency
@@ -867,7 +1013,7 @@ func (s *Store) ProductStats(ctx context.Context, f ItemStatsFilter, q string, l
 		limit = 300
 	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT COALESCE(p.id, 0), COALESCE(p.name, MAX(i.name)), p.group_id, COALESCE(p.group_locked, 0), COUNT(DISTINCT r.id), COUNT(1), COALESCE(SUM(i.quantity), 0),
-		COALESCE(SUM(`+lineHome+`), 0), MAX(r.date), CASE WHEN COUNT(DISTINCT i.unit) = 1 THEN MAX(i.unit) ELSE '' END`+statsFrom+w+`
+		COALESCE(SUM(`+lineHome+`), 0), MAX(r.date), CASE WHEN COUNT(DISTINCT i.unit) = 1 THEN MAX(i.unit) ELSE '' END, p.category_id, COALESCE(p.category_source, '')`+statsFrom+w+`
 		GROUP BY COALESCE(p.id, -i.id) ORDER BY 8 DESC LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
@@ -875,7 +1021,7 @@ func (s *Store) ProductStats(ctx context.Context, f ItemStatsFilter, q string, l
 	out := []ItemStats{}
 	for rows.Next() {
 		var x ItemStats
-		if err := rows.Scan(&x.Key, &x.Name, &x.GroupID, &x.Locked, &x.Purchases, &x.Lines, &x.Quantity, &x.Spent, &x.LastDate, &x.Unit); err != nil {
+		if err := rows.Scan(&x.Key, &x.Name, &x.GroupID, &x.Locked, &x.Purchases, &x.Lines, &x.Quantity, &x.Spent, &x.LastDate, &x.Unit, &x.CategoryID, &x.CategorySource); err != nil {
 			rows.Close()
 			return nil, err
 		}

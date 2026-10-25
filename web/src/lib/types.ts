@@ -147,11 +147,13 @@ export interface ReceiptProvider { id: string; country: string; name: string; cu
 export interface Merchant {
   id: number; country: string; tax_id: string; name: string; display_name: string; address: string; city: string
   category_id: number | null; account_id: number | null; created_at: string
+  category_source: '' | 'you' | 'rule'; description: string; lat: number | null; lng: number | null; geocoded: boolean
   receipts: number; spent: number; currency: string; last_date: string; category_name: string; category_icon: string
 }
 export interface ReceiptItem {
   id: number; line: number; name: string; gtin: string; quantity: number; unit: string; unit_price: number; total: number; tax_label: string
   product_id: number | null; product_name: string; group_id: number | null; group_name: string; group_icon: string; category_id: number | null
+  category_source: '' | 'you' | 'ai' | 'group'; category_name: string; category_icon: string
 }
 export type PayMethod = 'cash' | 'card' | 'transfer' | 'voucher' | 'check' | 'other' | ''
 export interface Receipt {
@@ -160,6 +162,9 @@ export interface Receipt {
   kind: 'sale' | 'refund'; invoice_type: string; referent: string; cashier: string; device: string; journal?: string; url: string
   complete: boolean; has_items: boolean; transaction_id: number | null; created_at: string; updated_at: string
   items: ReceiptItem[]; merchant?: Merchant; item_count: number
+  category_reason: string
+  /** what the receipt says today (after items were sorted) */
+  guess?: { category_id: number | null; reason: string; description: string }
 }
 export type ScanStatus = 'pending' | 'done' | 'partial' | 'duplicate' | 'invalid' | 'skipped' | 'unsupported' | 'failed'
 export interface ReceiptScan {
@@ -171,11 +176,16 @@ export interface ScanResult {
   status: 'booked' | 'linked' | 'duplicate' | 'partial' | 'pending' | 'invalid' | 'skipped' | 'unsupported' | 'failed'
   message: string; scan: ReceiptScan; receipt?: Receipt; transaction?: Transaction
 }
-export interface ReceiptSettings { card_account_id: number | null; cash_account_id: number | null; split_items: boolean; attach_manual: boolean }
+export interface ShopRule { keywords: string; category_id: number }
+export interface ReceiptSettings {
+  card_account_id: number | null; cash_account_id: number | null; split_items: boolean; attach_manual: boolean
+  ai_items: boolean; own_words: boolean; geocode: boolean; shop_rules: ShopRule[]; shop_rules_default: boolean
+  ai_ready: boolean; ai_detail: string; unsorted_products: number
+}
 export interface ItemStats {
   key: number; name: string; icon: string; group_id?: number | null; purchases: number; lines: number; quantity: number; unit: string
   spent: number; avg_price: number; last_date: string; last_price: number; last_currency: string; products: number
-  category_id?: number | null; keywords?: string; locked?: boolean
+  category_id?: number | null; keywords?: string; locked?: boolean; category_source?: '' | 'you' | 'ai'
 }
 export interface Purchase {
   date: string; time: string; receipt_id: number; transaction_id: number | null; product_id: number | null; name: string; quantity: number; unit: string

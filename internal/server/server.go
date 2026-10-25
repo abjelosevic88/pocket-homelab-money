@@ -417,6 +417,8 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/receipts/{id}", s.handleDeleteReceipt)
 			r.Post("/receipts/{id}/book", s.handleBookReceipt)
 			r.Post("/receipts/{id}/split", s.handleSplitReceipt)
+			r.Post("/receipts/{id}/apply", s.handleApplyGuess)
+			r.Post("/products/sort", s.handleSortProducts)
 			r.Get("/merchants", s.handleListMerchants)
 			r.Put("/merchants/{id}", s.handleUpdateMerchant)
 			r.Get("/products/groups", s.handleProductGroups)

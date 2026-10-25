@@ -477,6 +477,11 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 .rc-qty { font-size: 12px; white-space: nowrap; padding-left: 8px !important; }
 .rc-amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 10px !important; }
 .rc-group { font-weight: 550; }
+.rc-cat { border: 0; cursor: pointer; font-weight: 550; background: var(--accent-soft); color: var(--accent-ink); font-family: inherit; }
+.rc-cat.none { background: transparent; border: 1px dashed var(--border); color: var(--muted); }
+.rc-ai { font-size: 9.5px; font-weight: 700; margin-left: 3px; opacity: .7; letter-spacing: .03em; }
+.rc-why { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rc-suggest { background: var(--warning-soft); border-radius: 8px; padding: 6px 10px; justify-content: space-between; }
 .rc-group.muted { background: transparent; border: 1px dashed var(--border); color: var(--muted); }
 .rc-foot { display: flex; gap: 12px; flex-wrap: wrap; }
 .rc-journal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.35; background: var(--surface); border-radius: 8px; padding: 10px; overflow-x: auto; margin: 0; white-space: pre; }
@@ -492,3 +497,6 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 .item-strip { background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; align-items: center; }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
 .steps code { font-size: 12px; }
+.shop-rules { display: grid; gap: 8px; padding: 12px 0 4px; }
+.shop-rule { display: flex; gap: 8px; align-items: center; }
+.shop-rule input { flex: 1; min-width: 0; }

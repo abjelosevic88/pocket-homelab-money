@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, decimalsOf, fmtDate, fmtMoney } from '../lib/format'
-import type { Merchant, Receipt, ReceiptProvider, ReceiptScan, ReceiptSettings, ScanStatus } from '../lib/types'
+import type { Merchant, Receipt, ReceiptProvider, ReceiptScan, ReceiptSettings, ScanStatus, ShopRule } from '../lib/types'
 import { Card, CopyField, Empty, Field, Loading, Modal, PageHeader, SettingRow, Switch, Tabs, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
 import { AccountSelect, CategorySelect } from '../components/pickers'
 import { ReceiptCard } from '../components/ReceiptCard'
@@ -183,13 +183,14 @@ function Shops() {
 function ShopForm({ m, onClose, onSaved }: { m: Merchant; onClose: () => void; onSaved: () => void }) {
   const { toast } = useToast()
   const [name, setName] = useState(m.display_name)
+  const [desc, setDesc] = useState(m.description)
   const [cat, setCat] = useState<number | null>(m.category_id)
   const [acct, setAcct] = useState<number | null>(m.account_id)
   const [apply, setApply] = useState(true)
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      const r = await api.put<{ updated: number }>(`${V1}/merchants/${m.id}`, { display_name: name, category_id: cat || 0, account_id: acct || 0, apply })
+      const r = await api.put<{ updated: number }>(`${V1}/merchants/${m.id}`, { display_name: name, description: desc, ...(cat !== m.category_id ? { category_id: cat || 0 } : {}), account_id: acct || 0, apply })
       toast(r.updated ? `Saved · ${r.updated} transactions updated` : 'Saved')
       onSaved()
     } catch (err) { toast(errMsg(err), 'err') }
@@ -198,7 +199,8 @@ function ShopForm({ m, onClose, onSaved }: { m: Merchant; onClose: () => void; o
     <Modal title={m.display_name} onClose={onClose} size="sm">
       <form onSubmit={save} className="form">
         <Field label="Name on transactions" help={`The tax office calls it “${m.name}”.`}><input value={name} onChange={e => setName(e.target.value)} autoFocus /></Field>
-        <Field label="Category" help="New receipts from this shop get it. Empty: learned from how you booked it before." group><CategorySelect value={cat} onChange={setCat} placeholder="Learned" clearLabel="Learned" /></Field>
+        <Field label="Description on transactions" help="Empty: automatic (your usual words for the category). Changing the description of one of its bookings sets it too."><input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Automatic" /></Field>
+        <Field label="Category" help={m.category_source === 'rule' ? 'Set from the shop’s name. Pick one to make it yours.' : m.category_source === 'you' ? 'Your choice: new receipts from this shop get it.' : 'Empty: from the items on each receipt.'} group><CategorySelect value={cat} onChange={setCat} placeholder="Learned" clearLabel="Learned" /></Field>
         <Field label="Account" help="Always book this shop here (else by payment method)." group><AccountSelect value={acct} onChange={id => setAcct(id || null)} placeholder="By payment method" clearLabel="By payment method" /></Field>
         <SettingRow title="Also update what is already booked" help="Renames and re-categorises the transactions booked from this shop's receipts (ones you renamed by hand stay)."><Switch checked={apply} onChange={setApply} /></SettingRow>
         <div className="form-actions"><span className="spacer" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary">Save</button></div>
@@ -213,10 +215,21 @@ function Setup() {
   const [st, setSt] = useState<ReceiptSettings | null>(null)
   const { data: providers } = useAsync(() => api.get<ReceiptProvider[]>(`${V1}/receipts/providers`), [])
   useEffect(() => { api.get<ReceiptSettings>(`${V1}/receipts/settings`).then(setSt) }, [])
-  const save = async (patch: Partial<ReceiptSettings>) => {
-    const next = { ...st!, ...patch }
-    setSt(next)
-    try { await api.put(`${V1}/receipts/settings`, { ...next, card_account_id: next.card_account_id || 0, cash_account_id: next.cash_account_id || 0 }); toast('Saved') } catch (e) { toast(errMsg(e), 'err') }
+  const save = async (patch: Partial<ReceiptSettings> & { reset_shop_rules?: boolean }) => {
+    setSt(x => x && { ...x, ...patch })
+    const body: Record<string, unknown> = { ...patch }
+    if ('card_account_id' in patch) body.card_account_id = patch.card_account_id || 0
+    if ('cash_account_id' in patch) body.cash_account_id = patch.cash_account_id || 0
+    try { setSt(await api.put<ReceiptSettings>(`${V1}/receipts/settings`, body)); toast('Saved') } catch (e) { toast(errMsg(e), 'err') }
+  }
+  const [sorting, setSorting] = useState(false)
+  const sortNow = async () => {
+    setSorting(true)
+    try {
+      const r = await api.post<{ asked: number; sorted: number }>(`${V1}/products/sort`)
+      toast(`${r.sorted} of ${r.asked} products sorted`)
+      setSt(await api.get<ReceiptSettings>(`${V1}/receipts/settings`))
+    } catch (e) { toast(errMsg(e), 'err') } finally { setSorting(false) }
   }
   const base = settings?.base_url || window.location.origin
   if (!st) return <Loading />
@@ -227,6 +240,19 @@ function Setup() {
         <SettingRow title="Cash payments go to" help="Empty: your first cash account."><div style={{ width: 240 }}><AccountSelect value={st.cash_account_id} onChange={id => save({ cash_account_id: id || null })} placeholder="First cash account" clearLabel="First cash account" /></div></SettingRow>
         <SettingRow title="Link to what I typed" help="A receipt with the same amount within a day of a transaction you entered by hand is linked to it instead of booked twice."><Switch checked={st.attach_manual} onChange={v => save({ attach_manual: v })} /></SettingRow>
         <SettingRow title="Split by item category" help="Book a receipt in parts, one per category of its items' product groups (milk → Groceries, shampoo → Cosmetics). Off: one category, split later with one click."><Switch checked={st.split_items} onChange={v => save({ split_items: v })} /></SettingRow>
+      </Card>
+      <Card title="Filling in automatically" sub="How a scanned receipt gets its category and description. Change the category or description of one booked receipt and that shop keeps it from then on.">
+        <SettingRow title="Sort new products with AI" help={<>Each product nobody has categorised yet is sent once — its name only, with your category list and a few of your own bookings as examples — and the answer is remembered. {st.ai_ready ? <b>{st.ai_detail}.</b> : <span className="bad">{st.ai_detail}</span>}</>}>
+          <Switch checked={st.ai_items} disabled={!st.ai_ready && !st.ai_items} onChange={v => save({ ai_items: v })} />
+        </SettingRow>
+        {st.ai_items && st.unsorted_products > 0 && (
+          <SettingRow title={`${st.unsorted_products} products still without a category`} help="Products from receipts scanned before the AI was on.">
+            <button type="button" className="btn sm" disabled={sorting} onClick={sortNow}><Icon name="sparkles" size={14} />{sorting ? 'Sorting…' : 'Sort them now'}</button>
+          </SettingRow>
+        )}
+        <SettingRow title="Describe it the way I do" help="The description is the one you use most for that category (“Nabavka za kuci” for groceries), not the shop's name."><Switch checked={st.own_words} onChange={v => save({ own_words: v })} /></SettingRow>
+        <SettingRow title="Put shops on the map" help="Looks the shop's address up once on OpenStreetMap and pins the transaction there (for Pocket Day and Movement)."><Switch checked={st.geocode} onChange={v => save({ geocode: v })} /></SettingRow>
+        <ShopRules rules={st.shop_rules} isDefault={st.shop_rules_default} onSave={rules => save({ shop_rules: rules })} onReset={() => save({ reset_shop_rules: true })} />
       </Card>
       <Card title="iPhone: scan from the Shortcuts app" sub="Faster than opening Pocket Money: scan, and a notification says what was booked.">
         <ol className="steps small">
@@ -249,6 +275,32 @@ function Setup() {
           </tbody>
         </table>
       </Card>
+    </div>
+  )
+}
+
+/** "Shops with one of these words in their registered name go to this category." */
+function ShopRules({ rules, isDefault, onSave, onReset }: { rules: ShopRule[]; isDefault: boolean; onSave: (r: ShopRule[]) => void; onReset: () => void }) {
+  const [list, setList] = useState(rules)
+  useEffect(() => setList(rules), [rules])
+  const dirty = JSON.stringify(list) !== JSON.stringify(rules)
+  const set = (i: number, patch: Partial<ShopRule>) => setList(l => l.map((r, j) => j === i ? { ...r, ...patch } : r))
+  return (
+    <div className="shop-rules">
+      <div className="row"><b className="small">Shop names</b><span className="muted small">&nbsp;· shops with one of these words in their registered name get the category{isDefault ? ' (suggested rules, matched to your categories)' : ''}</span></div>
+      {list.map((r, i) => (
+        <div key={i} className="shop-rule">
+          <input value={r.keywords} onChange={e => set(i, { keywords: e.target.value })} placeholder="apoteka, ljekarna" />
+          <div style={{ width: 200 }}><CategorySelect value={r.category_id || null} onChange={id => set(i, { category_id: id || 0 })} kind="expense" /></div>
+          <button type="button" className="btn ghost icon-only xs" aria-label="Remove" onClick={() => setList(l => l.filter((_, j) => j !== i))}><Icon name="x" size={14} /></button>
+        </div>
+      ))}
+      <div className="row" style={{ gap: 6 }}>
+        <button type="button" className="btn ghost sm" onClick={() => setList(l => [...l, { keywords: '', category_id: 0 }])}><Icon name="plus" size={14} />Rule</button>
+        {!isDefault && <button type="button" className="btn ghost sm" onClick={onReset}>Back to the suggested rules</button>}
+        <span className="spacer" />
+        {dirty && <button type="button" className="btn primary sm" onClick={() => onSave(list)}>Save rules</button>}
+      </div>
     </div>
   )
 }

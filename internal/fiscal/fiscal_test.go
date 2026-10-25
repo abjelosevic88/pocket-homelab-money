@@ -121,6 +121,12 @@ func TestNames(t *testing.T) {
 	if got := ShortLocation(`10024402700780031-"TROPIC MALOPRODAJA" d.o.o. Banja Luka,PJ "TROPIC CENTAR"`, `"TROPIC MALOPRODAJA" d.o.o. Banja Luka`); got != `PJ "TROPIC CENTAR"` {
 		t.Error(got)
 	}
+	if got := MerchantName(`"КОНЗУМ" трговина на велико и малод.о.о. Сарајево`); got != "Konzum" {
+		t.Errorf("cyrillic merchant %q", got)
+	}
+	if got := Latinize("Бања Лука ЉУБИЈА Љубија"); got != "Banja Luka LJUBIJA Ljubija" {
+		t.Errorf("latinize %q", got)
+	}
 	if MerchantName("KONZUM d.o.o. Sarajevo") != "Konzum" {
 		t.Error(MerchantName("KONZUM d.o.o. Sarajevo"))
 	}

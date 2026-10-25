@@ -14,6 +14,42 @@ var cyr = map[rune]string{
 	'č': "c", 'ć': "c", 'ž': "z", 'š': "s", 'đ': "dj", 'ä': "a", 'ö': "o", 'ü': "u", 'é': "e", 'è': "e", 'á': "a", 'í': "i", 'ó': "o", 'ú': "u",
 }
 
+var latin = map[rune]string{
+	'а': "a", 'б': "b", 'в': "v", 'г': "g", 'д': "d", 'ђ': "đ", 'е': "e", 'ж': "ž", 'з': "z", 'и': "i", 'ј': "j", 'к': "k",
+	'л': "l", 'љ': "lj", 'м': "m", 'н': "n", 'њ': "nj", 'о': "o", 'п': "p", 'р': "r", 'с': "s", 'т': "t", 'ћ': "ć", 'у': "u",
+	'ф': "f", 'х': "h", 'ц': "c", 'ч': "č", 'џ': "dž", 'ш': "š",
+}
+
+// Latinize writes Serbian Cyrillic in Latin letters, keeping case and
+// diacritics: "КОНЗУМ" → "KONZUM", "Бања Лука" → "Banja Luka", "Љубија" → "Ljubija".
+func Latinize(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return unicode.Is(unicode.Cyrillic, r) }) {
+		return s
+	}
+	rs := []rune(s)
+	var b strings.Builder
+	for i, r := range rs {
+		lo := unicode.ToLower(r)
+		t, ok := latin[lo]
+		if !ok {
+			b.WriteRune(r)
+			continue
+		}
+		if lo != r { // upper case: "LJ" inside a shouted word, "Lj" before lower case
+			nextUpper := i+1 < len(rs) && unicode.IsUpper(rs[i+1])
+			prevUpper := i > 0 && unicode.IsUpper(rs[i-1])
+			if nextUpper || (prevUpper && (i+1 >= len(rs) || !unicode.IsLetter(rs[i+1]))) {
+				t = strings.ToUpper(t)
+			} else {
+				tr := []rune(t)
+				t = strings.ToUpper(string(tr[0])) + string(tr[1:])
+			}
+		}
+		b.WriteString(t)
+	}
+	return b.String()
+}
+
 // Fold lowercases, transliterates Cyrillic and drops diacritics, so
 // "МЛИЈЕКО", "Mlijeko" and "mlijeko" compare equal (and "čaj" finds "caj").
 func Fold(s string) string {
@@ -46,6 +82,7 @@ func ProductKey(name string) string {
 
 // ProductName is a readable name for an item: "KEFIR 2.8% BALANS+/KO" → "Kefir 2.8% Balans+".
 func ProductName(name string) string {
+	name = Latinize(name)
 	n := taxSuffix.ReplaceAllString(name, "")
 	n = strings.TrimSpace(spaces.ReplaceAllString(unitSuffix.ReplaceAllString(n, ""), " "))
 	if n == "" {
@@ -56,6 +93,7 @@ func ProductName(name string) string {
 
 // MerchantName is a short payee for a shop: `"TROPIC MALOPRODAJA" d.o.o. Banja Luka` → "Tropic Maloprodaja".
 func MerchantName(business string) string {
+	business = Latinize(business)
 	n := strings.TrimSpace(business)
 	if m := quoted.FindStringSubmatch(n); m != nil {
 		n = m[1]
@@ -184,4 +222,26 @@ var StarterGroups = []StarterGroup{
 	{"Bags", "🛍️", "kesa, vrecica, kesica, bag"},
 	{"Cigarettes", "🚬", "cigarete, duhan, duvan, marlboro, malboro, lucky strike, camel, winston, iqos, heets, terea"},
 	{"Fuel", "⛽", "eurodizel, dizel, benzin, bmb, lpg, autoplin, diesel, eurosuper"},
+}
+
+// ShopRule puts a shop in a category by words in its registered name:
+// "APOTEKA ZEGIN" → the first of Categories the person has.
+type ShopRule struct {
+	Keywords   string   // comma separated, folded like product keywords
+	Categories []string // candidate category names, best first
+}
+
+// DefaultShopRules recognise shops whose kind is in their name or brand.
+// Supermarkets are left to their items.
+var DefaultShopRules = []ShopRule{
+	{"apoteka, ljekarna, pharmacy, farmacija, apotekarska", []string{"apoteka", "ljekarna", "pharmacy", "zdravlje", "health"}},
+	{"pekara, pekarna, bakery, burekdzinica, buregdzinica, pecenjara", []string{"pekara", "bakery"}},
+	{"nis petrol, gazprom, hifa, optima, benzinska, pumpa, lukoil, energopetrol, petrol bh, holdina, omv, crodux, jugopetrol, tifon", []string{"automobil", "gorivo", "fuel", "auto", "car", "transport"}},
+	{"dm drogerie, dm-drogerie, drogerie markt, muller, müller, lilly drogerie, drogerija, douglas, kozmetika", []string{"kozmetika", "cosmetics", "drogerija", "beauty"}},
+	{"restoran, restaurant, caffe, cafe, kafana, kafic, pizzeria, picerija, bistro, mcdonald, grill, cevabdzinica, ascinica, konoba, pivnica, kebab, burger", []string{"restoran", "restaurant", "restorani", "izlasci", "food out"}},
+	{"zara, h&m, deichmann, c&a, lc waikiki, pepco, new yorker, reserved, bershka, intersport, sport vision, tom tailor", []string{"odjeca", "odjeća", "clothes", "clothing", "obuca"}},
+	{"tehnomanija, technomarket, gigatron, tehnoplus, emmezeta tehnika, domod, win win, computer, kompjuter", []string{"uredjaji", "uređaji", "electronics", "tehnika"}},
+	{"veterinar, vet ambulanta, pet shop, petshop, zoo shop, zoo centar", []string{"pets", "ljubimci", "kucni ljubimci"}},
+	{"vinoteka, vinarija, wine, liquor, duty free", []string{"alkohol", "alcohol", "pice"}},
+	{"bauhaus, bricolage, mr. bricolage, gradjevinski materijal, gvozdjara", []string{"alat", "tools", "kuca", "home"}},
 }

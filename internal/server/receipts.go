@@ -205,7 +205,7 @@ func (s *Server) finishScan(ctx context.Context, scan *store.ReceiptScan, r *sto
 // receiptRow turns a fiscal receipt into the stored row (shop included).
 func (s *Server) receiptRow(ctx context.Context, uid int64, rec *fiscal.Receipt, scanURL string) (*store.Receipt, error) {
 	r := &store.Receipt{UserID: uid, Provider: rec.Provider, Country: rec.Country, Key: rec.Key, InvoiceNumber: rec.InvoiceNumber,
-		Location: fiscal.ShortLocation(rec.Merchant.Location, rec.Merchant.Name), Currency: rec.Currency, Total: rec.Total, TaxTotal: rec.TaxTotal, Method: rec.Method(), Payments: rec.Payments,
+		Location: fiscal.Latinize(fiscal.ShortLocation(rec.Merchant.Location, rec.Merchant.Name)), Currency: rec.Currency, Total: rec.Total, TaxTotal: rec.TaxTotal, Method: rec.Method(), Payments: rec.Payments,
 		Kind: rec.Kind, InvoiceType: rec.InvoiceType, Referent: rec.Referent, Cashier: rec.Cashier, Device: rec.Device, Journal: rec.Journal,
 		URL: scanURL, Complete: rec.Complete, HasItems: rec.HasItems}
 	if !rec.IssuedAt.IsZero() {
@@ -216,10 +216,13 @@ func (s *Server) receiptRow(ctx context.Context, uid int64, rec *fiscal.Receipt,
 	}
 	switch {
 	case rec.Merchant.TaxID != "" && rec.Merchant.Name != "":
-		m, err := s.store.UpsertMerchant(ctx, uid, rec.Country, rec.Merchant)
+		shop := rec.Merchant
+		shop.Address, shop.City = fiscal.Latinize(shop.Address), fiscal.Latinize(shop.City)
+		m, err := s.store.UpsertMerchant(ctx, uid, rec.Country, shop)
 		if err != nil {
 			return nil, err
 		}
+		s.categorizeShop(ctx, m, r.Location)
 		r.MerchantID = &m.ID
 	default:
 		// an offline scan: the device that signed it names the shop
@@ -282,7 +285,7 @@ func (s *Server) completeReceipt(ctx context.Context, scan *store.ReceiptScan, o
 	if full.TransactionID != nil {
 		if cur, err := s.store.GetTransaction(ctx, *full.TransactionID); err == nil && s.canWrite(ctx, cur.AccountID) {
 			t = cur
-			if cur.Source == "receipt" && untouched(cur, old) {
+			if cur.Source == "receipt" && (untouched(cur, old) || strings.TrimPrefix(cur.Description, "Refund · ") == s.guessReceipt(ctx, old).Description) {
 				t = s.refreshFromReceipt(ctx, cur, full)
 			}
 		}
@@ -327,30 +330,6 @@ func receiptNotes(r *store.Receipt) string {
 		parts = append(parts, r.Location)
 	}
 	return strings.Join(parts, " · ")
-}
-
-// receiptCategory: the shop's category, else what this payee was booked as
-// before, else the category of the item groups when they all agree.
-func (s *Server) receiptCategory(ctx context.Context, r *store.Receipt) *int64 {
-	if r.Merchant != nil && r.Merchant.CategoryID != nil {
-		return r.Merchant.CategoryID
-	}
-	if p := payeeFor(r); p != "" {
-		if id := s.store.LearnedCategory(ctx, actorID(ctx), p); id != nil {
-			return id
-		}
-	}
-	var only *int64
-	for _, it := range r.Items {
-		if it.CategoryID == nil {
-			return nil
-		}
-		if only != nil && *only != *it.CategoryID {
-			return nil
-		}
-		only = it.CategoryID
-	}
-	return only
 }
 
 // receiptSplits divides a receipt by its items' group categories (items
@@ -438,6 +417,32 @@ func (s *Server) receiptAccount(ctx context.Context, r *store.Receipt, hint *int
 	return s.defaultAccount(ctx, st, writable), writable
 }
 
+// prepareReceipt does the slow lookups before booking: the shop's map pin
+// and, when switched on, the AI sorting of products nobody categorised yet.
+func (s *Server) prepareReceipt(ctx context.Context, r *store.Receipt, rs store.ReceiptSettings) *store.Receipt {
+	s.placeShop(ctx, r.Merchant)
+	if !rs.AIItems {
+		return r
+	}
+	var ids []int64
+	for _, it := range r.Items {
+		if it.CategoryID == nil && it.ProductID != nil {
+			ids = append(ids, *it.ProductID)
+		}
+	}
+	if len(ids) == 0 {
+		return r
+	}
+	if _, n, err := s.sortProducts(ctx, ids, 200); err != nil {
+		s.log.Warn("receipt: AI sorting", "receipt", r.ID, "err", err)
+	} else if n > 0 {
+		if full, err := s.store.GetReceipt(ctx, r.ID); err == nil {
+			return full
+		}
+	}
+	return r
+}
+
 // bookReceipt books a stored receipt as a transaction, or links it to the
 // hand-typed transaction for the same purchase. how says which, for people.
 func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64) (*store.Transaction, string, error) {
@@ -451,6 +456,7 @@ func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64)
 		kind = "income"
 	}
 	rs := s.store.GetReceiptSettings(ctx, actorID(ctx))
+	r = s.prepareReceipt(ctx, r, rs)
 	if rs.AttachManual && r.Total > 0 {
 		ids := make([]int64, 0, len(writable))
 		for _, a := range writable {
@@ -469,10 +475,8 @@ func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64)
 		}
 	}
 	payee := payeeFor(r)
-	desc := payee
-	if desc == "" {
-		desc = placeholderDescription(r)
-	}
+	g := s.guessReceipt(ctx, r)
+	desc := g.Description
 	if kind == "income" {
 		desc = "Refund · " + desc
 	}
@@ -483,9 +487,12 @@ func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64)
 	}
 	notes := receiptNotes(r)
 	in.Notes = &notes
-	cat := s.receiptCategory(ctx, r)
+	cat := g.CategoryID
 	if cat != nil {
 		in.CategoryID = cat
+	}
+	if m := r.Merchant; m != nil && m.Lat != nil && m.Lng != nil {
+		in.Lat, in.Lng = m.Lat, m.Lng
 	}
 	if rs.SplitItems {
 		if parts := receiptSplits(r, cat); parts != nil {
@@ -504,6 +511,9 @@ func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64)
 	}
 	if msg != "" {
 		return nil, "", errors.New(msg)
+	}
+	if t.CategoryID != nil {
+		_ = s.store.SetReceiptReason(ctx, r.ID, g.Reason)
 	}
 	how := "Booked " + majorString(r.Total, r.Currency)
 	if payee != "" {
@@ -540,10 +550,15 @@ func (s *Server) fillFromReceipt(ctx context.Context, t *store.Transaction, r *s
 		changed = true
 	}
 	if t.CategoryID == nil && len(t.Splits) == 0 {
-		if c := s.receiptCategory(ctx, r); c != nil {
-			in.CategoryID = c
+		if g := s.guessReceipt(ctx, r); g.CategoryID != nil {
+			in.CategoryID = g.CategoryID
 			changed = true
+			_ = s.store.SetReceiptReason(ctx, r.ID, g.Reason)
 		}
+	}
+	if t.Lat == nil && r.Merchant != nil && r.Merchant.Lat != nil {
+		in.Lat, in.Lng = r.Merchant.Lat, r.Merchant.Lng
+		changed = true
 	}
 	if !changed {
 		return t
@@ -558,14 +573,20 @@ func (s *Server) refreshFromReceipt(ctx context.Context, t *store.Transaction, r
 	if payee == "" {
 		return t
 	}
-	desc := payee
+	r = s.prepareReceipt(ctx, r, s.store.GetReceiptSettings(ctx, actorID(ctx)))
+	g := s.guessReceipt(ctx, r)
+	desc := g.Description
 	if t.Kind == "income" {
-		desc = "Refund · " + payee
+		desc = "Refund · " + desc
 	}
 	notes := receiptNotes(r)
 	in := txIn{Payee: &payee, Description: &desc, Notes: &notes}
-	if t.CategoryID == nil && len(t.Splits) == 0 {
-		in.CategoryID = s.receiptCategory(ctx, r)
+	if t.CategoryID == nil && len(t.Splits) == 0 && g.CategoryID != nil {
+		in.CategoryID = g.CategoryID
+		_ = s.store.SetReceiptReason(ctx, r.ID, g.Reason)
+	}
+	if t.Lat == nil && r.Merchant != nil && r.Merchant.Lat != nil {
+		in.Lat, in.Lng = r.Merchant.Lat, r.Merchant.Lng
 	}
 	return s.updateTxFrom(ctx, t, &in)
 }
@@ -744,8 +765,19 @@ func (s *Server) receiptFor(w http.ResponseWriter, r *http.Request, write bool) 
 
 func (s *Server) handleGetReceipt(w http.ResponseWriter, r *http.Request) {
 	if rec := s.receiptFor(w, r, false); rec != nil {
+		s.withGuess(r.Context(), rec)
 		writeJSON(w, http.StatusOK, rec)
 	}
+}
+
+// withGuess adds what the receipt says today (after the person sorted items),
+// so the page can offer it when the transaction has something else.
+func (s *Server) withGuess(ctx context.Context, rec *store.Receipt) {
+	if rec.UserID != actorID(ctx) {
+		return
+	}
+	g := s.guessReceipt(ctx, rec)
+	rec.Guess = map[string]any{"category_id": g.CategoryID, "reason": g.Reason, "description": g.Description}
 }
 
 func (s *Server) handleTransactionReceipt(w http.ResponseWriter, r *http.Request) {
@@ -758,6 +790,7 @@ func (s *Server) handleTransactionReceipt(w http.ResponseWriter, r *http.Request
 		s.fail(w, err, "receipt")
 		return
 	}
+	s.withGuess(r.Context(), rec)
 	writeJSON(w, http.StatusOK, rec)
 }
 
@@ -896,16 +929,66 @@ func (s *Server) handleScanRaw(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(scan.Raw))
 }
 
+// receiptSettingsOut adds what the page shows next to the switches: which
+// AI would sort products, and the shop rules in force (defaults included).
+func (s *Server) receiptSettingsOut(ctx context.Context) map[string]any {
+	rs := s.store.GetReceiptSettings(ctx, actorID(ctx))
+	rules, defaults := s.shopRules(ctx, rs)
+	client, detail := s.receiptAI(ctx)
+	unsorted, _ := s.store.ProductsToSort(ctx, actorID(ctx), nil, 10000)
+	return map[string]any{"card_account_id": rs.CardAccountID, "cash_account_id": rs.CashAccountID, "split_items": rs.SplitItems, "attach_manual": rs.AttachManual,
+		"ai_items": rs.AIItems, "own_words": rs.OwnWords, "geocode": rs.Geocode, "shop_rules": rules, "shop_rules_default": defaults,
+		"ai_ready": client != nil, "ai_detail": detail, "unsorted_products": len(unsorted)}
+}
+
 func (s *Server) handleGetReceiptSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.store.GetReceiptSettings(r.Context(), actorID(r.Context())))
+	writeJSON(w, http.StatusOK, s.receiptSettingsOut(r.Context()))
 }
 
 func (s *Server) handlePutReceiptSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var in store.ReceiptSettings
-	if err := decode(r, &in); err != nil {
+	keys, err := decodeKeys(r, &in)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	cur := s.store.GetReceiptSettings(ctx, actorID(ctx))
+	// only what was sent changes
+	keep := func(k string, dst *bool, v bool) {
+		if !keys[k] {
+			*dst = v
+		}
+	}
+	keep("split_items", &in.SplitItems, cur.SplitItems)
+	keep("attach_manual", &in.AttachManual, cur.AttachManual)
+	keep("ai_items", &in.AIItems, cur.AIItems)
+	keep("own_words", &in.OwnWords, cur.OwnWords)
+	keep("geocode", &in.Geocode, cur.Geocode)
+	if !keys["card_account_id"] {
+		in.CardAccountID = cur.CardAccountID
+	}
+	if !keys["cash_account_id"] {
+		in.CashAccountID = cur.CashAccountID
+	}
+	if !keys["shop_rules"] {
+		in.ShopRules = cur.ShopRules // unchanged
+	} else {
+		clean := []store.ShopRule{}
+		for _, rule := range in.ShopRules {
+			if strings.TrimSpace(rule.Keywords) == "" || rule.CategoryID <= 0 {
+				continue
+			}
+			if _, err := s.store.GetCategory(ctx, actorID(ctx), rule.CategoryID); err != nil {
+				writeErr(w, http.StatusBadRequest, "unknown category in a shop rule")
+				return
+			}
+			clean = append(clean, store.ShopRule{Keywords: strings.TrimSpace(rule.Keywords), CategoryID: rule.CategoryID})
+		}
+		in.ShopRules = clean
+	}
+	if keys["reset_shop_rules"] { // back to the defaults
+		in.ShopRules = nil
 	}
 	for _, id := range []*int64{in.CardAccountID, in.CashAccountID} {
 		if id != nil && *id > 0 && !s.canWrite(ctx, *id) {
@@ -918,7 +1001,7 @@ func (s *Server) handlePutReceiptSettings(w http.ResponseWriter, r *http.Request
 		s.fail(w, err, "receipt settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, in)
+	writeJSON(w, http.StatusOK, s.receiptSettingsOut(ctx))
 }
 
 // ---- merchants ----
@@ -941,6 +1024,7 @@ func (s *Server) handleUpdateMerchant(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		DisplayName *string `json:"display_name"`
+		Description *string `json:"description"`
 		CategoryID  *int64  `json:"category_id"`
 		AccountID   *int64  `json:"account_id"`
 		Apply       bool    `json:"apply"` // also rename/categorise transactions already booked from its receipts
@@ -956,8 +1040,15 @@ func (s *Server) handleUpdateMerchant(w http.ResponseWriter, r *http.Request) {
 			m.DisplayName = fiscal.MerchantName(m.Name)
 		}
 	}
+	if in.Description != nil {
+		m.Description = strings.TrimSpace(*in.Description)
+	}
 	if in.CategoryID != nil {
 		m.CategoryID = idOrNil(in.CategoryID)
+		m.CategorySource = "you"
+		if m.CategoryID == nil {
+			m.CategorySource = ""
+		}
 		if m.CategoryID != nil {
 			if _, err := s.store.GetCategory(ctx, actorID(ctx), *m.CategoryID); err != nil {
 				writeErr(w, http.StatusBadRequest, "unknown category")

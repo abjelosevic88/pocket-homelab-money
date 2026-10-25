@@ -19,12 +19,17 @@ import (
 // by their counter; offline=true makes it unreachable.
 type fakeSUF struct {
 	offline  atomic.Bool
+	geocoded atomic.Int32
 	receipts map[uint32]string
 }
 
 func (f *fakeSUF) RoundTrip(r *http.Request) (*http.Response, error) {
 	if f.offline.Load() {
 		return nil, errors.New("dial tcp: no route to host")
+	}
+	if r.URL.Host == "nominatim.openstreetmap.org" {
+		f.geocoded.Add(1)
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`[{"lat":"44.7722","lon":"17.1910"}]`)), Header: http.Header{}, Request: r}, nil
 	}
 	vl, _ := base64.StdEncoding.DecodeString(r.URL.Query().Get("vl"))
 	body, ok := f.receipts[binary.LittleEndian.Uint32(vl[17:21])]
@@ -50,6 +55,10 @@ func sufTestLink(counter uint32, total float64) string {
 }
 
 func sufTestJSON(counter uint32, payment int, items ...[3]any) string {
+	return sufShopJSON(counter, payment, `\"PRIMJER MARKET\" d.o.o. Banja Luka`, "4400000000001", items...)
+}
+
+func sufShopJSON(counter uint32, payment int, business, taxID string, items ...[3]any) string {
 	var lines []string
 	var total float64
 	for _, it := range items {
@@ -57,10 +66,10 @@ func sufTestJSON(counter uint32, payment int, items ...[3]any) string {
 		lines = append(lines, fmt.Sprintf(`{"name":%q,"quantity":%v,"unitPrice":%v,"totalPrice":%v,"gtin":"1"}`, it[0], q, p, q*p))
 		total += q * p
 	}
-	return fmt.Sprintf(`{"invoiceRequest":{"taxId":"4400000000001","businessName":"\"PRIMJER MARKET\" d.o.o. Banja Luka","locationName":"PJ Centar","address":"Glavna 1","city":"Banja Luka","cashier":"7","requestedBy":"TEST0001","invoiceType":0,"transactionType":0,
+	return fmt.Sprintf(`{"invoiceRequest":{"taxId":%q,"businessName":"%s","locationName":"PJ Centar","address":"Glavna 1","city":"Banja Luka","cashier":"7","requestedBy":"TEST0001","invoiceType":0,"transactionType":0,
 "payments":[{"paymentType":%d,"amount":%.2f}],"items":[%s]},
 "invoiceResult":{"totalAmount":%.2f,"invoiceNumber":"TEST0001-TEST0001-%d","signedBy":"TEST0001","sdcTime":%q},"journal":"","isValid":true}`,
-		payment, total, strings.Join(lines, ","), total, counter, receiptAt.Format(time.RFC3339))
+		taxID, business, payment, total, strings.Join(lines, ","), total, counter, receiptAt.Format(time.RFC3339))
 }
 
 type scanOut struct {

@@ -98,6 +98,9 @@ function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit }:
       toast(v === 'auto' ? 'Back to keyword matching' : 'Moved'); reload(); onChanged()
     } catch (e) { toast(errMsg(e), 'err') }
   }
+  const setCat = async (p: ItemStats, id: number | null) => {
+    try { await api.put(`${V1}/products/${p.key}`, { category_id: id || 0 }); toast('Remembered for every receipt'); reload() } catch (e) { toast(errMsg(e), 'err') }
+  }
   // price per unit over time, and where it is cheapest
   const points = useMemo(() => (purchases || []).filter(p => p.quantity > 0).map(p => ({ x: p.date, y: p.unit_price, label: `${p.name} · ${p.merchant}` })).reverse(), [purchases])
   const cur = purchases?.[0]?.currency || home
@@ -143,7 +146,7 @@ function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit }:
         actions={<div className="search" style={{ width: 200 }}><input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter…" /></div>}>
         {!products ? <Loading /> : products.length === 0 ? <div className="muted small" style={{ padding: 14 }}>None.</div> : (
           <table className="table compact">
-            <thead><tr><th>Product</th><th>Bought</th><th style={{ textAlign: 'right' }}>Spent</th><th style={{ textAlign: 'right' }}>Last price</th><th>Group</th></tr></thead>
+            <thead><tr><th>Product</th><th>Bought</th><th style={{ textAlign: 'right' }}>Spent</th><th style={{ textAlign: 'right' }}>Last price</th><th>Category</th><th>Group</th></tr></thead>
             <tbody>
               {products.map(p => (
                 <tr key={p.key}>
@@ -151,6 +154,9 @@ function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit }:
                   <td className="muted nowrap">{p.purchases}× · {qtyLabel(p.quantity, p.unit)}</td>
                   <td style={{ textAlign: 'right' }}>{fmtMoney(p.spent, home, dec)}</td>
                   <td style={{ textAlign: 'right' }} className="muted">{p.last_currency ? fmtMoney(p.last_price, p.last_currency, decimalsOf(p.last_currency, currencies)) : ''}</td>
+                  <td style={{ width: 180 }}>
+                    {p.key > 0 && <div className="row" style={{ gap: 4 }}><CategorySelect value={p.category_id ?? null} onChange={id => setCat(p, id)} kind="expense" placeholder={g?.category_id ? 'Group’s' : 'None'} clearLabel={g?.category_id ? 'Group’s' : 'None'} />{p.category_source === 'ai' && <span className="badge" title="Sorted by AI">AI</span>}</div>}
+                  </td>
                   <td style={{ width: 190 }}>
                     {p.key > 0 && <Select value={p.group_id ? String(p.group_id) : ''} onChange={v => move(p, v)} ariaLabel="Group"
                       options={[...(p.locked ? [{ value: 'auto', label: '↺ By keywords' }] : []), ...groups.map(x => ({ value: String(x.key), label: `${x.icon || '📦'} ${x.name}` }))]}

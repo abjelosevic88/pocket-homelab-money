@@ -181,9 +181,10 @@ func (s *Server) handleUpdateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name    *string `json:"name"`
-		GroupID *int64  `json:"group_id"` // 0 = no group
-		Auto    bool    `json:"auto"`     // back to keyword matching
+		Name       *string `json:"name"`
+		GroupID    *int64  `json:"group_id"`    // 0 = no group
+		Auto       bool    `json:"auto"`        // back to keyword matching
+		CategoryID *int64  `json:"category_id"` // the product's own category; 0 = none (the group's)
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -207,6 +208,20 @@ func (s *Server) handleUpdateProduct(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateProduct(ctx, p); err != nil {
 		s.fail(w, err, "product")
 		return
+	}
+	if in.CategoryID != nil {
+		cat := idOrNil(in.CategoryID)
+		if cat != nil {
+			if _, err := s.store.GetCategory(ctx, p.UserID, *cat); err != nil {
+				writeErr(w, http.StatusBadRequest, "unknown category")
+				return
+			}
+		}
+		if err := s.store.SetProductCategory(ctx, p.UserID, p.ID, cat, "you"); err != nil {
+			s.fail(w, err, "product")
+			return
+		}
+		p, _ = s.store.GetProduct(ctx, p.UserID, p.ID)
 	}
 	if in.Auto {
 		_, _ = s.store.RegroupProducts(ctx, p.UserID)
