@@ -99,7 +99,7 @@ export function ReceiptCard({ receipt, tx, onChanged }: { receipt: Receipt; tx?:
             {r.items.map(it => (
               <tr key={it.id}>
                 <td className="rc-name">
-                  <span>{it.product_name || it.name}</span>
+                  {it.product_id ? <Link to={`/products?product=${it.product_id}`} className="rc-item-link" title="Statistics for this product">{it.product_name || it.name}</Link> : <span>{it.product_name || it.name}</span>}
                   {it.group_id
                     ? <Link to={`/products?group=${it.group_id}`} className="badge rc-group">{it.group_icon} {it.group_name}</Link>
                     : it.product_id ? <Link to={`/products?group=none&q=${encodeURIComponent(it.product_name || it.name)}`} className="badge rc-group muted">+ group</Link> : null}

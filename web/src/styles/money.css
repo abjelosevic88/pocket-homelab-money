@@ -501,3 +501,6 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 .shop-rules { display: grid; gap: 8px; padding: 12px 0 4px; }
 .shop-rule { display: flex; gap: 8px; align-items: center; }
 .shop-rule input { flex: 1; min-width: 0; }
+.prod-facts { display: grid; gap: 4px; margin: -4px 0 14px; color: var(--text-2); }
+.rc-item-link { color: inherit; }
+.rc-item-link:hover { color: var(--accent-ink); text-decoration: underline; }

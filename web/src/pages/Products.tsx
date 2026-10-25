@@ -75,13 +75,14 @@ export default function Products() {
           ))}
         </div>
       )}
-      {open && <GroupDetail id={open} from={from} merchant={merchant} groups={real} onClose={() => set('group', '')} onChanged={reload} onEdit={g => setEditing(g)} />}
+      {open && <GroupDetail id={open} from={from} merchant={merchant} groups={real} onClose={() => set('group', '')} onChanged={reload} onEdit={g => setEditing(g)} onProduct={id => set('product', String(id))} />}
+      {sp.get('product') && <ProductDetail id={Number(sp.get('product'))} from={from} merchant={merchant} groups={real} onClose={() => set('product', '')} onChanged={reload} />}
       {editing && <GroupForm g={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} onSaved={msg => { setEditing(null); toast(msg); reload() }} onDeleted={() => { setEditing(null); set('group', ''); reload() }} />}
     </>
   )
 }
 
-function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit }: { id: string; from: string; merchant: string; groups: ItemStats[]; onClose: () => void; onChanged: () => void; onEdit: (g: ItemStats) => void }) {
+function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit, onProduct }: { id: string; from: string; merchant: string; groups: ItemStats[]; onClose: () => void; onChanged: () => void; onEdit: (g: ItemStats) => void; onProduct: (id: number) => void }) {
   const { home, currencies } = useApp()
   const { toast } = useToast()
   const [sp] = useSearchParams()
@@ -150,7 +151,7 @@ function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit }:
             <tbody>
               {products.map(p => (
                 <tr key={p.key}>
-                  <td><Link to={`/transactions?product=${p.key}`}>{p.name}</Link></td>
+                  <td>{p.key > 0 ? <button type="button" className="link-btn" onClick={() => onProduct(p.key)}>{p.name}</button> : p.name}</td>
                   <td className="muted nowrap">{p.purchases}× · {qtyLabel(p.quantity, p.unit)}</td>
                   <td style={{ textAlign: 'right' }}>{fmtMoney(p.spent, home, dec)}</td>
                   <td style={{ textAlign: 'right' }} className="muted">{p.last_currency ? fmtMoney(p.last_price, p.last_currency, decimalsOf(p.last_currency, currencies)) : ''}</td>
@@ -224,6 +225,126 @@ function GroupForm({ g, onClose, onSaved, onDeleted }: { g?: ItemStats; onClose:
           <span className="spacer" /><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!name.trim()}>Save</button>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+const dayMs = 86400000
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / dayMs)
+
+/** One product: how often and how much you buy it, what it costs and where
+ *  it is cheapest, month by month, every purchase. */
+function ProductDetail({ id, from, merchant, groups, onClose, onChanged }: { id: number; from: string; merchant: string; groups: ItemStats[]; onClose: () => void; onChanged: () => void }) {
+  const { home, currencies } = useApp()
+  const { toast } = useToast()
+  const qs = `product=${id}&from=${from}${merchant ? `&merchant=${merchant}` : ''}`
+  const { data: sum, reload } = useAsync(() => api.get<ItemStats>(`${V1}/products/summary?${qs}`), [qs])
+  const { data: buys } = useAsync(() => api.get<Purchase[]>(`${V1}/products/purchases?${qs}&limit=2000`), [qs])
+  const dec = decimalsOf(home, currencies)
+  const st = useMemo(() => {
+    const list = (buys || []).filter(b => b.quantity > 0)
+    if (!list.length) return null
+    const cur = list[0].currency
+    const same = list.filter(b => b.currency === cur) // prices compared in one currency
+    const asc = [...same].reverse()
+    const min = same.reduce((a, b) => (b.unit_price < a.unit_price ? b : a))
+    const max = same.reduce((a, b) => (b.unit_price > a.unit_price ? b : a))
+    const first = asc[0], last = asc[asc.length - 1]
+    const change = first.unit_price ? Math.round(((last.unit_price - first.unit_price) / first.unit_price) * 100) : 0
+    const days = [...new Set(list.map(b => b.date))].sort()
+    const every = days.length > 1 ? Math.round(daysBetween(days[0], days[days.length - 1]) / (days.length - 1)) : 0
+    const since = daysBetween(days[days.length - 1], todayISO())
+    const next = every > 0 ? addDays(days[days.length - 1], every) : ''
+    const shops = new Map<string, { name: string; n: number; qty: number; total: number; last: number; lastDate: string }>()
+    for (const b of same) {
+      const x = shops.get(b.merchant) || { name: b.merchant || 'Unknown shop', n: 0, qty: 0, total: 0, last: b.unit_price, lastDate: b.date }
+      x.n++; x.qty += b.quantity; x.total += b.total
+      shops.set(b.merchant, x)
+    }
+    const months = new Map<string, { qty: number; spent: number; n: number }>()
+    for (const b of list) {
+      const m = b.date.slice(0, 7)
+      const x = months.get(m) || { qty: 0, spent: 0, n: 0 }
+      x.qty += b.quantity; x.spent += b.home; x.n++
+      months.set(m, x)
+    }
+    return {
+      cur, min, max, first, last, change, every, since, next,
+      shops: [...shops.values()].sort((a, b) => a.total / a.qty - b.total / b.qty),
+      months: [...months.entries()].sort((a, b) => b[0].localeCompare(a[0])),
+      points: asc.map(b => ({ x: b.date, y: b.unit_price, label: b.merchant })),
+      unit: list[0].unit,
+    }
+  }, [buys])
+  const save = async (body: Record<string, unknown>, msg: string) => {
+    try { await api.put(`${V1}/products/${id}`, body); toast(msg); reload(); onChanged() } catch (e) { toast(errMsg(e), 'err') }
+  }
+  const money = (v: number, c = st?.cur || home) => fmtMoney(v, c, decimalsOf(c, currencies))
+  const per = st ? perUnit(st.unit) : 'piece'
+  const group = groups.find(g => g.key === sum?.group_id)
+  return (
+    <Modal title={sum ? `${group?.icon || '🛒'} ${sum.name}` : 'Product'} onClose={onClose} size="lg" footer={<>
+      <span className="spacer" />
+      <Link className="btn primary" to={`/transactions?product=${id}${from ? `&from=${from}` : ''}`}>Show the transactions</Link>
+    </>}>
+      {!sum || !buys ? <Loading /> : <>
+        <div className="row wrap" style={{ gap: 10, marginBottom: 12 }}>
+          <div style={{ width: 210 }}><CategorySelect value={sum.category_id ?? null} onChange={c => save({ category_id: c || 0 }, 'Category remembered')} kind="expense" placeholder={group?.category_id ? 'Group’s category' : 'No category'} clearLabel={group?.category_id ? 'Group’s category' : 'No category'} /></div>
+          {sum.category_source === 'ai' && <span className="badge" title="Sorted by AI">AI</span>}
+          <div style={{ width: 210 }}><Select value={sum.group_id ? String(sum.group_id) : ''} onChange={v => save(v === 'auto' ? { auto: true } : { group_id: Number(v) || 0 }, 'Moved')} ariaLabel="Group"
+            options={[...(sum.locked ? [{ value: 'auto', label: '↺ By keywords' }] : []), ...groups.map(g => ({ value: String(g.key), label: `${g.icon || '📦'} ${g.name}` }))]} placeholder="No group" clearLabel="No group" /></div>
+        </div>
+        {sum.purchases === 0 || !st ? <Empty title="Not bought in this period">Pick “All time” on the Products page.</Empty> : <>
+          <div className="stats">
+            <div className="stat"><div className="n">{sum.purchases}×</div><div className="l">bought{st.every > 0 ? ` · about every ${st.every} day${st.every === 1 ? '' : 's'}` : ''}</div></div>
+            <div className="stat"><div className="n">{qtyLabel(sum.quantity, sum.unit)}</div><div className="l">in all</div></div>
+            <div className="stat"><div className="n">{fmtMoney(sum.spent, home, dec)}</div><div className="l">spent</div></div>
+            <div className="stat"><div className="n">{money(st.last.unit_price)}</div><div className="l">now per {per}{st.change !== 0 && st.first !== st.last && <span className={st.change > 0 ? 'bad' : 'ok'}> · {st.change > 0 ? '+' : ''}{st.change} % since {fmtDate(st.first.date, false)}</span>}</div></div>
+          </div>
+          <div className="prod-facts small">
+            {st.min.unit_price !== st.max.unit_price && <>
+              <span>Cheapest <b>{money(st.min.unit_price)}</b> at {st.min.merchant || 'a shop'} on {fmtDate(st.min.date, false)}</span>
+              <span>Dearest <b>{money(st.max.unit_price)}</b> at {st.max.merchant || 'a shop'} on {fmtDate(st.max.date, false)}</span>
+            </>}
+            <span>Last bought {st.since === 0 ? 'today' : st.since === 1 ? 'yesterday' : `${st.since} days ago`}{st.next && st.next >= todayISO() ? ` · next probably around ${fmtDate(st.next, false)}` : ''}</span>
+          </div>
+          {st.points.length > 1 && (
+            <Card title={`Price per ${per}`} sub="Every purchase, oldest to newest">
+              <Line points={st.points} fmt={y => money(y)} height={150} />
+            </Card>
+          )}
+          {st.shops.length > 0 && (
+            <Card title="By shop" sub="Cheapest per unit first" flush>
+              <table className="table compact">
+                <thead><tr><th>Shop</th><th>Bought</th><th style={{ textAlign: 'right' }}>Average</th><th style={{ textAlign: 'right' }}>Spent</th></tr></thead>
+                <tbody>{st.shops.map(x => <tr key={x.name}><td>{x.name}</td><td className="muted">{x.n}× · {qtyLabel(x.qty, st.unit)}</td><td style={{ textAlign: 'right' }}>{money(Math.round(x.total / (x.qty || 1)))}/{per}</td><td style={{ textAlign: 'right' }}>{money(x.total)}</td></tr>)}</tbody>
+              </table>
+            </Card>
+          )}
+          {st.months.length > 1 && (
+            <Card title="By month" flush>
+              <table className="table compact">
+                <tbody>{st.months.map(([m, x]) => <tr key={m}><td>{new Date(m + '-15').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</td><td className="muted">{x.n}× · {qtyLabel(x.qty, st.unit)}</td><td style={{ textAlign: 'right' }}>{fmtMoney(x.spent, home, dec)}</td></tr>)}</tbody>
+              </table>
+            </Card>
+          )}
+          <Card title="Purchases" flush>
+            <table className="table compact">
+              <tbody>
+                {buys.slice(0, 200).map((b, i) => (
+                  <tr key={i}>
+                    <td className="nowrap muted">{fmtDate(b.date, false)}</td>
+                    <td>{b.merchant}</td>
+                    <td className="muted nowrap">{fmtQty(b.quantity, b.unit)} × {fmtMoney(b.unit_price, b.currency, decimalsOf(b.currency, currencies), { code: false })}</td>
+                    <td style={{ textAlign: 'right' }}>{fmtMoney(b.total, b.currency, decimalsOf(b.currency, currencies))}</td>
+                    <td>{b.transaction_id && <Link className="btn ghost xs" to={`/transactions/${b.transaction_id}`} aria-label="Open the transaction"><Icon name="arrow-right" size={13} /></Link>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </>}
+      </>}
     </Modal>
   )
 }

@@ -141,7 +141,7 @@ export default function Transactions() {
           <span>on these items <b>{fmtMoney(itemSum.spent, home, dec)}</b></span>
           {itemSum.quantity > 0 && <span className="muted">avg {fmtMoney(itemSum.avg_price, home, dec)}/{perUnit(itemSum.unit)}</span>}
           <span className="spacer" />
-          <Link className="btn ghost sm" to={`/products?group=${prod ? itemSum.group_id || 'none' : pg}`}>Details</Link>
+          <Link className="btn ghost sm" to={prod ? `/products?product=${prod}` : `/products?group=${pg}`}>Details</Link>
         </div>
       )}
       {page && page.totals.count > 0 && (
