@@ -4,8 +4,9 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, decimalsOf, fmtDate, fmtMoney } from '../lib/format'
 import type { Merchant, Receipt, ReceiptProvider, ReceiptScan, ReceiptSettings, ScanStatus, ShopRule } from '../lib/types'
-import { Card, CopyField, Empty, Field, Loading, MenuButton, Modal, PageHeader, SettingRow, Switch, Tabs, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
+import { Card, CopyField, Empty, Field, Loading, MenuButton, Modal, PageHeader, Segmented, SettingRow, Switch, Tabs, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
 import { AccountSelect, CategorySelect } from '../components/pickers'
+import { Select } from '../components/Select'
 import { ReceiptCard } from '../components/ReceiptCard'
 import { ReceiptScanner } from '../components/ReceiptScanner'
 import { Icon } from '../components/icons'
@@ -259,6 +260,20 @@ function Setup() {
         <SettingRow title="Describe it the way I do" help="The description is the one you use most for that category (“Nabavka za kuci” for groceries), not the shop's name."><Switch checked={st.own_words} onChange={v => save({ own_words: v })} /></SettingRow>
         <SettingRow title="Put shops on the map" help="Looks the shop's address up once on OpenStreetMap and pins the transaction there (for Pocket Day and Movement)."><Switch checked={st.geocode} onChange={v => save({ geocode: v })} /></SettingRow>
         <ShopRules rules={st.shop_rules} isDefault={st.shop_rules_default} onSave={rules => save({ shop_rules: rules })} onReset={() => save({ reset_shop_rules: true })} />
+      </Card>
+      <Card title="Daily product check" sub="Every day, products without a group are placed: by the groups' keywords, next to similar products you already grouped (“Jabuka zlatni” joins “Jabuka BIO”), and — if you choose — by AI, which can also suggest new groups.">
+        <SettingRow title="Check" help={st.group_job === 'ai' && !st.ai_ready ? <span className="bad">{st.ai_detail}</span> : st.group_job === 'ai' ? `Names of products it cannot place otherwise are sent once. ${st.ai_detail}.` : 'No AI: keywords and similar products only.'}>
+          <Segmented size="sm" value={st.group_job} onChange={v => save({ group_job: v })} options={[{ value: 'off', label: 'Off' }, { value: 'keywords', label: 'Keywords' }, { value: 'ai', label: '+ AI', disabled: !st.ai_ready && st.group_job !== 'ai' }]} />
+        </SettingRow>
+        {st.group_job !== 'off' && <>
+          <SettingRow title="At" help="Runs once a day from this hour, only when there are products without a group.">
+            <div style={{ width: 110 }}><Select value={String(st.group_job_hour)} onChange={v => save({ group_job_hour: Number(v) })} options={Array.from({ length: 24 }, (_, h) => ({ value: String(h), label: `${String(h).padStart(2, '0')}:00` }))} ariaLabel="Hour" /></div>
+          </SettingRow>
+          <SettingRow title="Send me the report" help="Through your notification settings, only when something was grouped or a new group is suggested."><Switch checked={st.group_job_notify} onChange={v => save({ group_job_notify: v })} /></SettingRow>
+        </>}
+        <SettingRow title="Reports" help="What each run did, the groups it suggests, and what is still without a group.">
+          <Link className="btn sm" to="/products?report=1"><Icon name="history" size={14} />Open the reports</Link>
+        </SettingRow>
       </Card>
       <Card title="iPhone: scan from the Shortcuts app" sub="Faster than opening Pocket Money: scan, and a notification says what was booked.">
         <ol className="steps small">

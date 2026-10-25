@@ -504,3 +504,4 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 .prod-facts { display: grid; gap: 4px; margin: -4px 0 14px; color: var(--text-2); }
 .rc-item-link { color: inherit; }
 .rc-item-link:hover { color: var(--accent-ink); text-decoration: underline; }
+.check-sugg { display: flex; gap: 10px; align-items: center; justify-content: space-between; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }

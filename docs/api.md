@@ -89,6 +89,8 @@ Another Pocket app can act for a person here with a `pcx_` token from Pocket Cor
 | `GET /products/purchases` `?group, product, merchant, from, to` | every line, newest first (price history) |
 | `GET /products/summary` `?product_group | product, from, to` | one total, for a filtered transaction list |
 
+**Daily product check.** `GET /products/check` (the last 30 runs and how many products have no group) · `POST /products/check` (run now) · `POST /products/check/suggestion` `{name, icon, keywords, product_ids}` (create a suggested group with its products). Receipt settings `group_job` (`off` · `keywords` · `ai`, default `keywords`), `group_job_hour` (default 4) and `group_job_notify`. Once a day from that hour, when products without a group exist: the groups' keywords, then *similar products* (a product whose first word appears only in one group's products joins it), then with `ai` the rest are sent once (names with the groups, their keywords and example products) to be placed or to get new groups suggested; with `ai_items` products without a category are sorted too. Similar and AI placements are kept by keyword regrouping (`group_source`), until the product is set back to keywords. Each run is stored with its report; a notification goes out when something was placed or suggested.
+
 A product is an item name folded to lowercase Latin without diacritics and without the unit suffix (`MLIJEKO 2.8% 1L/KO` → `mlijeko 2.8% 1l`). A product joins the group whose keyword starts a word in its name; the longest matching keyword wins.
 
 ## Quick add

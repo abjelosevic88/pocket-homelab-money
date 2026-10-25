@@ -938,7 +938,8 @@ func (s *Server) receiptSettingsOut(ctx context.Context) map[string]any {
 	unsorted, _ := s.store.ProductsToSort(ctx, actorID(ctx), nil, 10000)
 	return map[string]any{"card_account_id": rs.CardAccountID, "cash_account_id": rs.CashAccountID, "split_items": rs.SplitItems, "attach_manual": rs.AttachManual,
 		"ai_items": rs.AIItems, "own_words": rs.OwnWords, "geocode": rs.Geocode, "shop_rules": rules, "shop_rules_default": defaults,
-		"ai_ready": client != nil, "ai_detail": detail, "unsorted_products": len(unsorted)}
+		"ai_ready": client != nil, "ai_detail": detail, "unsorted_products": len(unsorted),
+		"group_job": rs.GroupJob, "group_job_hour": rs.GroupJobHour, "group_job_notify": rs.GroupJobNotify}
 }
 
 func (s *Server) handleGetReceiptSettings(w http.ResponseWriter, r *http.Request) {
@@ -965,6 +966,19 @@ func (s *Server) handlePutReceiptSettings(w http.ResponseWriter, r *http.Request
 	keep("ai_items", &in.AIItems, cur.AIItems)
 	keep("own_words", &in.OwnWords, cur.OwnWords)
 	keep("geocode", &in.Geocode, cur.Geocode)
+	keep("group_job_notify", &in.GroupJobNotify, cur.GroupJobNotify)
+	if !keys["group_job"] {
+		in.GroupJob = cur.GroupJob
+	} else if in.GroupJob != "off" && in.GroupJob != "keywords" && in.GroupJob != "ai" {
+		writeErr(w, http.StatusBadRequest, "group_job must be off, keywords or ai")
+		return
+	}
+	if !keys["group_job_hour"] {
+		in.GroupJobHour = cur.GroupJobHour
+	} else if in.GroupJobHour < 0 || in.GroupJobHour > 23 {
+		writeErr(w, http.StatusBadRequest, "group_job_hour must be 0–23")
+		return
+	}
 	if !keys["card_account_id"] {
 		in.CardAccountID = cur.CardAccountID
 	}

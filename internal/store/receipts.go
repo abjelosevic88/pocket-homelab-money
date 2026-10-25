@@ -155,14 +155,17 @@ type Product struct {
 
 // ReceiptSettings are one person's receipt preferences.
 type ReceiptSettings struct {
-	CardAccountID *int64     `json:"card_account_id"`
-	CashAccountID *int64     `json:"cash_account_id"`
-	SplitItems    bool       `json:"split_items"`
-	AttachManual  bool       `json:"attach_manual"`
-	AIItems       bool       `json:"ai_items"`   // sort new products into categories with the AI
-	OwnWords      bool       `json:"own_words"`  // describe receipts the way the person does
-	Geocode       bool       `json:"geocode"`    // put shops on the map
-	ShopRules     []ShopRule `json:"shop_rules"` // nil = the defaults
+	CardAccountID  *int64     `json:"card_account_id"`
+	CashAccountID  *int64     `json:"cash_account_id"`
+	SplitItems     bool       `json:"split_items"`
+	AttachManual   bool       `json:"attach_manual"`
+	AIItems        bool       `json:"ai_items"`   // sort new products into categories with the AI
+	OwnWords       bool       `json:"own_words"`  // describe receipts the way the person does
+	Geocode        bool       `json:"geocode"`    // put shops on the map
+	ShopRules      []ShopRule `json:"shop_rules"` // nil = the defaults
+	GroupJob       string     `json:"group_job"`  // daily product check: off | keywords | ai
+	GroupJobHour   int        `json:"group_job_hour"`
+	GroupJobNotify bool       `json:"group_job_notify"`
 }
 
 // ShopRule is "shops with one of these words in their name go to this category".
@@ -683,10 +686,10 @@ func (s *Store) UnreceiptedMatch(ctx context.Context, accountIDs []int64, date s
 
 // GetReceiptSettings returns the person's receipt preferences (defaults when unset).
 func (s *Store) GetReceiptSettings(ctx context.Context, userID int64) ReceiptSettings {
-	st := ReceiptSettings{AttachManual: true, OwnWords: true, Geocode: true}
+	st := ReceiptSettings{AttachManual: true, OwnWords: true, Geocode: true, GroupJob: "keywords", GroupJobHour: 4, GroupJobNotify: true}
 	var rules string
-	_ = s.DB.QueryRowContext(ctx, `SELECT card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules FROM receipt_settings WHERE user_id = ?`, userID).
-		Scan(&st.CardAccountID, &st.CashAccountID, &st.SplitItems, &st.AttachManual, &st.AIItems, &st.OwnWords, &st.Geocode, &rules)
+	_ = s.DB.QueryRowContext(ctx, `SELECT card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify FROM receipt_settings WHERE user_id = ?`, userID).
+		Scan(&st.CardAccountID, &st.CashAccountID, &st.SplitItems, &st.AttachManual, &st.AIItems, &st.OwnWords, &st.Geocode, &rules, &st.GroupJob, &st.GroupJobHour, &st.GroupJobNotify)
 	if rules != "" {
 		_ = json.Unmarshal([]byte(rules), &st.ShopRules)
 	}
@@ -700,11 +703,12 @@ func (s *Store) SaveReceiptSettings(ctx context.Context, userID int64, st Receip
 		b, _ := json.Marshal(st.ShopRules)
 		rules = string(b)
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO receipt_settings (user_id, card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules) VALUES (?,?,?,?,?,?,?,?,?)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO receipt_settings (user_id, card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT (user_id) DO UPDATE SET card_account_id = excluded.card_account_id, cash_account_id = excluded.cash_account_id,
 		split_items = excluded.split_items, attach_manual = excluded.attach_manual, ai_items = excluded.ai_items, own_words = excluded.own_words,
-		geocode = excluded.geocode, shop_rules = excluded.shop_rules`,
-		userID, nullI(st.CardAccountID), nullI(st.CashAccountID), boolInt(st.SplitItems), boolInt(st.AttachManual), boolInt(st.AIItems), boolInt(st.OwnWords), boolInt(st.Geocode), rules)
+		geocode = excluded.geocode, shop_rules = excluded.shop_rules, group_job = excluded.group_job, group_job_hour = excluded.group_job_hour, group_job_notify = excluded.group_job_notify`,
+		userID, nullI(st.CardAccountID), nullI(st.CashAccountID), boolInt(st.SplitItems), boolInt(st.AttachManual), boolInt(st.AIItems), boolInt(st.OwnWords), boolInt(st.Geocode), rules,
+		st.GroupJob, st.GroupJobHour, boolInt(st.GroupJobNotify))
 	return err
 }
 
@@ -818,8 +822,12 @@ func (s *Store) GetProduct(ctx context.Context, userID, id int64) (*Product, err
 
 // UpdateProduct saves a product's name and (hand-picked) group.
 func (s *Store) UpdateProduct(ctx context.Context, p *Product) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE products SET name = ?, group_id = ?, group_locked = ? WHERE id = ? AND user_id = ?`,
-		p.Name, nullI(p.GroupID), boolInt(p.GroupLocked), p.ID, p.UserID)
+	src := ""
+	if p.GroupLocked {
+		src = "you"
+	}
+	_, err := s.DB.ExecContext(ctx, `UPDATE products SET name = ?, group_id = ?, group_locked = ?, group_source = CASE WHEN ? = 1 AND group_source != '' AND group_id IS ? THEN group_source ELSE ? END WHERE id = ? AND user_id = ?`,
+		p.Name, nullI(p.GroupID), boolInt(p.GroupLocked), boolInt(p.GroupLocked), nullI(p.GroupID), src, p.ID, p.UserID)
 	return err
 }
 
@@ -995,6 +1003,7 @@ type ItemStats struct {
 	Keywords       string  `json:"keywords,omitempty"`
 	Locked         bool    `json:"locked,omitempty"`
 	CategorySource string  `json:"category_source,omitempty"` // products: you | ai
+	GroupSource    string  `json:"group_source,omitempty"`    // products: you | similar | ai ('' = keywords)
 }
 
 // share of a line in the home currency
@@ -1096,7 +1105,7 @@ func (s *Store) ProductStats(ctx context.Context, f ItemStatsFilter, q string, l
 		limit = 300
 	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT COALESCE(p.id, 0), COALESCE(p.name, MAX(i.name)), p.group_id, COALESCE(p.group_locked, 0), COUNT(DISTINCT r.id), COUNT(1), COALESCE(SUM(i.quantity), 0),
-		COALESCE(SUM(`+lineHome+`), 0), MAX(r.date), CASE WHEN COUNT(DISTINCT i.unit) = 1 THEN MAX(i.unit) ELSE '' END, p.category_id, COALESCE(p.category_source, '')`+statsFrom+w+`
+		COALESCE(SUM(`+lineHome+`), 0), MAX(r.date), CASE WHEN COUNT(DISTINCT i.unit) = 1 THEN MAX(i.unit) ELSE '' END, p.category_id, COALESCE(p.category_source, ''), COALESCE(p.group_source, '')`+statsFrom+w+`
 		GROUP BY COALESCE(p.id, -i.id) ORDER BY 8 DESC LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
@@ -1104,7 +1113,7 @@ func (s *Store) ProductStats(ctx context.Context, f ItemStatsFilter, q string, l
 	out := []ItemStats{}
 	for rows.Next() {
 		var x ItemStats
-		if err := rows.Scan(&x.Key, &x.Name, &x.GroupID, &x.Locked, &x.Purchases, &x.Lines, &x.Quantity, &x.Spent, &x.LastDate, &x.Unit, &x.CategoryID, &x.CategorySource); err != nil {
+		if err := rows.Scan(&x.Key, &x.Name, &x.GroupID, &x.Locked, &x.Purchases, &x.Lines, &x.Quantity, &x.Spent, &x.LastDate, &x.Unit, &x.CategoryID, &x.CategorySource, &x.GroupSource); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -1165,6 +1174,134 @@ func (s *Store) Purchases(ctx context.Context, f ItemStatsFilter, limit int) ([]
 			return nil, err
 		}
 		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// ---- the daily product check ----
+
+// UngroupedProduct is a product without a group.
+type UngroupedProduct struct {
+	ID      int64
+	Key     string
+	Name    string
+	Shop    string
+	AIAsked bool
+}
+
+// UngroupedProducts lists the person's products that have no group.
+func (s *Store) UngroupedProducts(ctx context.Context, userID int64) ([]UngroupedProduct, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT p.id, p.key, p.name, p.group_ai_checked,
+		COALESCE((SELECT COALESCE(NULLIF(m.display_name, ''), m.name) FROM receipt_items i JOIN receipts r ON r.id = i.receipt_id
+			JOIN merchants m ON m.id = r.merchant_id WHERE i.product_id = p.id ORDER BY r.id DESC LIMIT 1), '')
+		FROM products p WHERE p.user_id = ? AND p.group_id IS NULL ORDER BY p.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UngroupedProduct
+	for rows.Next() {
+		var p UngroupedProduct
+		if err := rows.Scan(&p.ID, &p.Key, &p.Name, &p.AIAsked, &p.Shop); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GroupedProduct is a product with a group (examples for similarity and the AI).
+type GroupedProduct struct {
+	Key     string
+	Name    string
+	GroupID int64
+}
+
+// GroupedProducts lists the person's grouped products.
+func (s *Store) GroupedProducts(ctx context.Context, userID int64) ([]GroupedProduct, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT key, name, group_id FROM products WHERE user_id = ? AND group_id IS NOT NULL ORDER BY id DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GroupedProduct
+	for rows.Next() {
+		var p GroupedProduct
+		if err := rows.Scan(&p.Key, &p.Name, &p.GroupID); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SetProductGroup places a product (source similar | ai | you); locked so
+// keyword regrouping keeps it.
+func (s *Store) SetProductGroup(ctx context.Context, userID, id, groupID int64, source string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE products SET group_id = ?, group_locked = 1, group_source = ? WHERE id = ? AND user_id = ?`, groupID, source, id, userID)
+	return err
+}
+
+// MarkGroupAsked records that the AI was asked for products' groups.
+func (s *Store) MarkGroupAsked(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	in, args := inList(ids)
+	_, err := s.DB.ExecContext(ctx, `UPDATE products SET group_ai_checked = 1 WHERE id IN `+in, args...)
+	return err
+}
+
+// ProductCheckRun is one run of the daily product check.
+type ProductCheckRun struct {
+	ID             int64           `json:"id"`
+	Trigger        string          `json:"trigger"`
+	Mode           string          `json:"mode"`
+	StartedAt      string          `json:"started_at"`
+	FinishedAt     string          `json:"finished_at"`
+	Checked        int             `json:"checked"`
+	ByKeywords     int             `json:"by_keywords"`
+	BySimilar      int             `json:"by_similar"`
+	ByAI           int             `json:"by_ai"`
+	Categorized    int             `json:"categorized"`
+	StillUngrouped int             `json:"still_ungrouped"`
+	Report         json.RawMessage `json:"report"`
+	Error          string          `json:"error"`
+}
+
+// SaveProductCheckRun stores a finished run.
+func (s *Store) SaveProductCheckRun(ctx context.Context, userID int64, r *ProductCheckRun) error {
+	if len(r.Report) == 0 {
+		r.Report = json.RawMessage("{}")
+	}
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO product_check_runs (user_id, trigger, mode, started_at, finished_at, checked, by_keywords, by_similar, by_ai, categorized, still_ungrouped, report, error)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, userID, r.Trigger, r.Mode, r.StartedAt, r.FinishedAt, r.Checked, r.ByKeywords, r.BySimilar, r.ByAI, r.Categorized, r.StillUngrouped, string(r.Report), r.Error)
+	if err != nil {
+		return err
+	}
+	r.ID, _ = res.LastInsertId()
+	// keep a few months of reports
+	_, _ = s.DB.ExecContext(ctx, `DELETE FROM product_check_runs WHERE user_id = ? AND id NOT IN (SELECT id FROM product_check_runs WHERE user_id = ? ORDER BY id DESC LIMIT 90)`, userID, userID)
+	return nil
+}
+
+// ProductCheckRuns lists the latest runs, newest first.
+func (s *Store) ProductCheckRuns(ctx context.Context, userID int64, limit int) ([]ProductCheckRun, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id, trigger, mode, started_at, finished_at, checked, by_keywords, by_similar, by_ai, categorized, still_ungrouped, report, error
+		FROM product_check_runs WHERE user_id = ? ORDER BY id DESC LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProductCheckRun{}
+	for rows.Next() {
+		var r ProductCheckRun
+		var rep string
+		if err := rows.Scan(&r.ID, &r.Trigger, &r.Mode, &r.StartedAt, &r.FinishedAt, &r.Checked, &r.ByKeywords, &r.BySimilar, &r.ByAI, &r.Categorized, &r.StillUngrouped, &rep, &r.Error); err != nil {
+			return nil, err
+		}
+		r.Report = json.RawMessage(rep)
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

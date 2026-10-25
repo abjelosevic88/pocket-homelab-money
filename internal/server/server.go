@@ -280,7 +280,9 @@ func (s *Server) runJobs(ctx context.Context, mirror bool) {
 	s.bookDueInterest(ctx)
 	s.retryReceiptScans(ctx)
 	for i := range users {
-		s.maybeNotify(context.WithValue(ctx, userKey, &users[i]))
+		uctx := context.WithValue(ctx, userKey, &users[i])
+		s.maybeNotify(uctx)
+		s.maybeProductCheck(uctx)
 	}
 }
 
@@ -420,6 +422,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/receipts/{id}/split", s.handleSplitReceipt)
 			r.Post("/receipts/{id}/apply", s.handleApplyGuess)
 			r.Post("/products/sort", s.handleSortProducts)
+			r.Get("/products/check", s.handleProductCheckRuns)
+			r.Post("/products/check", s.handleRunProductCheck)
+			r.Post("/products/check/suggestion", s.handleCreateSuggestedGroup)
 			r.Get("/merchants", s.handleListMerchants)
 			r.Put("/merchants/{id}", s.handleUpdateMerchant)
 			r.Get("/products/groups", s.handleProductGroups)

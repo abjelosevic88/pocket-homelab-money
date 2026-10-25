@@ -3,8 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { addDays, decimalsOf, fmtDate, fmtMoney, todayISO } from '../lib/format'
-import type { ItemStats, Merchant, Purchase } from '../lib/types'
-import { Card, Empty, Field, Loading, Modal, PageHeader, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
+import type { CheckSuggestion, ItemStats, Merchant, ProductCheckRun, Purchase } from '../lib/types'
+import { Card, Empty, Field, Loading, Modal, PageHeader, Spinner, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
 import { CategorySelect, IconInput } from '../components/pickers'
 import { Select } from '../components/Select'
 import { Line } from '../components/Charts'
@@ -51,6 +51,7 @@ export default function Products() {
       <PageHeader title="Products" sub="Everything on your scanned receipts, grouped: how much milk, coffee or fuel you buy, and what it costs."
         actions={<>
           {groups && real.length === 0 && <button type="button" className="btn" onClick={starter}><Icon name="sparkles" size={15} />Add suggested groups</button>}
+          <button type="button" className="btn" onClick={() => set('report', '1')}><Icon name="history" size={15} />Check</button>
           <button type="button" className="btn primary" onClick={() => setEditing('new')}><Icon name="plus" size={16} />Group</button>
         </>} />
       <div className="filters">
@@ -76,6 +77,7 @@ export default function Products() {
         </div>
       )}
       {open && <GroupDetail id={open} from={from} merchant={merchant} groups={real} onClose={() => set('group', '')} onChanged={reload} onEdit={g => setEditing(g)} onProduct={id => set('product', String(id))} />}
+      {sp.get('report') && <CheckReport onClose={() => set('report', '')} onChanged={reload} onProduct={id => set('product', String(id))} />}
       {sp.get('product') && <ProductDetail id={Number(sp.get('product'))} from={from} merchant={merchant} groups={real} onClose={() => set('product', '')} onChanged={reload} />}
       {editing && <GroupForm g={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} onSaved={msg => { setEditing(null); toast(msg); reload() }} onDeleted={() => { setEditing(null); set('group', ''); reload() }} />}
     </>
@@ -159,8 +161,9 @@ function GroupDetail({ id, from, merchant, groups, onClose, onChanged, onEdit, o
                     {p.key > 0 && <div className="row" style={{ gap: 4 }}><CategorySelect value={p.category_id ?? null} onChange={id => setCat(p, id)} kind="expense" placeholder={g?.category_id ? 'Group’s' : 'None'} clearLabel={g?.category_id ? 'Group’s' : 'None'} />{p.category_source === 'ai' && <span className="badge" title="Sorted by AI">AI</span>}</div>}
                   </td>
                   <td style={{ width: 190 }}>
+                    {p.key > 0 && (p.group_source === 'ai' || p.group_source === 'similar') && <span className="badge" style={{ marginBottom: 4 }} title={p.group_source === 'ai' ? 'Placed by AI' : 'Placed next to similar products'}>{p.group_source === 'ai' ? 'AI' : 'similar'}</span>}
                     {p.key > 0 && <Select value={p.group_id ? String(p.group_id) : ''} onChange={v => move(p, v)} ariaLabel="Group"
-                      options={[...(p.locked ? [{ value: 'auto', label: '↺ By keywords' }] : []), ...groups.map(x => ({ value: String(x.key), label: `${x.icon || '📦'} ${x.name}` }))]}
+                      options={[...(p.locked ? [{ value: 'auto', label: p.group_source === 'you' ? '↺ By keywords' : '↺ Undo, back to keywords' }] : []), ...groups.map(x => ({ value: String(x.key), label: `${x.icon || '📦'} ${x.name}` }))]}
                       placeholder="No group" clearLabel="No group" />}
                   </td>
                 </tr>
@@ -343,6 +346,94 @@ function ProductDetail({ id, from, merchant, groups, onClose, onChanged }: { id:
               </tbody>
             </table>
           </Card>
+        </>}
+      </>}
+    </Modal>
+  )
+}
+
+const HOW: Record<string, string> = { keywords: 'keywords', similar: 'similar product', ai: 'AI' }
+
+/** The daily product check's reports: what each run placed and how, the
+ *  groups the AI suggests (one click creates them), what is left. */
+function CheckReport({ onClose, onChanged, onProduct }: { onClose: () => void; onChanged: () => void; onProduct: (id: number) => void }) {
+  const { toast } = useToast()
+  const { data, reload } = useAsync(() => api.get<{ runs: ProductCheckRun[]; ungrouped: number }>(`${V1}/products/check`), [])
+  const [busy, setBusy] = useState(false)
+  const [open, setOpen] = useState<number | null>(null)
+  const [done, setDone] = useState<Set<string>>(new Set())
+  const runNow = async () => {
+    setBusy(true)
+    try {
+      const r = await api.post<ProductCheckRun>(`${V1}/products/check`)
+      toast(`${r.by_keywords + r.by_similar + r.by_ai} grouped · ${r.still_ungrouped} left`)
+      setOpen(r.id); reload(); onChanged()
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  const create = async (sg: CheckSuggestion) => {
+    try {
+      const r = await api.post<{ placed: number; moved: number }>(`${V1}/products/check/suggestion`, sg)
+      toast(`${sg.name} created · ${r.placed + r.moved} products in it`)
+      setDone(d => new Set(d).add(sg.name)); onChanged()
+    } catch (e) { toast(errMsg(e), 'err') }
+  }
+  const runs = data?.runs || []
+  const shown = runs.find(r => r.id === open) || runs[0]
+  return (
+    <Modal title="Product check" onClose={onClose} size="lg" footer={<>
+      <span className="muted small">{data ? `${data.ungrouped} products without a group now` : ''}</span>
+      <span className="spacer" />
+      <Link className="btn ghost" to="/receipts?tab=setup">Settings</Link>
+      <button type="button" className="btn primary" disabled={busy} onClick={runNow}>{busy ? <><Spinner /> Checking…</> : <><Icon name="refresh" size={15} />Run it now</>}</button>
+    </>}>
+      {!data ? <Loading /> : runs.length === 0 ? <Empty title="No checks yet">The check runs every day at the hour set under Receipts → Settings, or now with Run it now.</Empty> : <>
+        <div className="filters">
+          {runs.slice(0, 10).map(r => (
+            <button key={r.id} type="button" className={`chip ${shown?.id === r.id ? 'active' : ''}`} onClick={() => setOpen(r.id)}>
+              {fmtDate(r.started_at.slice(0, 10), false)} {r.started_at.slice(11, 16)}{r.trigger === 'manual' ? ' · by hand' : ''}
+            </button>
+          ))}
+        </div>
+        {shown && <>
+          <div className="stats">
+            <div className="stat"><div className="n">{shown.checked}</div><div className="l">without a group</div></div>
+            <div className="stat"><div className="n">{shown.by_keywords + shown.by_similar + shown.by_ai}</div><div className="l">placed · {shown.by_keywords} keywords, {shown.by_similar} similar, {shown.by_ai} AI</div></div>
+            <div className="stat"><div className="n">{shown.report.suggestions.length}</div><div className="l">new groups suggested</div></div>
+            <div className="stat"><div className="n">{shown.still_ungrouped}</div><div className="l">still without a group</div></div>
+          </div>
+          {shown.report.ai_note && <div className="rc-note small" style={{ marginBottom: 12 }}>{shown.report.ai_note}</div>}
+          {shown.categorized > 0 && <div className="muted small" style={{ marginBottom: 12 }}>The AI also gave {shown.categorized} products a category.</div>}
+          {shown.report.suggestions.length > 0 && (
+            <Card title="Suggested groups" sub="Create one and its products go in; its keywords catch the next ones.">
+              <div style={{ display: 'grid', gap: 10 }}>
+                {shown.report.suggestions.map(sg => (
+                  <div key={sg.name} className="check-sugg">
+                    <div><b>{sg.icon} {sg.name}</b> <span className="muted small">· {sg.keywords}</span><div className="small">{sg.products.join(', ')}</div></div>
+                    {done.has(sg.name) ? <span className="badge ok">created</span> : <button type="button" className="btn sm" onClick={() => create(sg)}><Icon name="plus" size={14} />Create</button>}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+          {shown.report.moves.length > 0 && (
+            <Card title="Placed" flush>
+              <table className="table compact">
+                <tbody>{shown.report.moves.map(m => (
+                  <tr key={m.product_id}>
+                    <td><button type="button" className="link-btn" onClick={() => onProduct(m.product_id)}>{m.product}</button></td>
+                    <td>{m.icon} {m.group}</td>
+                    <td><span className={`badge ${m.how === 'ai' ? 'accent' : ''}`}>{HOW[m.how] || m.how}</span></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </Card>
+          )}
+          {shown.report.left.length > 0 && (
+            <Card title="Still without a group" sub="Put them in a group by hand on the Products page, or give a group a keyword that catches them.">
+              <div className="small">{shown.report.left.join(', ')}{shown.still_ungrouped > shown.report.left.length ? ` and ${shown.still_ungrouped - shown.report.left.length} more` : ''}</div>
+              <Link className="btn ghost sm" style={{ marginTop: 8 }} to="/products?group=none" onClick={onClose}>Open them</Link>
+            </Card>
+          )}
         </>}
       </>}
     </Modal>
