@@ -75,8 +75,7 @@ input[type="date"], input[type="time"], input[type="number"] { font-variant-nume
 .sel-val { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sel-chevron { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; transition: transform .15s; display: grid; }
 .sel.open .sel-chevron { transform: translateY(-50%) rotate(180deg); }
-.sel-pop { position: absolute; left: 0; top: calc(100% + 4px); min-width: 100%; max-width: min(360px, 90vw); background: var(--raised); border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 60; overflow: hidden; animation: pop-in .12s var(--ease); }
-.sel-pop.up { top: auto; bottom: calc(100% + 4px); }
+.sel-pop { position: fixed; max-width: min(360px, calc(100vw - 16px)); background: var(--raised); border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 410; overflow: hidden; animation: pop-in .12s var(--ease); } /* portalled; above modals (300), below menus (420) */
 .sel-search { position: relative; border-bottom: 1px solid var(--border); }
 .sel-search .ico, .sel-search .icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
 .sel-search input { border: 0; border-radius: 0; height: 40px; padding: 0 10px 0 32px; background: transparent; }

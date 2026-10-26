@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from './icons'
 
 export interface SelectOption { value: string; label: string; hint?: string; group?: string; /** shown greyed out, not pickable */ disabled?: boolean }
@@ -20,14 +21,18 @@ interface Props {
 
 const Chevron = () => <span className="sel-chevron"><Icon name="chevron-down" size={15} /></span>
 
-/** A searchable combobox: looks like an input, opens a filterable list, keyboard friendly. */
+/** A searchable combobox: looks like an input, opens a filterable list, keyboard friendly.
+ *  The list is portalled to <body> with fixed positioning, so a scrolling
+ *  table or a card with overflow cannot clip it. */
 export function Select({ value, onChange, options, placeholder = 'Choose…', onCreate, createLabel = 'Create', ariaLabel, className = '', disabled, clearLabel }: Props) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [hl, setHl] = useState(0)
   const [busy, setBusy] = useState(false)
   const [up, setUp] = useState(false)
+  const [pos, setPos] = useState<React.CSSProperties | null>(null)
   const root = useRef<HTMLDivElement>(null)
+  const pop = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const search = useRef<HTMLInputElement>(null)
   const id = useId()
@@ -50,7 +55,7 @@ export function Select({ value, onChange, options, placeholder = 'Choose…', on
     if (!open) return
     setQ(''); setHl(Math.max(0, rows.findIndex(r => r.opt?.value === value)))
     const t = setTimeout(() => search.current?.focus(), 0)
-    const onDoc = (e: MouseEvent) => { if (root.current && !root.current.contains(e.target as Node)) setOpen(false) }
+    const onDoc = (e: MouseEvent) => { const t = e.target as Node; if (!root.current?.contains(t) && !pop.current?.contains(t)) setOpen(false) }
     document.addEventListener('mousedown', onDoc)
     return () => { clearTimeout(t); document.removeEventListener('mousedown', onDoc) }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -60,6 +65,22 @@ export function Select({ value, onChange, options, placeholder = 'Choose…', on
     const r = root.current.getBoundingClientRect()
     setUp(window.innerHeight - r.bottom < 300 && r.top > 300)
   }, [open])
+  // Follow the button while anything scrolls or the window resizes; keep the list on screen.
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return }
+    const place = () => {
+      if (!root.current) return
+      const r = root.current.getBoundingClientRect()
+      const vw = document.documentElement.clientWidth, w = pop.current?.offsetWidth || r.width
+      const left = Math.max(8, Math.min(r.left, vw - w - 8))
+      setPos(up ? { left, bottom: window.innerHeight - r.top + 4, minWidth: r.width } : { left, top: r.bottom + 4, minWidth: r.width })
+    }
+    place()
+    const onScroll = (e: Event) => { if (!pop.current?.contains(e.target as Node)) place() }
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', place)
+    return () => { window.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', place) }
+  }, [open, up])
   useEffect(() => {
     const el = list.current?.querySelector<HTMLElement>(`[data-i="${hl}"]`)
     el?.scrollIntoView({ block: 'nearest' })
@@ -90,8 +111,8 @@ export function Select({ value, onChange, options, placeholder = 'Choose…', on
         <span className="sel-val">{current ? current.label : placeholder}</span>
         <Chevron />
       </button>
-      {open && (
-        <div className={`sel-pop ${up ? 'up' : ''}`}>
+      {open && createPortal(
+        <div ref={pop} data-keep-open className={`sel-pop ${up ? 'up' : ''}`} style={pos ?? { left: -9999, top: 0 }}>
           <div className="sel-search"><Icon name="search" size={15} /><input ref={search} value={q} onChange={e => setQ(e.target.value)} placeholder="Type to filter…" aria-label="Filter options" autoComplete="off" /></div>
           <div className="sel-list" role="listbox" id={id} ref={list}>
             {rows.length === 0 && <div className="sel-empty muted">No matches</div>}
@@ -109,8 +130,7 @@ export function Select({ value, onChange, options, placeholder = 'Choose…', on
               )
             })}
           </div>
-        </div>
-      )}
+        </div>, document.body)}
     </div>
   )
 }
