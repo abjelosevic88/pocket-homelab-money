@@ -68,7 +68,7 @@ func TestReceiptInference(t *testing.T) {
 		t.Fatalf("settings %d", code)
 	}
 	var rs map[string]any
-	c.do("PUT", "/api/v1/receipts/settings", map[string]any{"ai_items": true}, &rs)
+	c.do("PUT", "/api/v1/receipts/settings", map[string]any{"ai_items": true, "ai_review": false}, &rs) // the whole-receipt review has its own test
 	if rs["ai_items"] != true || rs["geocode"] != true || rs["ai_ready"] != true || rs["attach_manual"] != true {
 		t.Fatalf("settings merge: %+v", rs)
 	}
@@ -150,4 +150,109 @@ func TestReceiptInference(t *testing.T) {
 		t.Errorf("sort asked %d", sorted.Asked)
 	}
 	_ = io.Discard
+}
+
+// TestReceiptAIReview: with an AI connected the review is on by default and
+// has the last word on category and description; switched off, the rules do it.
+func TestReceiptAIReview(t *testing.T) {
+	fake := &fakeSUF{receipts: map[uint32]string{
+		21: sufShopJSON(21, 1, `PEKOTEKA MALTA s.p.`, "4200000000021", [3]any{"PICA PARCE", 2.0, 2.49}),
+		22: sufShopJSON(22, 1, `PEKOTEKA MALTA s.p.`, "4200000000021", [3]any{"KIFLA", 1.0, 0.6}),
+	}}
+	receiptTransport = fake
+	defer func() { receiptTransport = nil }()
+
+	c := newTestServer(t)
+	var bank store.Account
+	c.do("POST", "/api/v1/accounts", map[string]any{"name": "UniCredit", "currency": "BAM"}, &bank)
+	var hrana, ostalo store.Category
+	c.do("POST", "/api/v1/categories", map[string]any{"name": "hrana"}, &hrana)
+	c.do("POST", "/api/v1/categories", map[string]any{"name": "ostalo"}, &ostalo)
+	book := func(desc, tm string, day int) {
+		payee := ""
+		if day == 1 { // one earlier visit to the shop
+			payee = "Pekoteka Malta"
+		}
+		c.do("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": bank.ID, "amount": 500, "description": desc, "payee": payee, "category_id": hrana.ID, "date": fmt.Sprintf("2026-09-%02d", day), "time": tm}, nil)
+	}
+	for i, tm := range []string{"08:10", "08:40", "09:05", "10:30"} {
+		book("dorucak", tm, i+1)
+	}
+	for i := 0; i < 3; i++ {
+		book("rucak", "13:15", i+10)
+	}
+
+	var calls atomic.Int32
+	var prompt atomic.Value
+	ai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var req struct {
+			Messages []struct{ Content string } `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		prompt.Store(req.Messages[len(req.Messages)-1].Content)
+		content, _ := json.Marshal(fmt.Sprintf(`{"category_id":%d,"description":"rucak","reason":"pizza slices, a meal"}`, hrana.ID))
+		fmt.Fprintf(w, `{"model":"fake","choices":[{"message":{"content":%s}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`, content)
+	}))
+	defer ai.Close()
+
+	var rs map[string]any
+	c.do("GET", "/api/v1/receipts/settings", nil, &rs)
+	if rs["ai_review"] != true || rs["ai_ready"] != false {
+		t.Fatalf("defaults without an AI: %+v", rs)
+	}
+	// on by default, but without an AI nothing is asked: the rules fill in
+	var res scanOut
+	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(22, 0.60)}, &res)
+	c.settle()
+	var tx store.Transaction
+	c.do("GET", fmt.Sprintf("/api/v1/transactions/%d", res.Transaction.ID), nil, &tx)
+	if tx.Description != "Dorucak" || calls.Load() != 0 {
+		t.Fatalf("no AI: %q, %d calls", tx.Description, calls.Load())
+	}
+	c.do("DELETE", fmt.Sprintf("/api/v1/transactions/%d", tx.ID), nil, nil)
+
+	if code := c.do("PUT", "/api/v1/settings", map[string]any{"ai_provider": "openai", "ai_key": "sk-test", "ai_url": ai.URL}, nil); code != 200 {
+		t.Fatalf("settings %d", code)
+	}
+	c.do("GET", "/api/v1/receipts/settings", nil, &rs)
+	if rs["ai_review"] != true || rs["ai_ready"] != true {
+		t.Fatalf("defaults with an AI: %+v", rs)
+	}
+
+	res = scanOut{}
+	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(21, 4.98)}, &res)
+	if res.Transaction.Description != "Dorucak" { // booked at once with the rules' words
+		t.Fatalf("booked as %q", res.Transaction.Description)
+	}
+	c.settle()
+	tx = store.Transaction{}
+	c.do("GET", fmt.Sprintf("/api/v1/transactions/%d", res.Transaction.ID), nil, &tx)
+	var rec store.Receipt
+	c.do("GET", fmt.Sprintf("/api/v1/receipts/%d", res.Receipt.ID), nil, &rec)
+	if tx.Description != "Rucak" || tx.CategoryID == nil || *tx.CategoryID != hrana.ID || rec.CategoryReason != "AI: pizza slices, a meal" {
+		t.Fatalf("reviewed: %q %v %q", tx.Description, tx.CategoryID, rec.CategoryReason)
+	}
+	p, _ := prompt.Load().(string)
+	for _, want := range []string{"Tuesday 2026-10-20 at 10:24", "PICA PARCE (quantity 2) — 4.98", "dorucak ×4, usually 08–10h", "rucak ×3, around 13h", `description "Dorucak"`, `2026-09-01 08:10 "dorucak" in hrana`} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, p)
+		}
+	}
+
+	// switched off: no AI call, the rules' words stay
+	c.do("PUT", "/api/v1/receipts/settings", map[string]any{"ai_review": false}, &rs)
+	if rs["ai_review"] != false {
+		t.Fatalf("switch off: %+v", rs)
+	}
+	before := calls.Load()
+	c.do("DELETE", fmt.Sprintf("/api/v1/transactions/%d", tx.ID), nil, nil)
+	res = scanOut{}
+	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(21, 4.98)}, &res)
+	c.settle()
+	tx = store.Transaction{}
+	c.do("GET", fmt.Sprintf("/api/v1/transactions/%d", res.Transaction.ID), nil, &tx)
+	if calls.Load() != before || tx.Description != "Dorucak" {
+		t.Fatalf("off: %d calls, %q", calls.Load()-before, tx.Description)
+	}
 }

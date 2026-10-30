@@ -595,7 +595,7 @@ func (s *Server) refineLater(ctx context.Context, receiptID, txID int64, bookedC
 		if err != nil || !s.canWrite(ctx, t.AccountID) {
 			return
 		}
-		g := s.guessReceipt(ctx, r)
+		g := s.reviewReceipt(ctx, r, s.guessReceipt(ctx, r))
 		in, changed := txIn{}, false
 		untouched := len(t.Splits) == 0 && sameID(t.CategoryID, bookedCat)
 		if untouched && g.CategoryID != nil && !sameID(g.CategoryID, t.CategoryID) {
@@ -673,7 +673,7 @@ func (s *Server) refreshFromReceipt(ctx context.Context, t *store.Transaction, r
 	}
 	rs := s.store.GetReceiptSettings(ctx, actorID(ctx))
 	r = s.enrichReceipt(ctx, s.prepareReceipt(ctx, r, rs), rs)
-	g := s.guessReceipt(ctx, r)
+	g := s.reviewReceipt(ctx, r, s.guessReceipt(ctx, r))
 	desc := g.Description
 	if t.Kind == "income" {
 		desc = "Refund · " + desc
@@ -1038,7 +1038,7 @@ func (s *Server) receiptSettingsOut(ctx context.Context) map[string]any {
 	return map[string]any{"card_account_id": rs.CardAccountID, "cash_account_id": rs.CashAccountID, "split_items": rs.SplitItems, "attach_manual": rs.AttachManual,
 		"ai_items": rs.AIItems, "own_words": rs.OwnWords, "geocode": rs.Geocode, "shop_rules": rules, "shop_rules_default": defaults,
 		"ai_ready": client != nil, "ai_detail": detail, "unsorted_products": len(unsorted),
-		"group_job": rs.GroupJob, "group_job_hour": rs.GroupJobHour, "group_job_notify": rs.GroupJobNotify, "group_on_scan": rs.GroupOnScan}
+		"group_job": rs.GroupJob, "group_job_hour": rs.GroupJobHour, "group_job_notify": rs.GroupJobNotify, "group_on_scan": rs.GroupOnScan, "ai_review": rs.AIReview}
 }
 
 func (s *Server) handleGetReceiptSettings(w http.ResponseWriter, r *http.Request) {
@@ -1067,6 +1067,7 @@ func (s *Server) handlePutReceiptSettings(w http.ResponseWriter, r *http.Request
 	keep("geocode", &in.Geocode, cur.Geocode)
 	keep("group_job_notify", &in.GroupJobNotify, cur.GroupJobNotify)
 	keep("group_on_scan", &in.GroupOnScan, cur.GroupOnScan)
+	keep("ai_review", &in.AIReview, cur.AIReview)
 	if !keys["group_job"] {
 		in.GroupJob = cur.GroupJob
 	} else if in.GroupJob != "off" && in.GroupJob != "keywords" && in.GroupJob != "ai" {

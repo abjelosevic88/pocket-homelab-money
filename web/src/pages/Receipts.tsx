@@ -246,6 +246,9 @@ function Setup() {
         <SettingRow title="Split by item category" help="Book a receipt in parts, one per category of its items' product groups (milk → Groceries, shampoo → Cosmetics). Off: one category, split later with one click."><Switch checked={st.split_items} onChange={v => save({ split_items: v })} /></SettingRow>
       </Card>
       <Card title="Filling in automatically" sub="How a scanned receipt gets its category and description. Change the category or description of one booked receipt and that shop keeps it from then on.">
+        <SettingRow title="Let the AI fill in every receipt" help={<>A few seconds after booking, the AI looks at the whole receipt — shop, day and time, items, your earlier visits there and the words you use at which time of day — and picks the category and description (lunch, not breakfast, at 17:52). Without an AI the rules below do it alone. {st.ai_ready ? <b>{st.ai_detail}.</b> : <span className="bad">{st.ai_detail}</span>}</>}>
+          <Switch checked={st.ai_review && st.ai_ready} disabled={!st.ai_ready} onChange={v => save({ ai_review: v })} />
+        </SettingRow>
         <SettingRow title="Sort new products with AI" help={<>Each product nobody has categorised yet is sent once — its name only, with your category list and a few of your own bookings as examples — and the answer is remembered. {st.ai_ready ? <b>{st.ai_detail}.</b> : <span className="bad">{st.ai_detail}</span>}</>}>
           <Switch checked={st.ai_items} disabled={!st.ai_ready && !st.ai_items} onChange={v => save({ ai_items: v })} />
         </SettingRow>

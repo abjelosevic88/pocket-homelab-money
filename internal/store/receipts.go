@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/abjelosevic88/pocket-homelab-money/internal/fiscal"
@@ -167,6 +168,7 @@ type ReceiptSettings struct {
 	GroupJobHour   int        `json:"group_job_hour"`
 	GroupJobNotify bool       `json:"group_job_notify"`
 	GroupOnScan    bool       `json:"group_on_scan"` // run the grouping passes on every scan
+	AIReview       bool       `json:"ai_review"`     // the AI picks every receipt's category and description
 }
 
 // ShopRule is "shops with one of these words in their name go to this category".
@@ -687,10 +689,10 @@ func (s *Store) UnreceiptedMatch(ctx context.Context, accountIDs []int64, date s
 
 // GetReceiptSettings returns the person's receipt preferences (defaults when unset).
 func (s *Store) GetReceiptSettings(ctx context.Context, userID int64) ReceiptSettings {
-	st := ReceiptSettings{AttachManual: true, OwnWords: true, Geocode: true, GroupJob: "keywords", GroupJobHour: 4, GroupJobNotify: true, GroupOnScan: true}
+	st := ReceiptSettings{AttachManual: true, OwnWords: true, Geocode: true, GroupJob: "keywords", GroupJobHour: 4, GroupJobNotify: true, GroupOnScan: true, AIReview: true}
 	var rules string
-	_ = s.DB.QueryRowContext(ctx, `SELECT card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify, group_on_scan FROM receipt_settings WHERE user_id = ?`, userID).
-		Scan(&st.CardAccountID, &st.CashAccountID, &st.SplitItems, &st.AttachManual, &st.AIItems, &st.OwnWords, &st.Geocode, &rules, &st.GroupJob, &st.GroupJobHour, &st.GroupJobNotify, &st.GroupOnScan)
+	_ = s.DB.QueryRowContext(ctx, `SELECT card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify, group_on_scan, ai_review FROM receipt_settings WHERE user_id = ?`, userID).
+		Scan(&st.CardAccountID, &st.CashAccountID, &st.SplitItems, &st.AttachManual, &st.AIItems, &st.OwnWords, &st.Geocode, &rules, &st.GroupJob, &st.GroupJobHour, &st.GroupJobNotify, &st.GroupOnScan, &st.AIReview)
 	if rules != "" {
 		_ = json.Unmarshal([]byte(rules), &st.ShopRules)
 	}
@@ -704,12 +706,12 @@ func (s *Store) SaveReceiptSettings(ctx context.Context, userID int64, st Receip
 		b, _ := json.Marshal(st.ShopRules)
 		rules = string(b)
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO receipt_settings (user_id, card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify, group_on_scan) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO receipt_settings (user_id, card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify, group_on_scan, ai_review) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT (user_id) DO UPDATE SET card_account_id = excluded.card_account_id, cash_account_id = excluded.cash_account_id,
 		split_items = excluded.split_items, attach_manual = excluded.attach_manual, ai_items = excluded.ai_items, own_words = excluded.own_words,
-		geocode = excluded.geocode, shop_rules = excluded.shop_rules, group_job = excluded.group_job, group_job_hour = excluded.group_job_hour, group_job_notify = excluded.group_job_notify, group_on_scan = excluded.group_on_scan`,
+		geocode = excluded.geocode, shop_rules = excluded.shop_rules, group_job = excluded.group_job, group_job_hour = excluded.group_job_hour, group_job_notify = excluded.group_job_notify, group_on_scan = excluded.group_on_scan, ai_review = excluded.ai_review`,
 		userID, nullI(st.CardAccountID), nullI(st.CashAccountID), boolInt(st.SplitItems), boolInt(st.AttachManual), boolInt(st.AIItems), boolInt(st.OwnWords), boolInt(st.Geocode), rules,
-		st.GroupJob, st.GroupJobHour, boolInt(st.GroupJobNotify), boolInt(st.GroupOnScan))
+		st.GroupJob, st.GroupJobHour, boolInt(st.GroupJobNotify), boolInt(st.GroupOnScan), boolInt(st.AIReview))
 	return err
 }
 
@@ -926,6 +928,80 @@ func (s *Store) CategoryUses(ctx context.Context, userID int64, perCategory int)
 		if d != "" && len(u.Descriptions) < perCategory {
 			u.Descriptions = append(u.Descriptions, fmt.Sprintf("%s (%d)", d, n))
 		}
+	}
+	return out, rows.Err()
+}
+
+// DescriptionUse is one way the person describes a category, with the hours
+// of the day they booked it at (bookings without a time leave none).
+type DescriptionUse struct {
+	CategoryID  int64
+	Description string
+	Count       int
+	Hours       []int
+}
+
+// DescriptionUses are the person's own descriptions per category over the
+// last year (receipt bookings left out, they would echo the app's guesses),
+// most used first.
+func (s *Store) DescriptionUses(ctx context.Context, userID int64) ([]DescriptionUse, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.category_id, lower(t.description), t.time FROM transactions t
+		WHERE t.user_id = ? AND t.kind = 'expense' AND t.category_id IS NOT NULL AND t.description != '' AND t.source != 'receipt'
+		AND t.date >= date('now', '-365 days')`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type key struct {
+		cat  int64
+		desc string
+	}
+	idx := map[key]int{}
+	var out []DescriptionUse
+	for rows.Next() {
+		var k key
+		var tm string
+		if err := rows.Scan(&k.cat, &k.desc, &tm); err != nil {
+			return nil, err
+		}
+		i, ok := idx[k]
+		if !ok {
+			i = len(out)
+			idx[k] = i
+			out = append(out, DescriptionUse{CategoryID: k.cat, Description: k.desc})
+		}
+		out[i].Count++
+		if h, err := strconv.Atoi(strings.SplitN(tm, ":", 2)[0]); err == nil && len(tm) >= 4 && h >= 0 && h < 24 {
+			out[i].Hours = append(out[i].Hours, h)
+		}
+	}
+	sort.SliceStable(out, func(a, b int) bool { return out[a].Count > out[b].Count })
+	return out, rows.Err()
+}
+
+// ShopVisit is one earlier booking at a shop.
+type ShopVisit struct {
+	ID                                        int64
+	Date, Time, Description, Category, Source string
+}
+
+// ShopVisits are the person's latest bookings with this payee.
+func (s *Store) ShopVisits(ctx context.Context, userID int64, payee string, limit int) ([]ShopVisit, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.id, t.date, t.time, t.description, coalesce(c.name, ''), t.source FROM transactions t
+		LEFT JOIN categories c ON c.id = t.category_id
+		WHERE t.user_id = ? AND t.kind = 'expense' AND lower(t.payee) = lower(?)
+		ORDER BY t.date DESC, t.time DESC, t.id DESC LIMIT ?`, userID, strings.TrimSpace(payee), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ShopVisit
+	for rows.Next() {
+		var v ShopVisit
+		if err := rows.Scan(&v.ID, &v.Date, &v.Time, &v.Description, &v.Category, &v.Source); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
 	}
 	return out, rows.Err()
 }

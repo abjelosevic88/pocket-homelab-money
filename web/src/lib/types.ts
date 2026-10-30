@@ -181,7 +181,7 @@ export interface ReceiptSettings {
   card_account_id: number | null; cash_account_id: number | null; split_items: boolean; attach_manual: boolean
   ai_items: boolean; own_words: boolean; geocode: boolean; shop_rules: ShopRule[]; shop_rules_default: boolean
   ai_ready: boolean; ai_detail: string; unsorted_products: number
-  group_job: 'off' | 'keywords' | 'ai'; group_job_hour: number; group_job_notify: boolean; group_on_scan: boolean
+  group_job: 'off' | 'keywords' | 'ai'; group_job_hour: number; group_job_notify: boolean; group_on_scan: boolean; ai_review: boolean
 }
 export interface ItemStats {
   key: number; name: string; icon: string; group_id?: number | null; purchases: number; lines: number; quantity: number; unit: string

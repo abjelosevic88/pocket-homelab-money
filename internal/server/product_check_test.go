@@ -54,6 +54,7 @@ func TestProductCheck(t *testing.T) {
 	}))
 	defer ai.Close()
 	c.do("PUT", "/api/v1/settings", map[string]any{"ai_provider": "openai", "ai_key": "sk-test", "ai_url": ai.URL}, nil)
+	c.do("PUT", "/api/v1/receipts/settings", map[string]any{"ai_review": false}, nil) // only the product check's AI calls count here
 
 	var res scanOut
 	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufTestLink(21, 40)}, &res)

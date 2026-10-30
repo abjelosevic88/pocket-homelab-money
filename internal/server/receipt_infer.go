@@ -31,6 +31,8 @@ import (
 //  4. what this payee was booked as before.
 // The description is the person's own words for the shop, else their most
 // used description for that category, else the shop's name.
+// With the AI review on (and an AI connected), the AI then looks at the whole
+// receipt, this guess included, and has the last word on both.
 
 // ---- shop rules ----
 
@@ -243,6 +245,180 @@ func (s *Server) guessReceipt(ctx context.Context, r *store.Receipt) receiptGues
 	return g
 }
 
+// ---- the AI's look at the whole receipt ----
+
+// reviewReceipt lets the AI pick the receipt's category and description from
+// everything the app knows: the shop, the day and time, the items and their
+// categories, what the rules above guessed, the person's earlier bookings at
+// the shop and how they describe each category at which time of day. With the
+// review off, without an AI or when it fails, the rules' guess stands.
+func (s *Server) reviewReceipt(ctx context.Context, r *store.Receipt, g receiptGuess) receiptGuess {
+	rs := s.store.GetReceiptSettings(ctx, actorID(ctx))
+	if !rs.AIReview || r == nil || !r.Complete {
+		return g
+	}
+	client, _ := s.receiptAI(ctx)
+	if client == nil {
+		return g
+	}
+	uid := actorID(ctx)
+	cats, _ := s.store.ListCategories(ctx, uid)
+	counts, _ := s.store.CategoryUses(ctx, uid, 0)
+	words, _ := s.store.DescriptionUses(ctx, uid)
+	perCat := map[int64][]string{}
+	for _, w := range words {
+		if len(perCat[w.CategoryID]) < 10 {
+			perCat[w.CategoryID] = append(perCat[w.CategoryID], fmt.Sprintf("%s ×%d%s", w.Description, w.Count, usualHours(w.Hours)))
+		}
+	}
+	valid, names := map[int64]bool{}, map[int64]string{}
+	var b strings.Builder
+	shop := payeeFor(r)
+	b.WriteString("Receipt:\n")
+	if m := r.Merchant; m != nil {
+		fmt.Fprintf(&b, "- shop: %s (registered as %q)\n", shop, m.Name)
+	}
+	if r.Location != "" {
+		fmt.Fprintf(&b, "- branch: %s\n", r.Location)
+	}
+	when := r.Date
+	if d, err := time.Parse("2006-01-02", r.Date); err == nil {
+		when = d.Weekday().String() + " " + r.Date
+	}
+	if r.Time != "" {
+		when += " at " + r.Time
+	}
+	fmt.Fprintf(&b, "- when: %s\n- total: %s %s", when, money(r.Total), r.Currency)
+	if r.Method != "" {
+		fmt.Fprintf(&b, ", paid %s", r.Method)
+	}
+	b.WriteString("\n- items:\n")
+	for i, it := range r.Items {
+		fmt.Fprintf(&b, "  %d. %s (quantity %g) — %s", i+1, it.Name, it.Quantity, money(it.Total))
+		var tags []string
+		if it.GroupName != "" {
+			tags = append(tags, "product group "+it.GroupName)
+		}
+		if it.CategoryName != "" {
+			tags = append(tags, "category "+it.CategoryName)
+		}
+		if len(tags) > 0 {
+			fmt.Fprintf(&b, " [%s]", strings.Join(tags, "; "))
+		}
+		b.WriteString("\n")
+	}
+	for _, c := range cats {
+		names[c.ID] = firstNonBlank(c.FullName, c.Name)
+	}
+	if g.CategoryID != nil {
+		fmt.Fprintf(&b, "\nThe app's rules suggest category %q (%s) and description %q.\n", names[*g.CategoryID], g.Reason, g.Description)
+	} else {
+		fmt.Fprintf(&b, "\nThe app's rules found no category; description %q.\n", g.Description)
+	}
+	if m := r.Merchant; m != nil && (m.CategorySource == "you" && m.CategoryID != nil || m.Description != "") {
+		b.WriteString("What the person set for this shop:")
+		if m.CategorySource == "you" && m.CategoryID != nil {
+			fmt.Fprintf(&b, " category %q (their own choice)", names[*m.CategoryID])
+		}
+		if m.Description != "" {
+			fmt.Fprintf(&b, " description %q (the last one they typed for it)", m.Description)
+		}
+		b.WriteString("\n")
+	}
+	if visits, _ := s.store.ShopVisits(ctx, uid, shop, 12); len(visits) > 0 {
+		b.WriteString("Their earlier bookings at this shop, newest first (\"app\" = filled in by the app and never corrected):\n")
+		for _, v := range visits {
+			if r.TransactionID != nil && v.ID == *r.TransactionID {
+				continue // this very receipt
+			}
+			by := ""
+			if v.Source == "receipt" {
+				by = " (app)"
+			}
+			fmt.Fprintf(&b, "- %s %s %q in %s%s\n", v.Date, v.Time, v.Description, firstNonBlank(v.Category, "no category"), by)
+		}
+	}
+	b.WriteString("\nThe person's categories (id, name, bookings in the last year, their own descriptions with how often and usually when):\n")
+	for _, c := range cats {
+		if c.Archived || c.Kind == "income" {
+			continue
+		}
+		valid[c.ID] = true
+		n := 0
+		if u := counts[c.ID]; u != nil {
+			n = u.Count
+		}
+		fmt.Fprintf(&b, "- id %d %q: %d bookings", c.ID, names[c.ID], n)
+		if ws := perCat[c.ID]; len(ws) > 0 {
+			fmt.Fprintf(&b, "; %s", strings.Join(ws, ", "))
+		}
+		b.WriteString("\n")
+	}
+	var out struct {
+		CategoryID  FlexID `json:"category_id"`
+		Description string `json:"description"`
+		Reason      string `json:"reason"`
+	}
+	actx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	usage, err := client.JSON(actx, reviewPrompt, b.String(), &out)
+	cancel()
+	s.store.LogAI(ctx, uid, "receipt-review", usage.Model, usage.PromptTokens, usage.CompletionTokens)
+	if err != nil {
+		s.log.Warn("receipt: AI review", "receipt", r.ID, "err", err)
+		return g
+	}
+	res := g
+	if id := int64(out.CategoryID); id > 0 && valid[id] {
+		res.CategoryID = &id
+	}
+	if d := strings.Join(strings.Fields(out.Description), " "); d != "" && rs.OwnWords {
+		if rr := []rune(d); len(rr) > 60 {
+			d = string(rr[:60])
+		}
+		res.Description = ownCase(d)
+	}
+	why := strings.TrimSpace(out.Reason)
+	if rr := []rune(why); len(rr) > 140 {
+		why = string(rr[:140])
+	}
+	if why == "" {
+		why = "the whole receipt"
+	}
+	res.Reason = "AI: " + why
+	return res
+}
+
+const reviewPrompt = `You fill in one person's expense booking for a shop receipt they just scanned: its category and its short description, the way this person would have typed it themselves.
+
+Receipts are from Bosnia and Herzegovina, Serbia, Montenegro or Croatia; item names are short and abbreviated.
+
+Category: a category means what the person books in it, not what its name suggests; judge it by their descriptions and how often they use it. Go by where most of the money went, the kind of shop and their earlier bookings at this shop. When they chose a category for this shop themselves, keep it unless the items clearly belong elsewhere.
+
+Description: copy one of the person's own descriptions exactly; never combine or invent words when one of theirs fits. If they set a description for this shop, keep it unless it names a meal or a time of day the purchase time contradicts (their breakfast word at 17:00): then use their word for that time of day. Otherwise pick their description from the chosen category that fits what was bought and the time of day (a description they book in the morning does not fit an evening purchase). Only when none of their descriptions fits, write a short one (1–3 words) in their language and style, not the shop's name.
+
+Answer only JSON: {"category_id": <id from the list, or null to keep the suggestion>, "description": "<text>", "reason": "<why, under 12 words, English>"}.`
+
+// usualHours says when in the day something is usually booked (", usually 08–11h").
+func usualHours(hours []int) string {
+	if len(hours) == 0 {
+		return ""
+	}
+	hs := append([]int(nil), hours...)
+	sort.Ints(hs)
+	lo, hi := hs[len(hs)/4], hs[(len(hs)*3)/4]
+	if len(hs) < 4 {
+		lo, hi = hs[0], hs[len(hs)-1]
+	}
+	if lo == hi {
+		return fmt.Sprintf(", around %02dh", lo)
+	}
+	return fmt.Sprintf(", usually %02d–%02dh", lo, hi)
+}
+
+func money(minor int64) string {
+	return strconv.FormatFloat(float64(minor)/100, 'f', 2, 64)
+}
+
 // ownCase keeps the person's spelling but starts with a capital ("nabavka za kuci" → "Nabavka za kuci").
 func ownCase(s string) string {
 	rs := []rune(strings.TrimSpace(s))
@@ -437,7 +613,7 @@ func (s *Server) handleApplyGuess(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "you cannot change that transaction")
 		return
 	}
-	g := s.guessReceipt(ctx, rec)
+	g := s.reviewReceipt(ctx, rec, s.guessReceipt(ctx, rec))
 	in := txIn{}
 	if g.CategoryID != nil && len(t.Splits) == 0 {
 		in.CategoryID = g.CategoryID
