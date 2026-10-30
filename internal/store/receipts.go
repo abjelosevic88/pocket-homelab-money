@@ -626,11 +626,17 @@ func ensureProduct(ctx context.Context, tx *sql.Tx, userID int64, it fiscal.Item
 }
 
 // GroupFor picks the group whose longest matching keyword is in the product
-// key ("ledeni caj" beats "caj"); nil when none matches.
+// key ("ledeni caj" beats "caj"); nil when none matches. A product with a
+// bottle size only goes to groups of drinks and liquids: "kruska 0.25" is a
+// juice, so the fruit group's "kruska" does not take it.
 func GroupFor(key string, groups []ProductGroup) *int64 {
 	var best *int64
 	bestLen := 0
+	liquid := fiscal.HasLiquidSize(key)
 	for i := range groups {
+		if liquid && !fiscal.HoldsLiquids(groups[i].Keywords) {
+			continue
+		}
 		for _, kw := range fiscal.Keywords(groups[i].Keywords) {
 			if len(kw) > bestLen && fiscal.MatchesKeyword(key, kw) {
 				id := groups[i].ID

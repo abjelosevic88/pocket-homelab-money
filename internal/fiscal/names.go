@@ -245,3 +245,29 @@ var DefaultShopRules = []ShopRule{
 	{"vinoteka, vinarija, wine, liquor, duty free", []string{"alkohol", "alcohol", "pice"}},
 	{"bauhaus, bricolage, mr. bricolage, gradjevinski materijal, gvozdjara", []string{"alat", "tools", "kuca", "home"}},
 }
+
+var (
+	// a drink size: "0.25", "0,5", "1.5L", "330ml", "0,33 l"
+	liquidSize = regexp.MustCompile(`(?:^|[\s(])(?:0[.,]\d{1,3}|\d+(?:[.,]\d+)?\s*(?:l|lit|ml|cl|dl))(?:$|[\s)/])`)
+	// words that say a group holds drinks or other liquids
+	liquidWords = []string{"sok", "juice", "nektar", "napitak", "voda", "mineraln", "cola", "pivo", "vino", "rakija", "caj",
+		"mlijeko", "mleko", "jogurt", "kefir", "ulje", "sirup", "ocat", "sirce", "deterdzent", "omeksivac", "sampon", "gel", "drink"}
+)
+
+// HasLiquidSize tells whether a product key carries a bottle size ("exotic
+// kruska 0.25" is a pear juice, not a pear).
+func HasLiquidSize(key string) bool {
+	return liquidSize.MatchString(key)
+}
+
+// HoldsLiquids tells whether a group's keywords name a drink or a liquid.
+func HoldsLiquids(keywords string) bool {
+	for _, kw := range Keywords(keywords) {
+		for _, w := range liquidWords {
+			if strings.HasPrefix(kw, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
