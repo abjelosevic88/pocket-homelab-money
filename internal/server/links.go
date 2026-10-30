@@ -18,6 +18,8 @@ import (
 var linkOffers = []core.Offer{
 	{Scope: "accounts:read", Name: "See accounts and categories", Description: "List your accounts (names, currencies, balances) and categories, so the app can ask where a cost is booked."},
 	{Scope: "transactions:write", Name: "Book transactions", Description: "Create transactions on accounts you can book on, and change or delete only the ones that app created."},
+	{Scope: "jobs:read", Name: "See scheduled jobs", Description: "List the jobs this app runs on a schedule (background round, reminders, product check, day review), when they ran, how it went and when they run next."},
+	{Scope: "jobs:run", Name: "Run jobs now", Description: "Start one of those jobs right away."},
 	{Scope: "transactions:read", Name: "See your transactions", Description: "Read your transactions, tags, accounts and categories (including through the Firefly-compatible API) and where you paid, for trip costs, your journal and your map. Nothing can be changed with it."},
 }
 
@@ -34,6 +36,10 @@ var linkRoutes = []linkRoute{
 	{"GET", regexp.MustCompile(`^/api/v1/categories$`), "accounts:read"},
 	{"POST", regexp.MustCompile(`^/api/v1/transactions$`), "transactions:write"},
 	{"GET PUT DELETE", regexp.MustCompile(`^/api/v1/transactions/\d+$`), "transactions:write"},
+
+	// jobs:read / jobs:run: Pocket Monitoring's Jobs tab (docs/jobs.md in pocket-homelab-monitoring)
+	{"GET", regexp.MustCompile(`^/api/v1/scheduled-jobs$`), "jobs:read"},
+	{"POST", regexp.MustCompile(`^/api/v1/scheduled-jobs/[a-z0-9-]+/run$`), "jobs:run"},
 
 	// transactions:read: the person's transactions and what describes them,
 	// natively and through the Firefly-compatible API (Pocket Travel's trip

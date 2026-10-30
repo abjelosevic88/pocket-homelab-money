@@ -47,6 +47,8 @@ func (f *fakeCore) handler(t *testing.T) http.Handler {
 				"pcx_read":   {"accounts:read", "garage", "Pocket Garage"},
 				"pcx_travel": {"transactions:read", "travel", "Pocket Travel"},
 				"pcx_day":    {"transactions:read", "day", "Pocket Day"},
+				"pcx_jobs":   {"jobs:read", "monitoring", "Pocket Monitoring"},
+				"pcx_jobrun": {"jobs:read jobs:run", "monitoring", "Pocket Monitoring"},
 			}[in.Token]
 			if link[0] == "" {
 				_, _ = w.Write([]byte(`{"active":false}`))
@@ -187,6 +189,37 @@ func TestCoreLinkScopes(t *testing.T) {
 	if code := me.status("GET", "/api/v1/transactions/"+itoa(mine.ID), nil); code != 200 {
 		t.Fatalf("owner's transaction %d", code)
 	}
+
+	// Pocket Monitoring's Jobs tab: jobs:read lists, jobs:run starts.
+	jobsPeer := &peer{t: t, base: ts.URL, token: "pcx_jobs"}
+	runPeer := &peer{t: t, base: ts.URL, token: "pcx_jobrun"}
+	var jl struct {
+		Jobs []jobOut `json:"jobs"`
+		Runs []jobRun `json:"runs"`
+	}
+	if code, raw := jobsPeer.call("GET", "/api/v1/scheduled-jobs", nil, &jl); code != 200 || len(jl.Jobs) < 3 {
+		t.Fatalf("jobs %d %s", code, raw)
+	}
+	ids := []string{}
+	for _, j := range jl.Jobs {
+		ids = append(ids, j.ID)
+	}
+	if got := strings.Join(ids, ","); !strings.Contains(got, "reminders,product-check,day-review") {
+		t.Fatalf("job ids %s", got)
+	}
+	if code := jobsPeer.status("POST", "/api/v1/scheduled-jobs/product-check/run", nil); code != 403 {
+		t.Fatalf("run with jobs:read only: %d", code)
+	}
+	if code := jobsPeer.status("GET", "/api/v1/transactions", nil); code != 403 {
+		t.Fatalf("jobs token reading transactions: %d", code)
+	}
+	if code := runPeer.status("POST", "/api/v1/scheduled-jobs/product-check/run", nil); code != 202 {
+		t.Fatalf("run with jobs:run: %d", code)
+	}
+	if code := runPeer.status("POST", "/api/v1/scheduled-jobs/nope/run", nil); code != 404 {
+		t.Fatalf("unknown job: %d", code)
+	}
+	s.receiptWork.Wait()
 }
 
 // newLinkServer is a Money registered with a fake Core, with the owner

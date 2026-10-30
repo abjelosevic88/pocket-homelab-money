@@ -62,6 +62,10 @@ type Server struct {
 	resolved map[string]resolvedURL
 
 	modesKick chan struct{} // a connection-mode report is due (modes.go)
+
+	jobsMu      sync.Mutex
+	rounds      []jobRun             // the latest background rounds (jobs.go)
+	jobsRunning map[string]time.Time // "<user>:<job>" started by hand, still running
 }
 
 type resolvedURL struct {
@@ -247,7 +251,7 @@ func (s *Server) janitor(ctx context.Context) {
 		case <-t.C:
 		}
 		tick++
-		s.runJobs(ctx, tick%3 == 1)
+		s.runRound(ctx, tick%3 == 1)
 	}
 }
 
@@ -425,6 +429,8 @@ func (s *Server) Router() http.Handler {
 			r.Post("/receipts/{id}/book", s.handleBookReceipt)
 			r.Post("/receipts/{id}/split", s.handleSplitReceipt)
 			r.Post("/receipts/{id}/apply", s.handleApplyGuess)
+			r.Get("/scheduled-jobs", s.handleJobs)
+			r.Post("/scheduled-jobs/{id}/run", s.handleRunJob)
 			r.Get("/day-review", s.handleGetDayReview)
 			r.Get("/day-review/open", s.handleDayReviewOpen)
 			r.Put("/day-review/settings", s.handlePutDayReviewSettings)

@@ -162,6 +162,30 @@ func TestDayReview(t *testing.T) {
 	if out.Reviews[0].Day != yesterday || out.Reviews[0].Trigger != "daily" {
 		t.Fatalf("daily review %+v", out.Reviews[0].DayReview)
 	}
+	// the Jobs contract reports it, with its runs
+	var jl struct {
+		Jobs []jobOut `json:"jobs"`
+		Runs []jobRun `json:"runs"`
+	}
+	c.do("GET", "/api/v1/scheduled-jobs?since=0", nil, &jl)
+	var dr *jobOut
+	for i := range jl.Jobs {
+		if jl.Jobs[i].ID == "day-review" {
+			dr = &jl.Jobs[i]
+		}
+	}
+	if dr == nil || !dr.Enabled || dr.Last == nil || !dr.Last.OK || !strings.Contains(dr.Last.Summary, yesterday) || dr.Next <= time.Now().UnixMilli() {
+		t.Fatalf("day-review job %+v", dr)
+	}
+	nRuns := 0
+	for _, r := range jl.Runs {
+		if r.Job == "day-review" {
+			nRuns++
+		}
+	}
+	if nRuns != 3 { // report, fix, daily
+		t.Fatalf("day-review runs %d", nRuns)
+	}
 	// off: no run
 	c.do("PUT", "/api/v1/day-review/settings", map[string]any{"mode": "off"}, nil)
 	_ = c.srv.store.CachePut(context.Background(), "dayreview:day:1", "")
