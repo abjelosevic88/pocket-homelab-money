@@ -66,13 +66,13 @@ export default function Products() {
         <div className="prod-grid">
           {groups.map(g => (
             <div key={g.key} className={`prod-card ${g.purchases === 0 ? 'unused' : ''}`} {...clickRow(() => set('group', g.key ? String(g.key) : 'none'))}>
-              <div className="prod-top"><span className="prod-ico">{g.icon || '📦'}</span><b>{g.name}</b>
+              <div className="prod-top"><span className="prod-ico">{g.icon || '📦'}</span><b title={g.name}>{g.name}</b>
                 {g.key > 0 && <button type="button" className="btn ghost icon-only xs" aria-label="Edit group" onClick={e => { e.stopPropagation(); setEditing(g) }}><Icon name="edit" size={13} /></button>}</div>
               {g.purchases > 0 ? <>
                 <div className="prod-big">{fmtMoney(g.spent, home, dec)}</div>
                 <div className="muted small">{g.purchases}× bought · {qtyLabel(g.quantity, g.unit)}{g.quantity > 0 && <> · avg {fmtMoney(g.avg_price, home, dec)}/{perUnit(g.unit)}</>}</div>
                 <div className="muted small">{g.products} product{g.products === 1 ? '' : 's'} · last {fmtDate(g.last_date, false)}</div>
-              </> : <div className="muted small">{g.keywords ? `Nothing bought yet · ${g.keywords}` : 'Nothing bought yet'}</div>}
+              </> : <div className="muted small prod-kw" title={g.keywords || undefined}>{g.keywords ? `Nothing bought yet · ${g.keywords}` : 'Nothing bought yet'}</div>}
             </div>
           ))}
         </div>
