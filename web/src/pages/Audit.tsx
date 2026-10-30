@@ -19,7 +19,7 @@ const ACTIONS = [
 
 const SOURCE: Record<string, string> = {
   web: 'web', api: 'API', firefly_api: 'phone / Firefly API', quick: 'quick add', template: 'template', import: 'import',
-  mirror: 'Firefly mirror', schedule: 'scheduled', bulk: 'bulk', reconcile: 'balance check',
+  mirror: 'Firefly mirror', schedule: 'scheduled', bulk: 'bulk', reconcile: 'balance check', receipt: 'receipt', day_review: 'day review',
 }
 
 const FIELD: Record<string, string> = {

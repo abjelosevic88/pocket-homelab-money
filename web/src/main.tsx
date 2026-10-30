@@ -22,6 +22,7 @@ import Settings from './pages/Settings'
 import Audit from './pages/Audit'
 import Receipts from './pages/Receipts'
 import Products from './pages/Products'
+import Review from './pages/Review'
 
 function Gate({ children }: { children: React.ReactNode }) {
   const { status, user } = useApp()
@@ -59,6 +60,7 @@ function App() {
         <Route path="/audit" element={<Audit />} />
         <Route path="/receipts" element={<Receipts />} />
         <Route path="/products" element={<Products />} />
+        <Route path="/review" element={<Review />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

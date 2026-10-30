@@ -691,7 +691,13 @@ func (s *Server) refreshFromReceipt(ctx context.Context, t *store.Transaction, r
 }
 
 func (s *Server) updateTxFrom(ctx context.Context, t *store.Transaction, in *txIn) *store.Transaction {
-	ctx = withAuditSource(ctx, "receipt")
+	return s.updateTxAs(ctx, "receipt", t, in)
+}
+
+// updateTxAs changes a transaction on the app's own initiative; source says
+// which part of the app, for the audit log.
+func (s *Server) updateTxAs(ctx context.Context, source string, t *store.Transaction, in *txIn) *store.Transaction {
+	ctx = withAuditSource(ctx, source)
 	before := snapTx(t)
 	if msg := s.build(ctx, in, t); msg != "" {
 		if in.CategoryID == nil {
@@ -706,7 +712,7 @@ func (s *Server) updateTxFrom(ctx context.Context, t *store.Transaction, in *txI
 		}
 	}
 	if err := s.store.UpdateTransaction(ctx, actorID(ctx), t); err != nil {
-		s.log.Warn("receipt: update transaction", "id", t.ID, "err", err)
+		s.log.Warn(source+": update transaction", "id", t.ID, "err", err)
 		return t
 	}
 	full, err := s.store.GetTransaction(ctx, t.ID)

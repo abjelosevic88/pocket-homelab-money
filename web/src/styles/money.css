@@ -546,3 +546,18 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
 
 .how-pill { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: var(--surface-3); color: var(--text-2); white-space: nowrap; }
 .how-pill.ai { background: var(--ai-soft); color: var(--ai); }
+
+/* day review */
+.review-finding { padding: 12px 14px; display: grid; gap: 6px; }
+.review-finding.is-done { opacity: .7; }
+.review-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.review-tx { display: grid; grid-template-columns: 44px 1fr auto auto; gap: 10px; align-items: baseline; padding: 6px 8px; border-radius: 8px; background: var(--surface-2); color: inherit; text-decoration: none; }
+.review-tx:hover { background: var(--accent-soft); }
+.review-tx-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-change { display: grid; gap: 4px; }
+.review-change > div { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.review-change svg { flex: none; color: var(--muted); }
+@media (max-width: 767px) {
+  .review-tx { grid-template-columns: 40px 1fr auto; }
+  .review-tx > :nth-child(3) { display: none; }
+}

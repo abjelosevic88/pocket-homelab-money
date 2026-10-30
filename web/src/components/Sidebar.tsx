@@ -21,6 +21,15 @@ export function Sidebar({ onCreate, onNavigate, rev }: { onCreate: (k: CreateKin
     api.get<{ items: Subscription[] }>(`${V1}/subscriptions`).then(d => { if (live) setDue((d?.items || []).filter(s => s.status === 'overdue' || s.status === 'today').length) }).catch(() => {})
     return () => { live = false }
   }, [rev, onSubs])
+  // day review findings still waiting
+  const [review, setReview] = useState(0)
+  useEffect(() => {
+    let live = true
+    const load = () => api.get<{ open: number }>(`${V1}/day-review/open`).then(d => { if (live) setReview(d?.open || 0) }).catch(() => {})
+    load()
+    window.addEventListener('pm:review', load)
+    return () => { live = false; window.removeEventListener('pm:review', load) }
+  }, [rev])
   const ownsAny = accounts.some(a => a.role === 'owner')
   const active = accounts.filter(a => !a.archived)
   const archived = accounts.filter(a => a.archived)
@@ -40,11 +49,12 @@ export function Sidebar({ onCreate, onNavigate, rev }: { onCreate: (k: CreateKin
     { to: '/transactions', label: 'Transactions', icon: 'list' },
     { to: '/accounts', label: 'Accounts', icon: 'bank', end: true },
     { to: '/budgets', label: 'Budgets', icon: 'pie' },
-    { to: '/subscriptions', label: 'Subscriptions', icon: 'repeat', badge: due },
+    { to: '/subscriptions', label: 'Subscriptions', icon: 'repeat', badge: due, badgeTitle: `${due} due today or overdue` },
     { to: '/goals', label: 'Goals', icon: 'target' },
     { to: '/reports', label: 'Reports', icon: 'chart' },
     { to: '/receipts', label: 'Receipts', icon: 'receipt' },
     { to: '/products', label: 'Products', icon: 'package' },
+    { to: '/review', label: 'Day review', icon: 'sparkles', badge: review, badgeTitle: `${review} to look at` },
     ...(ownsAny ? [{ to: '/audit', label: 'Audit log', icon: 'history' }] : []),
   ]
   return (
@@ -62,7 +72,7 @@ export function Sidebar({ onCreate, onNavigate, rev }: { onCreate: (k: CreateKin
       <nav className="sb-nav" aria-label="Sections">
         {nav.map(n => (
           <NavLink key={n.to} to={n.to} end={n.end} onClick={onNavigate} className={({ isActive }) => `sb-nav-item ${isActive ? 'active' : ''}`}>
-            <Icon name={n.icon} size={16} />{n.label}{!!n.badge && <span className="badge danger" title={`${n.badge} due today or overdue`}>{n.badge}</span>}
+            <Icon name={n.icon} size={16} />{n.label}{!!n.badge && <span className="badge danger" title={n.badgeTitle}>{n.badge}</span>}
           </NavLink>
         ))}
       </nav>

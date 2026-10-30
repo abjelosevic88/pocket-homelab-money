@@ -262,16 +262,7 @@ func (s *Server) reviewReceipt(ctx context.Context, r *store.Receipt, g receiptG
 		return g
 	}
 	uid := actorID(ctx)
-	cats, _ := s.store.ListCategories(ctx, uid)
-	counts, _ := s.store.CategoryUses(ctx, uid, 0)
-	words, _ := s.store.DescriptionUses(ctx, uid)
-	perCat := map[int64][]string{}
-	for _, w := range words {
-		if len(perCat[w.CategoryID]) < 10 {
-			perCat[w.CategoryID] = append(perCat[w.CategoryID], fmt.Sprintf("%s ×%d%s", w.Description, w.Count, usualHours(w.Hours)))
-		}
-	}
-	valid, names := map[int64]bool{}, map[int64]string{}
+	catText, valid, names := s.categoryContext(ctx, uid)
 	var b strings.Builder
 	shop := payeeFor(r)
 	b.WriteString("Receipt:\n")
@@ -307,9 +298,6 @@ func (s *Server) reviewReceipt(ctx context.Context, r *store.Receipt, g receiptG
 		}
 		b.WriteString("\n")
 	}
-	for _, c := range cats {
-		names[c.ID] = firstNonBlank(c.FullName, c.Name)
-	}
 	if g.CategoryID != nil {
 		fmt.Fprintf(&b, "\nThe app's rules suggest category %q (%s) and description %q.\n", names[*g.CategoryID], g.Reason, g.Description)
 	} else {
@@ -338,22 +326,7 @@ func (s *Server) reviewReceipt(ctx context.Context, r *store.Receipt, g receiptG
 			fmt.Fprintf(&b, "- %s %s %q in %s%s\n", v.Date, v.Time, v.Description, firstNonBlank(v.Category, "no category"), by)
 		}
 	}
-	b.WriteString("\nThe person's categories (id, name, bookings in the last year, their own descriptions with how often and usually when):\n")
-	for _, c := range cats {
-		if c.Archived || c.Kind == "income" {
-			continue
-		}
-		valid[c.ID] = true
-		n := 0
-		if u := counts[c.ID]; u != nil {
-			n = u.Count
-		}
-		fmt.Fprintf(&b, "- id %d %q: %d bookings", c.ID, names[c.ID], n)
-		if ws := perCat[c.ID]; len(ws) > 0 {
-			fmt.Fprintf(&b, "; %s", strings.Join(ws, ", "))
-		}
-		b.WriteString("\n")
-	}
+	b.WriteString("\n" + catText)
 	var out struct {
 		CategoryID  FlexID `json:"category_id"`
 		Description string `json:"description"`
@@ -386,6 +359,41 @@ func (s *Server) reviewReceipt(ctx context.Context, r *store.Receipt, g receiptG
 	}
 	res.Reason = "AI: " + why
 	return res
+}
+
+// categoryContext describes the person's expense categories for the AI: id,
+// name, bookings in the last year and their own descriptions with how often
+// and usually when. valid holds the ids the AI may answer with.
+func (s *Server) categoryContext(ctx context.Context, uid int64) (string, map[int64]bool, map[int64]string) {
+	cats, _ := s.store.ListCategories(ctx, uid)
+	counts, _ := s.store.CategoryUses(ctx, uid, 0)
+	words, _ := s.store.DescriptionUses(ctx, uid)
+	perCat := map[int64][]string{}
+	for _, w := range words {
+		if len(perCat[w.CategoryID]) < 10 {
+			perCat[w.CategoryID] = append(perCat[w.CategoryID], fmt.Sprintf("%s ×%d%s", w.Description, w.Count, usualHours(w.Hours)))
+		}
+	}
+	valid, names := map[int64]bool{}, map[int64]string{}
+	var b strings.Builder
+	b.WriteString("The person's categories (id, name, bookings in the last year, their own descriptions with how often and usually when):\n")
+	for _, c := range cats {
+		names[c.ID] = firstNonBlank(c.FullName, c.Name)
+		if c.Archived || c.Kind == "income" {
+			continue
+		}
+		valid[c.ID] = true
+		n := 0
+		if u := counts[c.ID]; u != nil {
+			n = u.Count
+		}
+		fmt.Fprintf(&b, "- id %d %q: %d bookings", c.ID, names[c.ID], n)
+		if ws := perCat[c.ID]; len(ws) > 0 {
+			fmt.Fprintf(&b, "; %s", strings.Join(ws, ", "))
+		}
+		b.WriteString("\n")
+	}
+	return b.String(), valid, names
 }
 
 const reviewPrompt = `You fill in one person's expense booking for a shop receipt they just scanned: its category and its short description, the way this person would have typed it themselves.

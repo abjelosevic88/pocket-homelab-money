@@ -284,6 +284,7 @@ func (s *Server) runJobs(ctx context.Context, mirror bool) {
 		uctx := context.WithValue(ctx, userKey, &users[i])
 		s.maybeNotify(uctx)
 		s.maybeProductCheck(uctx)
+		s.maybeDayReview(uctx)
 		s.locateReceipts(uctx)
 	}
 }
@@ -424,6 +425,11 @@ func (s *Server) Router() http.Handler {
 			r.Post("/receipts/{id}/book", s.handleBookReceipt)
 			r.Post("/receipts/{id}/split", s.handleSplitReceipt)
 			r.Post("/receipts/{id}/apply", s.handleApplyGuess)
+			r.Get("/day-review", s.handleGetDayReview)
+			r.Get("/day-review/open", s.handleDayReviewOpen)
+			r.Put("/day-review/settings", s.handlePutDayReviewSettings)
+			r.Post("/day-review/run", s.handleRunDayReview)
+			r.Post("/day-review/findings/{id}/{action}", s.handleDayFinding)
 			r.Post("/products/sort", s.handleSortProducts)
 			r.Get("/products/check", s.handleProductCheckRuns)
 			r.Post("/products/check", s.handleRunProductCheck)

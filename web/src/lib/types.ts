@@ -199,3 +199,22 @@ export interface ProductCheckRun {
   checked: number; by_keywords: number; by_similar: number; by_ai: number; categorized: number; still_ungrouped: number
   report: { moves: CheckMove[]; suggestions: CheckSuggestion[]; left: string[]; ai_note?: string }; error: string
 }
+
+export interface DayFindingTx {
+  id: number; date: string; time: string; kind: string; amount: number; currency: string; description: string; payee: string
+  category_id: number | null; category_name: string; category_icon: string; source: string
+}
+export interface DayFinding {
+  id: number; review_id: number; transaction_id: number | null; note: string; category_id: number | null; description: string
+  duplicate_of: number | null; odd_amount: boolean; status: 'open' | 'applied' | 'fixed' | 'ignored' | 'done' | 'undone'
+  before_category_id: number | null; before_description: string; updated_at: string
+  transaction: DayFindingTx | null; duplicate?: DayFindingTx | null; category_name?: string; category_icon?: string; before_category_name?: string
+}
+export interface DayReviewRun {
+  id: number; day: string; trigger: 'daily' | 'manual'; mode: string; started_at: string; finished_at: string; checked: number; note: string; error: string
+  findings: DayFinding[]
+}
+export interface DayReviewState {
+  settings: { mode: 'off' | 'report' | 'fix'; hour: number; notify: boolean }
+  ai_ready: boolean; ai_detail: string; open: number; reviews: DayReviewRun[]
+}
