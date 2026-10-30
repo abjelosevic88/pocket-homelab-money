@@ -394,7 +394,7 @@ Receipts are from Bosnia and Herzegovina, Serbia, Montenegro or Croatia; item na
 
 Category: a category means what the person books in it, not what its name suggests; judge it by their descriptions and how often they use it. Go by where most of the money went, the kind of shop and their earlier bookings at this shop. When they chose a category for this shop themselves, keep it unless the items clearly belong elsewhere.
 
-Description: copy one of the person's own descriptions exactly; never combine or invent words when one of theirs fits. If they set a description for this shop, keep it unless it names a meal or a time of day the purchase time contradicts (their breakfast word at 17:00): then use their word for that time of day. Otherwise pick their description from the chosen category that fits what was bought and the time of day (a description they book in the morning does not fit an evening purchase). Only when none of their descriptions fits, write a short one (1–3 words) in their language and style, not the shop's name.
+Description: the person's own words. Prefer one of their descriptions from the chosen category, spelled their way, and pick it by what was bought and by the time of day: a description they book in the morning (a breakfast) does not fit an evening purchase, and the other way round. Their last description for this shop is a strong hint, but the items and the time of day can overrule it. When none of their descriptions fits, write a short one (1–4 words) in their language and style, not the shop's name.
 
 Answer only JSON: {"category_id": <id from the list, or null to keep the suggestion>, "description": "<text>", "reason": "<why, under 12 words, English>"}.`
 
