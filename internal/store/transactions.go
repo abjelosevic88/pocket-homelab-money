@@ -40,7 +40,8 @@ const txSelect = `SELECT t.id, COALESCE(t.user_id, 0), t.kind, t.date, t.time, t
 	t.created_by, t.created_at, t.updated_at,
 	a.name, a.currency, COALESCE(b.name, ''), COALESCE(b.currency, ''), COALESCE(c.name, ''), COALESCE(c.icon, ''), COALESCE(c.color, ''),
 	COALESCE(s.name, ''), COALESCE(u.name, u.email, ''), (SELECT COUNT(1) FROM attachments x WHERE x.transaction_id = t.id),
-	(SELECT r.id FROM receipts r WHERE r.transaction_id = t.id ORDER BY r.id LIMIT 1)
+	(SELECT r.id FROM receipts r WHERE r.transaction_id = t.id ORDER BY r.provider = 'ai', r.id LIMIT 1),
+	NOT EXISTS (SELECT 1 FROM receipts r WHERE r.transaction_id = t.id AND r.provider != 'ai')
 	FROM transactions t
 	JOIN accounts a ON a.id = t.account_id
 	LEFT JOIN accounts b ON b.id = t.to_account_id
@@ -54,10 +55,11 @@ func scanTx(row interface{ Scan(...any) error }) (*Transaction, error) {
 		&t.AmountHome, &t.FXRate, &t.Description, &t.Payee, &t.CategoryID, &t.Notes, &t.SubscriptionID, &t.Source, &t.ExternalID, &t.Lat, &t.Lng,
 		&t.CreatedBy, &t.CreatedAt, &t.UpdatedAt,
 		&t.AccountName, &t.Currency, &t.ToAccountName, &t.ToCurrency, &t.CategoryName, &t.CategoryIcon, &t.CategoryColor,
-		&t.SubscriptionNm, &t.CreatedByName, &t.AttachmentCount, &t.ReceiptID)
+		&t.SubscriptionNm, &t.CreatedByName, &t.AttachmentCount, &t.ReceiptID, &t.ReceiptAI)
 	if err != nil {
 		return nil, notFound(err)
 	}
+	t.ReceiptAI = t.ReceiptAI && t.ReceiptID != nil
 	t.Tags = []string{}
 	t.Splits = []Split{}
 	return &t, nil
@@ -150,7 +152,7 @@ func (f *TxFilter) where() (string, []any) {
 		conds = append(conds, "t.lat IS NOT NULL AND t.lng IS NOT NULL")
 	}
 	if f.HasReceipt {
-		conds = append(conds, "EXISTS (SELECT 1 FROM receipts r WHERE r.transaction_id = t.id)")
+		conds = append(conds, "EXISTS (SELECT 1 FROM receipts r WHERE r.transaction_id = t.id AND r.provider != '"+AIProvider+"')")
 	}
 	if f.ExternalPrefix != "" {
 		conds = append(conds, "t.external_id LIKE ? || '%'")
@@ -458,6 +460,10 @@ func (s *Store) UpdateTransaction(ctx context.Context, userID int64, t *Transact
 		_ = tx.Rollback()
 		return err
 	}
+	if err := dropStaleGuess(ctx, tx, t); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -537,6 +543,10 @@ func (s *Store) DeleteTransaction(ctx context.Context, id int64, after ...core.C
 		return err
 	}
 	defer tx.Rollback()
+	// guessed items belong to the transaction (a scanned receipt stays, unbooked)
+	if _, err = tx.ExecContext(ctx, `DELETE FROM receipts WHERE transaction_id = ? AND provider = '`+AIProvider+`'`, id); err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM transactions WHERE id = ?`, id)
 	if err != nil {
 		return err

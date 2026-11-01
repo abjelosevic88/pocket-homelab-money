@@ -32,7 +32,7 @@ const SOURCE_HINT: Record<string, string> = { you: 'your choice', ai: 'sorted by
 /** A scanned fiscal receipt: shop, every item (with its product group and
  *  category, changeable in place), why the transaction got its category,
  *  payment and tax, and the printed original. */
-export function ReceiptCard({ receipt, tx, onChanged }: { receipt: Receipt; tx?: Transaction; onChanged?: (t: Transaction) => void }) {
+export function ReceiptCard({ receipt, tx, onChanged, onRemoved }: { receipt: Receipt; tx?: Transaction; onChanged?: (t: Transaction) => void; onRemoved?: () => void }) {
   const { currencies, categories } = useApp()
   const { toast } = useToast()
   const [r, setR] = useState(receipt)
@@ -68,23 +68,48 @@ export function ReceiptCard({ receipt, tx, onChanged }: { receipt: Receipt; tx?:
       reload()
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
+  const guessed = r.provider === 'ai'
+  const guessAgain = async () => {
+    if (!tx) return
+    setBusy(true)
+    try {
+      const out = await api.post<{ transaction: Transaction; status: string; note: string; receipt?: Receipt }>(`${V1}/transactions/${tx.id}/items/guess`)
+      if (out.receipt) { setR(out.receipt); toast('Items guessed again') } else { toast(out.note ? `No items: ${out.note}` : 'No items in that description'); onRemoved?.() }
+      onChanged?.(out.transaction)
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  const removeGuess = async () => {
+    setBusy(true)
+    try {
+      await api.del(`${V1}/receipts/${r.id}`)
+      toast('Items removed')
+      onRemoved?.()
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
   const g = r.guess
   const guessCat = g?.category_id ? categories.find(c => c.id === g.category_id) : undefined
   const differs = !!tx && !!g && !tx.splits?.length && ((g.category_id != null && g.category_id !== tx.category_id) || (tx.source === 'receipt' && g.description && g.description !== tx.description.replace(/^Refund · /, '')))
   return (
     <div className="receipt-card">
       <div className="rc-head">
-        <span className="rc-icon">🧾</span>
-        <div className="rc-shop">
-          <b>{m?.display_name || 'Unknown shop'}</b>
-          <div className="muted small">{[r.location, m?.address, m?.city].filter(Boolean).join(' · ')}{m?.lat != null && m?.lng != null && <> · <a href={osmLink(m.lat, m.lng)} target="_blank" rel="noreferrer">📍 map</a></>}</div>
-        </div>
+        <span className="rc-icon">{guessed ? <Icon name="sparkles" size={20} strokeWidth={2} className="ai-ico" /> : '🧾'}</span>
+        {guessed ? (
+          <div className="rc-shop">
+            <b>Items guessed by AI</b>
+            <div className="muted small">From “{tx?.description || 'the description'}” · prices are estimates that add up to the total</div>
+          </div>
+        ) : (
+          <div className="rc-shop">
+            <b>{m?.display_name || 'Unknown shop'}</b>
+            <div className="muted small">{[r.location, m?.address, m?.city].filter(Boolean).join(' · ')}{m?.lat != null && m?.lng != null && <> · <a href={osmLink(m.lat, m.lng)} target="_blank" rel="noreferrer">📍 map</a></>}</div>
+          </div>
+        )}
         <div className="rc-total">
           <b>{fmtMoney(r.total, r.currency, dec)}</b>
           <div className="muted small">{r.date} {r.time}</div>
         </div>
       </div>
-      {!r.complete && <div className="rc-note">⏳ Booked from the QR code alone: the shop and items are filled in once the tax office answers.</div>}
+      {!guessed && !r.complete && <div className="rc-note">⏳ Booked from the QR code alone: the shop and items are filled in once the tax office answers.</div>}
       {r.kind === 'refund' && <div className="rc-note">↩ Refund{r.referent ? ` of receipt ${r.referent}` : ''}</div>}
       {tx && tx.category_name && r.category_reason && !differs && <div className="rc-why small">{tx.category_icon || '🏷'} <b>{tx.category_name}</b> <span className="muted">· {r.category_reason}</span></div>}
       {differs && g && (
@@ -117,12 +142,14 @@ export function ReceiptCard({ receipt, tx, onChanged }: { receipt: Receipt; tx?:
           </tbody>
         </table>
       )}
-      <div className="rc-foot muted small">
+      {!guessed && <div className="rc-foot muted small">
         {r.payments.map((p, i) => <span key={i}>{METHOD[p.method] || p.method} {fmtMoney(p.amount, r.currency, dec, { code: false })}</span>)}
         {r.tax_total > 0 && <span>VAT {fmtMoney(r.tax_total, r.currency, dec, { code: false })}</span>}
         <span title="Receipt number">№ {r.invoice_number}</span>
-      </div>
+      </div>}
       <div className="row wrap" style={{ gap: 6 }}>
+        {guessed && tx && <button type="button" className="btn ghost sm" disabled={busy} onClick={guessAgain}><Icon name="sparkles" size={14} />Guess again</button>}
+        {guessed && <button type="button" className="btn ghost sm" disabled={busy} onClick={removeGuess}><Icon name="x" size={14} />Remove items</button>}
         {r.url && <a className="btn ghost sm" href={r.url} target="_blank" rel="noreferrer"><Icon name="external" size={14} />Tax office</a>}
         {r.journal && <button type="button" className="btn ghost sm" onClick={() => setJournal(j => !j)}><Icon name="receipt" size={14} />{journal ? 'Hide' : 'Printed'} receipt</button>}
         {tx && r.items.length > 1 && (tx.splits?.length

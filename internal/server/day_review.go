@@ -87,6 +87,10 @@ func (s *Server) runDayReview(ctx context.Context, day, trigger string) (*store.
 		fmt.Fprintf(&list, " · from %s", firstNonBlank(sourceLabel[t.Source], t.Source, "typed"))
 		if t.ReceiptID != nil {
 			if r, err := s.store.GetReceipt(ctx, *t.ReceiptID); err == nil && len(r.Items) > 0 {
+				label := "items"
+				if r.Provider == store.AIProvider {
+					label = "items guessed from the description"
+				}
 				var items []string
 				for i, it := range r.Items {
 					if i == 12 {
@@ -95,7 +99,7 @@ func (s *Server) runDayReview(ctx context.Context, day, trigger string) (*store.
 					}
 					items = append(items, fmt.Sprintf("%s ×%g %s", it.Name, it.Quantity, money(it.Total)))
 				}
-				fmt.Fprintf(&list, " · items: %s", strings.Join(items, "; "))
+				fmt.Fprintf(&list, " · %s: %s", label, strings.Join(items, "; "))
 			}
 		}
 		list.WriteString("\n")

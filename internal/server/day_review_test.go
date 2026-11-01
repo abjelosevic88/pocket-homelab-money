@@ -82,7 +82,7 @@ func TestDayReview(t *testing.T) {
 	}))
 	defer ai.Close()
 	c.do("PUT", "/api/v1/settings", map[string]any{"ai_provider": "openai", "ai_key": "sk-test", "ai_url": ai.URL}, nil)
-	c.do("PUT", "/api/v1/receipts/settings", map[string]any{"ai_review": false}, nil)
+	c.do("PUT", "/api/v1/receipts/settings", map[string]any{"ai_review": false, "guess_items": false}, nil)
 
 	// report: two findings, nothing changed
 	out = dayReviewOut{}

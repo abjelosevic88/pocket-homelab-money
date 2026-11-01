@@ -3,6 +3,7 @@ import { decimalsOf, fmtDate, fmtMoney, todayISO, addDays, weekday } from '../li
 import type { Transaction } from '../lib/types'
 import { CatIcon, TxAmount } from './pickers'
 import { clickRow } from './ui'
+import { Icon } from './icons'
 
 function dayTitle(d: string) {
   const t = todayISO()
@@ -37,7 +38,7 @@ export function TxList({ items, onOpen, selected, onToggle, showAccount = true, 
                 <CatIcon t={t} />
               </span>
               <span className="tx-main">
-                <span className="t">{t.description || t.payee || t.category_name || (t.kind === 'transfer' ? 'Transfer' : '—')}{t.attachment_count > 0 && <span title="Receipt">📎</span>}{t.receipt_id && <span title="Scanned fiscal receipt">🧾</span>}{t.subscription_id && <span title={t.subscription_name}>↻</span>}</span>
+                <span className="t">{t.description || t.payee || t.category_name || (t.kind === 'transfer' ? 'Transfer' : '—')}{t.attachment_count > 0 && <span title="Receipt">📎</span>}{t.receipt_id && (t.receipt_ai ? <span title="Items guessed by AI"><Icon name="sparkles" size={12} strokeWidth={2} className="ai-ico" /></span> : <span title="Scanned fiscal receipt">🧾</span>)}{t.subscription_id && <span title={t.subscription_name}>↻</span>}</span>
                 <span className="s">
                   {compact && <>{fmtDate(t.date, false)} · </>}
                   {t.kind === 'transfer' ? `${t.account_name} → ${t.to_account_name}` : [t.splits?.length ? `✂ ${t.splits.map(p => p.category_name || 'Uncategorised').join(' + ')}` : t.category_name || 'Uncategorised', showAccount ? t.account_name : '', t.payee && t.payee !== t.description ? t.payee : '', t.time].filter(Boolean).join(' · ')}

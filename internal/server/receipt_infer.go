@@ -616,6 +616,10 @@ func (s *Server) handleApplyGuess(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "this receipt is not booked")
 		return
 	}
+	if rec.Provider == store.AIProvider {
+		writeErr(w, http.StatusBadRequest, "guessed items do not change the booking")
+		return
+	}
 	t, err := s.store.GetTransaction(ctx, *rec.TransactionID)
 	if err != nil || !s.canWrite(ctx, t.AccountID) {
 		writeErr(w, http.StatusForbidden, "you cannot change that transaction")

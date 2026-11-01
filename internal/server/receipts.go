@@ -503,6 +503,7 @@ func (s *Server) bookReceipt(ctx context.Context, r *store.Receipt, hint *int64)
 			ids = append(ids, a.ID)
 		}
 		if id, err := s.store.UnreceiptedMatch(ctx, ids, r.Date, r.Total, r.Currency, kind); err == nil {
+			_ = s.store.DeleteGuessedItems(ctx, id) // the real items replace the AI's
 			if err := s.store.SetReceiptTransaction(ctx, r.ID, &id); err != nil {
 				return nil, "", err
 			}
@@ -878,7 +879,7 @@ func (s *Server) handleGetReceipt(w http.ResponseWriter, r *http.Request) {
 // withGuess adds what the receipt says today (after the person sorted items),
 // so the page can offer it when the transaction has something else.
 func (s *Server) withGuess(ctx context.Context, rec *store.Receipt) {
-	if rec.UserID != actorID(ctx) {
+	if rec.UserID != actorID(ctx) || rec.Provider == store.AIProvider {
 		return
 	}
 	g := s.guessReceipt(ctx, rec)
@@ -1044,7 +1045,8 @@ func (s *Server) receiptSettingsOut(ctx context.Context) map[string]any {
 	return map[string]any{"card_account_id": rs.CardAccountID, "cash_account_id": rs.CashAccountID, "split_items": rs.SplitItems, "attach_manual": rs.AttachManual,
 		"ai_items": rs.AIItems, "own_words": rs.OwnWords, "geocode": rs.Geocode, "shop_rules": rules, "shop_rules_default": defaults,
 		"ai_ready": client != nil, "ai_detail": detail, "unsorted_products": len(unsorted),
-		"group_job": rs.GroupJob, "group_job_hour": rs.GroupJobHour, "group_job_notify": rs.GroupJobNotify, "group_on_scan": rs.GroupOnScan, "ai_review": rs.AIReview}
+		"group_job": rs.GroupJob, "group_job_hour": rs.GroupJobHour, "group_job_notify": rs.GroupJobNotify, "group_on_scan": rs.GroupOnScan, "ai_review": rs.AIReview,
+		"guess_items": rs.GuessItems, "guess_pending": s.guessPending(ctx, 30), "guess_last": s.lastGuessRun(ctx)}
 }
 
 func (s *Server) handleGetReceiptSettings(w http.ResponseWriter, r *http.Request) {
@@ -1074,6 +1076,7 @@ func (s *Server) handlePutReceiptSettings(w http.ResponseWriter, r *http.Request
 	keep("group_job_notify", &in.GroupJobNotify, cur.GroupJobNotify)
 	keep("group_on_scan", &in.GroupOnScan, cur.GroupOnScan)
 	keep("ai_review", &in.AIReview, cur.AIReview)
+	keep("guess_items", &in.GuessItems, cur.GuessItems)
 	if !keys["group_job"] {
 		in.GroupJob = cur.GroupJob
 	} else if in.GroupJob != "off" && in.GroupJob != "keywords" && in.GroupJob != "ai" {

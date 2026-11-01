@@ -181,6 +181,7 @@ type Transaction struct {
 	Attachments     []Attachment `json:"attachments,omitempty"`
 	AttachmentCount int          `json:"attachment_count"`
 	ReceiptID       *int64       `json:"receipt_id"` // booked from (or linked to) a scanned fiscal receipt
+	ReceiptAI       bool         `json:"receipt_ai"` // its only receipt is items the AI guessed from the description
 	Splits          []Split      `json:"splits"`
 	BalanceAfter    *int64       `json:"balance_after,omitempty"` // account balance after it (single-account lists)
 }

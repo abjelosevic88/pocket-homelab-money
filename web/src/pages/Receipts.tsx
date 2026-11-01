@@ -212,6 +212,33 @@ function ShopForm({ m, onClose, onSaved }: { m: Merchant; onClose: () => void; o
   )
 }
 
+/** Items the AI writes for expenses typed by hand ("pica i krofna" → Pica, Krofna). */
+function GuessItems({ st, save }: { st: ReceiptSettings; save: (p: Partial<ReceiptSettings>) => void }) {
+  const { toast } = useToast()
+  const [busy, setBusy] = useState(false)
+  const last = st.guess_last
+  const runNow = async () => {
+    setBusy(true)
+    try {
+      const r = await api.post<{ started: boolean; expenses: number }>(`${V1}/receipts/guess-items`, { days: 30 })
+      toast(r.started ? `Guessing items for ${r.expenses} expenses in the background` : 'Nothing left to guess')
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
+  }
+  return (
+    <Card title="Items for what I type" sub="An expense typed by hand that names what you bought (“pica i krofna”, 8 KM) gets receipt lines like a scanned one (Pica 6.00, Krofna 2.00), so products and their statistics include it. A shop or a vague word (“Pekara”, “Nabavka za kuci”) gets none.">
+      <SettingRow title="Guess items when I save an expense" help={<>A few seconds after you save it (web, quick add, templates, the phone app), the AI reads the description and splits the amount by what such things usually cost, using your products' last prices. Editing the amount or description guesses again; a scanned receipt for the same purchase replaces the guess. {st.ai_ready ? <b>{st.ai_detail}.</b> : <span className="bad">{st.ai_detail}</span>}</>}>
+        <Switch checked={st.guess_items && st.ai_ready} disabled={!st.ai_ready} onChange={v => save({ guess_items: v })} />
+      </SettingRow>
+      {st.guess_items && st.ai_ready && (
+        <SettingRow title={st.guess_pending > 0 ? `${st.guess_pending} typed expenses of the last 30 days not looked at` : 'Every typed expense of the last 30 days has been looked at'}
+          help={last ? `Last run: ${last.checked} looked at · ${last.itemized} got items · ${last.none} without${last.failed ? ` · ${last.failed} failed` : ''}.` : 'Expenses saved before this was on are guessed here.'}>
+          {st.guess_pending > 0 && <button type="button" className="btn sm" disabled={busy} onClick={runNow}><Icon name="sparkles" size={14} />{busy ? 'Starting…' : 'Guess them now'}</button>}
+        </SettingRow>
+      )}
+    </Card>
+  )
+}
+
 function Setup() {
   const { settings } = useApp()
   const { toast } = useToast()
@@ -264,6 +291,7 @@ function Setup() {
         <SettingRow title="Put shops on the map" help="Looks the shop's address up once on OpenStreetMap and pins the transaction there (for Pocket Day and Movement)."><Switch checked={st.geocode} onChange={v => save({ geocode: v })} /></SettingRow>
         <ShopRules rules={st.shop_rules} isDefault={st.shop_rules_default} onSave={rules => save({ shop_rules: rules })} onReset={() => save({ reset_shop_rules: true })} />
       </Card>
+      <GuessItems st={st} save={save} />
       <Card title="Daily product check" sub="Every day, products without a group are placed: by the groups' keywords, next to similar products you already grouped (“Jabuka zlatni” joins “Jabuka BIO”), and — if you choose — by AI, which can also suggest new groups.">
         <SettingRow title="Check" help={st.group_job === 'ai' && !st.ai_ready ? <span className="bad">{st.ai_detail}</span> : st.group_job === 'ai' ? `Names of products it cannot place otherwise are sent once. ${st.ai_detail}.` : 'No AI: keywords and similar products only.'}>
           <Segmented size="sm" value={st.group_job} onChange={v => save({ group_job: v })} options={[{ value: 'off', label: 'Off' }, { value: 'keywords', label: 'Keywords' }, { value: 'ai', label: '+ AI', disabled: !st.ai_ready && st.group_job !== 'ai' }]} />

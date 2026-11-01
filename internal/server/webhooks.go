@@ -53,6 +53,9 @@ func (s *Server) emitTx(ctx context.Context, event string, t *store.Transaction)
 	if t == nil {
 		return
 	}
+	if event != "transaction.deleted" {
+		s.guessOnEntry(ctx, t) // items for a typed expense
+	}
 	hooks, err := s.store.ListWebhooks(ctx, 0)
 	if err != nil || len(hooks) == 0 {
 		return

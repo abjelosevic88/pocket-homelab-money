@@ -44,6 +44,8 @@ export interface Transaction {
   attachments?: Attachment[]; attachment_count: number; splits: Split[] | null; balance_after?: number
   /** booked from (or linked to) a scanned fiscal receipt */
   receipt_id?: number | null
+  /** its only receipt is items the AI guessed from the description */
+  receipt_ai?: boolean
 }
 export interface Split { id: number; category_id: number | null; amount: number; foreign_amount: number; amount_home: number; note: string; category_name: string; category_icon: string }
 export interface TxTotals { count: number; income: number; expense: number; transfers: number; net: number }
@@ -182,6 +184,8 @@ export interface ReceiptSettings {
   ai_items: boolean; own_words: boolean; geocode: boolean; shop_rules: ShopRule[]; shop_rules_default: boolean
   ai_ready: boolean; ai_detail: string; unsorted_products: number
   group_job: 'off' | 'keywords' | 'ai'; group_job_hour: number; group_job_notify: boolean; group_on_scan: boolean; ai_review: boolean
+  guess_items: boolean; guess_pending: number
+  guess_last: { trigger: string; start: string; end: string; checked: number; itemized: number; none: number; failed: number; error?: string } | null
 }
 export interface ItemStats {
   key: number; name: string; icon: string; group_id?: number | null; purchases: number; lines: number; quantity: number; unit: string

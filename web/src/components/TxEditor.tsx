@@ -6,7 +6,7 @@ import type { Attachment, Category, Kind, Receipt, Subscription, Template, Trans
 import { ReceiptCard } from './ReceiptCard'
 
 interface Part { category_id: number | null; amount: number | null; note: string }
-import { Field, Modal, useDebounce, useToast } from './ui'
+import { Field, Modal, errMsg, useDebounce, useToast } from './ui'
 import { CurrencySelect, MoneyInput } from './Money'
 import { AccountSelect, CategoryGrid, CategorySelect, KindTabs, TagInput } from './pickers'
 import { Select } from './Select'
@@ -361,11 +361,27 @@ export function TxModal({ id, seed, onClose, onChanged }: { id?: number; seed?: 
   const [tx, setTx] = useState<Transaction | null>(null)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   useEffect(() => { if (id) api.get<Transaction>(`${V1}/transactions/${id}`).then(setTx).catch(() => onClose()) }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (tx?.receipt_id) api.get<Receipt>(`${V1}/transactions/${tx.id}/receipt`).then(setReceipt).catch(() => setReceipt(null)) }, [tx?.id, tx?.receipt_id])
+  useEffect(() => { if (tx?.receipt_id) api.get<Receipt>(`${V1}/transactions/${tx.id}/receipt`).then(setReceipt).catch(() => setReceipt(null)); else setReceipt(null) }, [tx?.id, tx?.receipt_id, tx?.updated_at])
+  const [guessing, setGuessing] = useState(false)
+  const { toast } = useToast()
+  const reload = () => { if (tx) api.get<Transaction>(`${V1}/transactions/${tx.id}`).then(setTx).catch(() => {}); onChanged() }
+  const guess = async () => {
+    if (!tx) return
+    setGuessing(true)
+    try {
+      const out = await api.post<{ transaction: Transaction; status: string; note: string; receipt?: Receipt }>(`${V1}/transactions/${tx.id}/items/guess`)
+      if (out.receipt) { setTx(out.transaction); setReceipt(out.receipt); onChanged() } else toast(out.note ? `No items: ${out.note}` : 'No items in that description')
+    } catch (e) { toast(errMsg(e), 'err') } finally { setGuessing(false) }
+  }
   if (id && !tx) return null
   return (
     <Modal title={tx ? 'Transaction' : 'New transaction'} onClose={onClose}>
-      {receipt && tx && <ReceiptCard receipt={receipt} tx={tx} onChanged={t => { setTx(t); onChanged() }} />}
+      {receipt && tx && <ReceiptCard receipt={receipt} tx={tx} onChanged={t => { setTx(t); onChanged() }} onRemoved={() => { setReceipt(null); reload() }} />}
+      {tx && !tx.receipt_id && tx.kind === 'expense' && tx.description.trim() !== '' && (
+        <button type="button" className="btn ghost sm" style={{ justifySelf: 'start', marginBottom: 8 }} disabled={guessing} onClick={guess}>
+          <Icon name="sparkles" size={14} />{guessing ? 'Guessing items…' : 'Guess items from the description'}
+        </button>
+      )}
       <TxEditor key={tx?.updated_at} tx={tx || undefined} seed={seed} onCancel={onClose} onSaved={(_, again) => { onChanged(); if (!again) onClose() }} onDeleted={() => { onChanged(); onClose() }} />
     </Modal>
   )
