@@ -7,6 +7,7 @@ import (
 	"fmt"
 	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/fiscal"
+	"sort"
 	"strings"
 )
 
@@ -224,6 +225,9 @@ func (s *Store) ListTransactions(ctx context.Context, f TxFilter) ([]Transaction
 	if err := s.attachSplits(ctx, out); err != nil {
 		return nil, tot, err
 	}
+	if err := s.attachItems(ctx, out, listItemCap); err != nil {
+		return nil, tot, err
+	}
 	if f.AccountID > 0 && len(out) > 0 {
 		if bal, err := s.BalancesAfter(ctx, f.AccountID); err == nil {
 			for i := range out {
@@ -264,6 +268,66 @@ func (s *Store) attachSplits(ctx context.Context, txs []Transaction) error {
 		txs[idx[tid]].Splits = append(txs[idx[tid]].Splits, sp)
 	}
 	return rows.Err()
+}
+
+// listItemCap is how many receipt lines a list row carries.
+const listItemCap = 6
+
+// attachItems loads the lines of each transaction's receipt (the one in
+// ReceiptID) under their short names, repeated lines merged, biggest first;
+// max > 0 keeps only that many.
+func (s *Store) attachItems(ctx context.Context, txs []Transaction, max int) error {
+	idx := map[int64]int{}
+	ids := []int64{}
+	for i := range txs {
+		if txs[i].ReceiptID != nil {
+			idx[*txs[i].ReceiptID] = i
+			ids = append(ids, *txs[i].ReceiptID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	in, args := inList(ids)
+	rows, err := s.DB.QueryContext(ctx, `SELECT i.receipt_id, i.name, i.quantity, i.unit, i.total, COALESCE(g.icon, '')
+		FROM receipt_items i LEFT JOIN products p ON p.id = i.product_id LEFT JOIN product_groups g ON g.id = p.group_id
+		WHERE i.receipt_id IN `+in+` ORDER BY i.receipt_id, i.line, i.id`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	seen := map[int64]map[string]int{}
+	for rows.Next() {
+		var rid int64
+		var it TxItem
+		if err := rows.Scan(&rid, &it.Name, &it.Quantity, &it.Unit, &it.Total, &it.GroupIcon); err != nil {
+			return err
+		}
+		it.Name = fiscal.ShortItemName(it.Name)
+		t := &txs[idx[rid]]
+		if seen[rid] == nil {
+			seen[rid] = map[string]int{}
+		}
+		if j, ok := seen[rid][fiscal.Fold(it.Name)]; ok {
+			t.Items[j].Quantity += it.Quantity
+			t.Items[j].Total += it.Total
+			continue
+		}
+		seen[rid][fiscal.Fold(it.Name)] = len(t.Items)
+		t.Items = append(t.Items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range txs {
+		t := &txs[i]
+		t.ItemCount = len(t.Items)
+		sort.SliceStable(t.Items, func(a, b int) bool { return t.Items[a].Total > t.Items[b].Total })
+		if max > 0 && len(t.Items) > max {
+			t.Items = t.Items[:max]
+		}
+	}
+	return nil
 }
 
 // BalancesAfter returns, for every transaction touching an account, the

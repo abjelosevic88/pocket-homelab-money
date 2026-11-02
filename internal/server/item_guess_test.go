@@ -113,6 +113,9 @@ func TestItemGuessOnEntry(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].ID != pica.ID {
 		t.Fatal("item names are searchable")
 	}
+	if it := page.Items[0]; it.ItemCount != 2 || len(it.Items) != 2 || it.Items[0].Name != "Pica margherita" || it.Items[0].Total != 600 {
+		t.Fatalf("list rows carry the items, biggest first: %+v", it.Items)
+	}
 
 	// saving again without changes asks nothing; a new description asks again
 	c.do("PUT", fmt.Sprintf("/api/v1/transactions/%d", pica.ID), map[string]any{"notes": "fino"}, nil)

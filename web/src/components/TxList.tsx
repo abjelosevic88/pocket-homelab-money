@@ -1,6 +1,6 @@
 import { useApp } from '../lib/app-context'
 import { decimalsOf, fmtDate, fmtMoney, todayISO, addDays, weekday } from '../lib/format'
-import type { Transaction } from '../lib/types'
+import type { Transaction, TxItem } from '../lib/types'
 import { CatIcon, TxAmount } from './pickers'
 import { clickRow } from './ui'
 import { Icon } from './icons'
@@ -10,6 +10,11 @@ function dayTitle(d: string) {
   if (d === t) return 'Today'
   if (d === addDays(t, -1)) return 'Yesterday'
   return `${weekday(d, true)}, ${fmtDate(d, d.slice(0, 4) !== t.slice(0, 4))}`
+}
+
+/** "7× Kifla" — whole counts only; weighed items (0.512 kg) show just the name. */
+function itemLabel(i: TxItem) {
+  return `${i.group_icon ? i.group_icon + ' ' : ''}${i.quantity > 1 && Number.isInteger(i.quantity) ? `${i.quantity}× ` : ''}${i.name}`
 }
 
 /** Transactions grouped by day; the day header shows what went out that day. */
@@ -44,6 +49,7 @@ export function TxList({ items, onOpen, selected, onToggle, showAccount = true, 
                   {t.kind === 'transfer' ? `${t.account_name} → ${t.to_account_name}` : [t.splits?.length ? `✂ ${t.splits.map(p => p.category_name || 'Uncategorised').join(' + ')}` : t.category_name || 'Uncategorised', showAccount ? t.account_name : '', t.payee && t.payee !== t.description ? t.payee : '', t.time].filter(Boolean).join(' · ')}
                   {t.tags.length > 0 && <> · {t.tags.map(x => <span key={x} className="badge tag">{x}</span>)}</>}
                 </span>
+                {!!t.items?.length && <span className="items" title={t.items.map(itemLabel).join(', ')}>{t.items.map(itemLabel).join(' · ')}{(t.item_count || 0) > t.items.length && ` · +${(t.item_count || 0) - t.items.length} more`}</span>}
               </span>
               {t.balance_after != null
                 ? <span className="tx-end"><TxAmount t={t} perspective={perspective} /><span className="bal-after" title="Balance after this transaction">{fmtMoney(t.balance_after, accCur(t), decimalsOf(accCur(t), currencies))}</span></span>

@@ -183,7 +183,18 @@ type Transaction struct {
 	ReceiptID       *int64       `json:"receipt_id"` // booked from (or linked to) a scanned fiscal receipt
 	ReceiptAI       bool         `json:"receipt_ai"` // its only receipt is items the AI guessed from the description
 	Splits          []Split      `json:"splits"`
+	Items           []TxItem     `json:"items,omitempty"`         // lines of its receipt, biggest first (lists cap them)
+	ItemCount       int          `json:"item_count,omitempty"`    // all lines, also those left out of Items
 	BalanceAfter    *int64       `json:"balance_after,omitempty"` // account balance after it (single-account lists)
+}
+
+// TxItem is one receipt line shown with its transaction.
+type TxItem struct {
+	Name      string  `json:"name"`
+	Quantity  float64 `json:"quantity"`
+	Unit      string  `json:"unit,omitempty"`
+	Total     int64   `json:"total"`
+	GroupIcon string  `json:"group_icon,omitempty"`
 }
 
 // Split is one part of a split transaction.

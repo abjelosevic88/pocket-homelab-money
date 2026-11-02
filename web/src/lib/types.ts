@@ -46,6 +46,10 @@ export interface Transaction {
   receipt_id?: number | null
   /** its only receipt is items the AI guessed from the description */
   receipt_ai?: boolean
+  /** lines of its receipt, biggest first (lists carry only the first few) */
+  items?: TxItem[]
+  /** all lines, also those left out of items */
+  item_count?: number
 }
 export interface Split { id: number; category_id: number | null; amount: number; foreign_amount: number; amount_home: number; note: string; category_name: string; category_icon: string }
 export interface TxTotals { count: number; income: number; expense: number; transfers: number; net: number }
@@ -143,6 +147,8 @@ export interface AuditEntry {
 }
 export interface AuditActor { key: string; user_id: number | null; name: string }
 export interface AuditPage { items: AuditEntry[]; next_before: number | null; actors: AuditActor[] }
+
+export interface TxItem { name: string; quantity: number; unit?: string; total: number; group_icon?: string }
 
 // ---- fiscal receipts ----
 export interface ReceiptProvider { id: string; country: string; name: string; currency: string; items: boolean; note?: string }

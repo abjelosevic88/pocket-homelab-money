@@ -91,6 +91,31 @@ func ProductName(name string) string {
 	return titleIfShouting(n)
 }
 
+var (
+	articleCode = regexp.MustCompile(`^\d{4,}\s+`)                                                    // "028396 "
+	packSize    = regexp.MustCompile(`(?i)(^|\s)\d+(?:[.,]\d+)?\s*(?:g|gr|kg|l|ml|cl|dl)\.?(?:\s|$)`) // "450 g", "0,1L"
+)
+
+// ShortItemName is the item as a list shows it: no article code, unit
+// suffixes or pack size. "028396 VINDIJA PUREA DE LUX UNKA 1 kg/KG/KG" → "Vindija Purea De Lux Unka".
+func ShortItemName(name string) string {
+	n := Latinize(name)
+	for {
+		m := unitSuffix.ReplaceAllString(taxSuffix.ReplaceAllString(n, ""), "")
+		if m == n {
+			break
+		}
+		n = m
+	}
+	n = articleCode.ReplaceAllString(strings.TrimSpace(n), "")
+	n = packSize.ReplaceAllString(n, " ")
+	n = strings.TrimSpace(spaces.ReplaceAllString(n, " "))
+	if n == "" {
+		return ProductName(name)
+	}
+	return titleIfShouting(n)
+}
+
 // MerchantName is a short payee for a shop: `"TROPIC MALOPRODAJA" d.o.o. Banja Luka` → "Tropic Maloprodaja".
 func MerchantName(business string) string {
 	business = Latinize(business)
