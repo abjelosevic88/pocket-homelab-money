@@ -292,10 +292,11 @@ function Setup() {
         <ShopRules rules={st.shop_rules} isDefault={st.shop_rules_default} onSave={rules => save({ shop_rules: rules })} onReset={() => save({ reset_shop_rules: true })} />
       </Card>
       <GuessItems st={st} save={save} />
-      <Card title="Daily product check" sub="Every day, products without a group are placed: by the groups' keywords, next to similar products you already grouped (“Jabuka zlatni” joins “Jabuka BIO”), and — if you choose — by AI, which can also suggest new groups.">
+      <Card title="Daily product check" sub="Every day, products without a group are placed: by the groups' keywords, next to similar products you already grouped (“Jabuka zlatni” joins “Jabuka BIO”), and — if you choose — by AI, which also makes new groups for what fits none.">
         <SettingRow title="Check" help={st.group_job === 'ai' && !st.ai_ready ? <span className="bad">{st.ai_detail}</span> : st.group_job === 'ai' ? `Names of products it cannot place otherwise are sent once. ${st.ai_detail}.` : 'No AI: keywords and similar products only.'}>
           <Segmented size="sm" value={st.group_job} onChange={v => save({ group_job: v })} options={[{ value: 'off', label: 'Off' }, { value: 'keywords', label: 'Keywords' }, { value: 'ai', label: '+ AI', disabled: !st.ai_ready && st.group_job !== 'ai' }]} />
         </SettingRow>
+        {st.group_job === 'ai' && <SettingRow title="Make the groups it suggests" help="When a product fits none of your groups, the AI creates a new one (Bakery, Pet food…) and puts it there. Off: they wait in the report for you to click Create."><Switch checked={st.group_auto_create} onChange={v => save({ group_auto_create: v })} /></SettingRow>}
         <SettingRow title="Also on every scan" help={`A receipt's new products are grouped the moment it is scanned (keywords and similar products${st.group_job === 'ai' ? ', then AI' : ''}); the daily check catches what is left.`}><Switch checked={st.group_on_scan} onChange={v => save({ group_on_scan: v })} /></SettingRow>
         {st.group_job !== 'off' && <>
           <SettingRow title="At" help="Runs once a day from this hour, only when there are products without a group.">

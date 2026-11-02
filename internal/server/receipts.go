@@ -1050,7 +1050,7 @@ func (s *Server) receiptSettingsOut(ctx context.Context) map[string]any {
 		"ai_items": rs.AIItems, "own_words": rs.OwnWords, "geocode": rs.Geocode, "shop_rules": rules, "shop_rules_default": defaults,
 		"ai_ready": client != nil, "ai_detail": detail, "unsorted_products": len(unsorted),
 		"group_job": rs.GroupJob, "group_job_hour": rs.GroupJobHour, "group_job_notify": rs.GroupJobNotify, "group_on_scan": rs.GroupOnScan, "ai_review": rs.AIReview,
-		"guess_items": rs.GuessItems, "guess_pending": s.guessPending(ctx, 30), "guess_last": s.lastGuessRun(ctx)}
+		"guess_items": rs.GuessItems, "group_auto_create": rs.AutoGroups, "guess_pending": s.guessPending(ctx, 30), "guess_last": s.lastGuessRun(ctx)}
 }
 
 func (s *Server) handleGetReceiptSettings(w http.ResponseWriter, r *http.Request) {
@@ -1081,6 +1081,7 @@ func (s *Server) handlePutReceiptSettings(w http.ResponseWriter, r *http.Request
 	keep("group_on_scan", &in.GroupOnScan, cur.GroupOnScan)
 	keep("ai_review", &in.AIReview, cur.AIReview)
 	keep("guess_items", &in.GuessItems, cur.GuessItems)
+	keep("group_auto_create", &in.AutoGroups, cur.AutoGroups)
 	if !keys["group_job"] {
 		in.GroupJob = cur.GroupJob
 	} else if in.GroupJob != "off" && in.GroupJob != "keywords" && in.GroupJob != "ai" {

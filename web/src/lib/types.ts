@@ -184,7 +184,7 @@ export interface ReceiptSettings {
   ai_items: boolean; own_words: boolean; geocode: boolean; shop_rules: ShopRule[]; shop_rules_default: boolean
   ai_ready: boolean; ai_detail: string; unsorted_products: number
   group_job: 'off' | 'keywords' | 'ai'; group_job_hour: number; group_job_notify: boolean; group_on_scan: boolean; ai_review: boolean
-  guess_items: boolean; guess_pending: number
+  group_auto_create: boolean; guess_items: boolean; guess_pending: number
   guess_last: { trigger: string; start: string; end: string; checked: number; itemized: number; none: number; failed: number; error?: string } | null
 }
 export interface ItemStats {
@@ -197,11 +197,11 @@ export interface Purchase {
   unit_price: number; total: number; currency: string; home: number; merchant_id: number | null; merchant: string
 }
 export interface CheckMove { product_id: number; product: string; group_id: number; group: string; icon: string; how: 'keywords' | 'similar' | 'ai' }
-export interface CheckSuggestion { name: string; icon: string; keywords: string; products: string[]; product_ids: number[] }
+export interface CheckSuggestion { name: string; icon: string; keywords: string; products: string[]; product_ids: number[]; group_id?: number }
 export interface ProductCheckRun {
   id: number; trigger: 'daily' | 'manual' | 'scan'; mode: string; started_at: string; finished_at: string
   checked: number; by_keywords: number; by_similar: number; by_ai: number; categorized: number; still_ungrouped: number
-  report: { moves: CheckMove[]; suggestions: CheckSuggestion[]; left: string[]; ai_note?: string }; error: string
+  report: { moves: CheckMove[]; suggestions: CheckSuggestion[]; created?: CheckSuggestion[]; left: string[]; ai_note?: string }; error: string
 }
 
 export interface DayFindingTx {

@@ -167,9 +167,10 @@ type ReceiptSettings struct {
 	GroupJob       string     `json:"group_job"`  // daily product check: off | keywords | ai
 	GroupJobHour   int        `json:"group_job_hour"`
 	GroupJobNotify bool       `json:"group_job_notify"`
-	GroupOnScan    bool       `json:"group_on_scan"` // run the grouping passes on every scan
-	AIReview       bool       `json:"ai_review"`     // the AI picks every receipt's category and description
-	GuessItems     bool       `json:"guess_items"`   // the AI writes items for hand-typed expenses as they are booked
+	GroupOnScan    bool       `json:"group_on_scan"`     // run the grouping passes on every scan
+	AIReview       bool       `json:"ai_review"`         // the AI picks every receipt's category and description
+	GuessItems     bool       `json:"guess_items"`       // the AI writes items for hand-typed expenses as they are booked
+	AutoGroups     bool       `json:"group_auto_create"` // the groups the AI suggests are created, not just suggested
 }
 
 // ShopRule is "shops with one of these words in their name go to this category".
@@ -696,10 +697,10 @@ func (s *Store) UnreceiptedMatch(ctx context.Context, accountIDs []int64, date s
 
 // GetReceiptSettings returns the person's receipt preferences (defaults when unset).
 func (s *Store) GetReceiptSettings(ctx context.Context, userID int64) ReceiptSettings {
-	st := ReceiptSettings{AttachManual: true, OwnWords: true, Geocode: true, GroupJob: "keywords", GroupJobHour: 4, GroupJobNotify: true, GroupOnScan: true, AIReview: true, GuessItems: true}
+	st := ReceiptSettings{AttachManual: true, OwnWords: true, Geocode: true, GroupJob: "keywords", GroupJobHour: 4, GroupJobNotify: true, GroupOnScan: true, AIReview: true, GuessItems: true, AutoGroups: true}
 	var rules string
-	_ = s.DB.QueryRowContext(ctx, `SELECT card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify, group_on_scan, ai_review, guess_items FROM receipt_settings WHERE user_id = ?`, userID).
-		Scan(&st.CardAccountID, &st.CashAccountID, &st.SplitItems, &st.AttachManual, &st.AIItems, &st.OwnWords, &st.Geocode, &rules, &st.GroupJob, &st.GroupJobHour, &st.GroupJobNotify, &st.GroupOnScan, &st.AIReview, &st.GuessItems)
+	_ = s.DB.QueryRowContext(ctx, `SELECT card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify, group_on_scan, ai_review, guess_items, group_auto_create FROM receipt_settings WHERE user_id = ?`, userID).
+		Scan(&st.CardAccountID, &st.CashAccountID, &st.SplitItems, &st.AttachManual, &st.AIItems, &st.OwnWords, &st.Geocode, &rules, &st.GroupJob, &st.GroupJobHour, &st.GroupJobNotify, &st.GroupOnScan, &st.AIReview, &st.GuessItems, &st.AutoGroups)
 	if rules != "" {
 		_ = json.Unmarshal([]byte(rules), &st.ShopRules)
 	}
@@ -713,13 +714,13 @@ func (s *Store) SaveReceiptSettings(ctx context.Context, userID int64, st Receip
 		b, _ := json.Marshal(st.ShopRules)
 		rules = string(b)
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO receipt_settings (user_id, card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify, group_on_scan, ai_review, guess_items) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO receipt_settings (user_id, card_account_id, cash_account_id, split_items, attach_manual, ai_items, own_words, geocode, shop_rules, group_job, group_job_hour, group_job_notify, group_on_scan, ai_review, guess_items, group_auto_create) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT (user_id) DO UPDATE SET card_account_id = excluded.card_account_id, cash_account_id = excluded.cash_account_id,
 		split_items = excluded.split_items, attach_manual = excluded.attach_manual, ai_items = excluded.ai_items, own_words = excluded.own_words,
 		geocode = excluded.geocode, shop_rules = excluded.shop_rules, group_job = excluded.group_job, group_job_hour = excluded.group_job_hour, group_job_notify = excluded.group_job_notify, group_on_scan = excluded.group_on_scan, ai_review = excluded.ai_review,
-		guess_items = excluded.guess_items`,
+		guess_items = excluded.guess_items, group_auto_create = excluded.group_auto_create`,
 		userID, nullI(st.CardAccountID), nullI(st.CashAccountID), boolInt(st.SplitItems), boolInt(st.AttachManual), boolInt(st.AIItems), boolInt(st.OwnWords), boolInt(st.Geocode), rules,
-		st.GroupJob, st.GroupJobHour, boolInt(st.GroupJobNotify), boolInt(st.GroupOnScan), boolInt(st.AIReview), boolInt(st.GuessItems))
+		st.GroupJob, st.GroupJobHour, boolInt(st.GroupJobNotify), boolInt(st.GroupOnScan), boolInt(st.AIReview), boolInt(st.GuessItems), boolInt(st.AutoGroups))
 	return err
 }
 

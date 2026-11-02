@@ -75,21 +75,23 @@ func TestProductCheck(t *testing.T) {
 		t.Fatalf("keywords run %+v, %d AI calls", run, calls.Load())
 	}
 
-	// with AI: coffee placed, a cleaning group suggested
+	// with AI: coffee placed, a Cleaning group made for the detergent
 	c.do("PUT", "/api/v1/receipts/settings", map[string]any{"group_job": "ai", "group_job_hour": 3}, nil)
 	c.do("POST", "/api/v1/products/check", nil, &run)
 	var rep checkReport
 	_ = json.Unmarshal(run.Report, &rep)
-	if run.ByAI != 1 || len(rep.Suggestions) != 1 || rep.Suggestions[0].Name != "Cleaning" || run.StillUngrouped != 1 {
+	if run.ByAI != 2 || len(rep.Suggestions) != 0 || len(rep.Created) != 1 || rep.Created[0].Name != "Cleaning" || rep.Created[0].GroupID == 0 || run.StillUngrouped != 0 {
 		t.Fatalf("ai run %+v %+v", run, rep)
 	}
+	// creating a suggestion by hand finds the group of that name instead of a twin
 	var created struct {
-		Placed int `json:"placed"`
+		Group  store.ProductGroup `json:"group"`
+		Placed int                `json:"placed"`
 	}
-	sg := rep.Suggestions[0]
-	c.do("POST", "/api/v1/products/check/suggestion", map[string]any{"name": sg.Name, "icon": sg.Icon, "keywords": sg.Keywords, "product_ids": sg.ProductIDs}, &created)
-	if created.Placed != 1 {
-		t.Fatalf("suggestion placed %d", created.Placed)
+	sg := rep.Created[0]
+	c.do("POST", "/api/v1/products/check/suggestion", map[string]any{"name": "cleaning", "icon": sg.Icon, "keywords": sg.Keywords, "product_ids": sg.ProductIDs}, &created)
+	if created.Group.ID != sg.GroupID || created.Placed != 0 {
+		t.Fatalf("suggestion made a twin: %+v", created)
 	}
 	// asked once: a second run does not ask the AI again
 	before := calls.Load()

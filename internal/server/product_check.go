@@ -24,7 +24,8 @@ import (
 //     Fruit);
 //  3. AI (when chosen): the rest are sent once — names only, with the
 //     groups, their keywords and example products — and the AI places
-//     them or suggests new groups, which the person creates with a click.
+//     them or suggests new groups, which are created right away (or, with
+//     that switched off, wait in the report for a click).
 // With AI sorting of categories switched on, products without a category
 // are sorted too. Every run leaves a report and, if wanted, a notification.
 
@@ -43,11 +44,13 @@ type checkSuggestion struct {
 	Keywords   string   `json:"keywords"`
 	Products   []string `json:"products"`
 	ProductIDs []int64  `json:"product_ids"`
+	GroupID    int64    `json:"group_id,omitempty"` // set once it was created
 }
 
 type checkReport struct {
 	Moves       []checkMove       `json:"moves"`
 	Suggestions []checkSuggestion `json:"suggestions"`
+	Created     []checkSuggestion `json:"created,omitempty"`
 	Left        []string          `json:"left"`
 	AINote      string            `json:"ai_note,omitempty"`
 }
@@ -185,7 +188,51 @@ func (s *Server) runProductCheckMode(ctx context.Context, trigger string, only [
 					}
 				}
 			}
-			rep.Suggestions = append(rep.Suggestions, sugg...)
+			if rs.AutoGroups {
+				for _, sg := range sugg {
+					g, placedIDs, err := s.createSuggestedGroup(ctx, sg)
+					if err != nil {
+						s.log.Warn("product check: create group", "group", sg.Name, "err", err)
+						rep.Suggestions = append(rep.Suggestions, sg)
+						continue
+					}
+					byID[g.ID] = *g
+					sg.GroupID = g.ID
+					rep.Created = append(rep.Created, sg)
+					for _, id := range placedIDs {
+						for _, p := range ask {
+							if p.ID == id {
+								move(p, g.ID, "ai")
+								run.ByAI++
+								done[id] = true
+							}
+						}
+					}
+				}
+				if len(rep.Created) > 0 {
+					// the new groups' keywords catch the rest ("Krofna" joins the new Bakery)
+					if _, err := s.store.RegroupProducts(ctx, uid); err == nil {
+						fresh, _ := s.store.ListGroups(ctx, uid)
+						nowUngrouped, _ := s.store.UngroupedProducts(ctx, uid)
+						still := map[int64]bool{}
+						for _, p := range nowUngrouped {
+							still[p.ID] = true
+						}
+						for _, p := range left {
+							if !done[p.ID] && !still[p.ID] {
+								if gid := store.GroupFor(p.Key, fresh); gid != nil {
+									byID[*gid] = groupByID(fresh, *gid)
+									move(p, *gid, "keywords")
+									run.ByKeywords++
+								}
+								done[p.ID] = true
+							}
+						}
+					}
+				}
+			} else {
+				rep.Suggestions = append(rep.Suggestions, sugg...)
+			}
 			var rest []store.UngroupedProduct
 			for _, p := range left {
 				if !done[p.ID] {
@@ -211,12 +258,12 @@ func (s *Server) runProductCheckMode(ctx context.Context, trigger string, only [
 	b, _ := json.Marshal(rep)
 	run.Report = b
 	// a scan leaves a report only when it placed or suggested something
-	if trigger != "scan" || len(rep.Moves) > 0 || len(rep.Suggestions) > 0 {
+	if trigger != "scan" || len(rep.Moves) > 0 || len(rep.Suggestions) > 0 || len(rep.Created) > 0 {
 		if err := s.store.SaveProductCheckRun(ctx, uid, run); err != nil {
 			return nil, err
 		}
 	}
-	if trigger == "daily" && rs.GroupJobNotify && (len(rep.Moves) > 0 || len(rep.Suggestions) > 0) { // a run by hand shows its report on screen
+	if trigger == "daily" && rs.GroupJobNotify && (len(rep.Moves) > 0 || len(rep.Suggestions) > 0 || len(rep.Created) > 0) { // a run by hand shows its report on screen
 		s.notifyProductCheck(ctx, run, rep)
 	}
 	return run, nil
@@ -328,7 +375,7 @@ func tidyKeywords(list string) string {
 
 const groupPrompt = `You sort products from shop receipts into a person's product groups ("Milk", "Coffee"…). Receipts are from Bosnia and Herzegovina, Serbia, Montenegro or Croatia; names are short and abbreviated ("VODA PR 0,5L" is bottled water, "KESA" a shopping bag).
 
-Put a product in a group only when it clearly belongs there, judging by the group's name, keywords and example products. For products that fit no group, you may suggest a few new groups — only when at least one product needs it — with a short English name, one emoji and comma-separated keywords in the receipt's language that would match such product names.
+Put a product in a group only when it clearly belongs there, judging by the group's name, keywords and example products. For products that fit no group, suggest new groups — only when at least one product needs it — with a short English name, one emoji and comma-separated keywords in the receipt's language that would match such product names. The groups are created as you name them, so make them broad everyday kinds ("Bakery", "Deli meats", "Pet food"), never one per brand or product, and never a near-copy of a group that already exists.
 
 Answer only JSON: {"items":[{"n":<product number>,"group_id":<id or null>}],"new_groups":[{"name":"…","icon":"…","keywords":"…","products":[<product numbers>]}]}.`
 
@@ -340,6 +387,13 @@ func (s *Server) notifyProductCheck(ctx context.Context, run *store.ProductCheck
 	parts := []string{}
 	if n := run.ByKeywords + run.BySimilar + run.ByAI; n > 0 {
 		parts = append(parts, fmt.Sprintf("%d grouped (%d keywords, %d similar, %d AI)", n, run.ByKeywords, run.BySimilar, run.ByAI))
+	}
+	if len(rep.Created) > 0 {
+		names := []string{}
+		for _, sg := range rep.Created {
+			names = append(names, strings.TrimSpace(sg.Icon+" "+sg.Name))
+		}
+		parts = append(parts, fmt.Sprintf("%d new groups: %s", len(rep.Created), strings.Join(names, ", ")))
 	}
 	if len(rep.Suggestions) > 0 {
 		names := []string{}
@@ -401,34 +455,65 @@ func (s *Server) handleRunProductCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, run)
 }
 
+// createSuggestedGroup makes a group the check suggested (or finds the
+// person's group of that name) and puts its products without a group in it.
+func (s *Server) createSuggestedGroup(ctx context.Context, sg checkSuggestion) (*store.ProductGroup, []int64, error) {
+	uid := actorID(ctx)
+	name := strings.TrimSpace(sg.Name)
+	if name == "" {
+		return nil, nil, fmt.Errorf("a group needs a name")
+	}
+	var g *store.ProductGroup
+	groups, err := s.store.ListGroups(ctx, uid)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range groups {
+		if fiscal.Fold(groups[i].Name) == fiscal.Fold(name) {
+			g = &groups[i]
+			break
+		}
+	}
+	if g == nil {
+		g = &store.ProductGroup{UserID: uid, Name: name, Icon: strings.TrimSpace(sg.Icon), Keywords: strings.Join(fiscal.Keywords(sg.Keywords), ", ")}
+		if err := s.store.CreateGroup(ctx, g); err != nil {
+			return nil, nil, err
+		}
+	}
+	var placed []int64
+	for _, id := range sg.ProductIDs {
+		if p, err := s.store.GetProduct(ctx, uid, id); err == nil && p.GroupID == nil {
+			if s.store.SetProductGroup(ctx, uid, id, g.ID, "ai") == nil {
+				placed = append(placed, id)
+			}
+		}
+	}
+	return g, placed, nil
+}
+
+func groupByID(groups []store.ProductGroup, id int64) store.ProductGroup {
+	for _, g := range groups {
+		if g.ID == id {
+			return g
+		}
+	}
+	return store.ProductGroup{ID: id}
+}
+
 // handleCreateSuggestedGroup creates a group the check suggested and puts
 // its products in it.
 func (s *Server) handleCreateSuggestedGroup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	uid := actorID(ctx)
-	var in struct {
-		Name       string  `json:"name"`
-		Icon       string  `json:"icon"`
-		Keywords   string  `json:"keywords"`
-		ProductIDs []int64 `json:"product_ids"`
-	}
+	var in checkSuggestion
 	if err := decode(r, &in); err != nil || strings.TrimSpace(in.Name) == "" {
 		writeErr(w, http.StatusBadRequest, "a group needs a name")
 		return
 	}
-	g := &store.ProductGroup{UserID: uid, Name: strings.TrimSpace(in.Name), Icon: strings.TrimSpace(in.Icon), Keywords: strings.Join(fiscal.Keywords(in.Keywords), ", ")}
-	if err := s.store.CreateGroup(ctx, g); err != nil {
+	g, placed, err := s.createSuggestedGroup(ctx, in)
+	if err != nil {
 		s.fail(w, err, "create group")
 		return
 	}
-	n := 0
-	for _, id := range in.ProductIDs {
-		if p, err := s.store.GetProduct(ctx, uid, id); err == nil && p.GroupID == nil {
-			if s.store.SetProductGroup(ctx, uid, id, g.ID, "ai") == nil {
-				n++
-			}
-		}
-	}
-	moved, _ := s.store.RegroupProducts(ctx, uid)
-	writeJSON(w, http.StatusCreated, map[string]any{"group": g, "placed": n, "moved": moved})
+	moved, _ := s.store.RegroupProducts(ctx, actorID(ctx))
+	writeJSON(w, http.StatusCreated, map[string]any{"group": g, "placed": len(placed), "moved": moved})
 }

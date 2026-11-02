@@ -394,11 +394,23 @@ function CheckReport({ onClose, onChanged, onProduct }: { onClose: () => void; o
           <div className="stats">
             <div className="stat"><div className="n">{shown.checked}</div><div className="l">without a group</div></div>
             <div className="stat"><div className="n">{shown.by_keywords + shown.by_similar + shown.by_ai}</div><div className="l">placed · {shown.by_keywords} keywords, {shown.by_similar} similar, {shown.by_ai} AI</div></div>
-            <div className="stat"><div className="n">{shown.report.suggestions.length}</div><div className="l">new groups suggested</div></div>
+            <div className="stat"><div className="n">{(shown.report.created?.length || 0) + shown.report.suggestions.length}</div><div className="l">{shown.report.created?.length ? 'new groups made' : 'new groups suggested'}</div></div>
             <div className="stat"><div className="n">{shown.still_ungrouped}</div><div className="l">still without a group</div></div>
           </div>
           {shown.report.ai_note && <div className="rc-note small" style={{ marginBottom: 12 }}>{shown.report.ai_note}</div>}
           {shown.categorized > 0 && <div className="muted small" style={{ marginBottom: 12 }}>The AI also gave {shown.categorized} products a category.</div>}
+          {(shown.report.created?.length || 0) > 0 && (
+            <Card title="New groups" sub="The AI made these for products that fit none of yours. Rename, merge or delete them on the Products page.">
+              <div style={{ display: 'grid', gap: 10 }}>
+                {shown.report.created!.map(sg => (
+                  <div key={sg.name} className="check-sugg">
+                    <div><b>{sg.icon} {sg.name}</b> <span className="muted small">· {sg.keywords.split(',').map(k => k.trim()).filter(Boolean).join(', ')}</span><div className="small">{sg.products.join(', ')}</div></div>
+                    <span className="badge ok">created</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
           {shown.report.suggestions.length > 0 && (
             <Card title="Suggested groups" sub="Create one and its products go in; its keywords catch the next ones.">
               <div style={{ display: 'grid', gap: 10 }}>
