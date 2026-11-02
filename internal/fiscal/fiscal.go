@@ -103,6 +103,28 @@ var (
 	ErrNotYet = errors.New("the tax office does not have this receipt yet")
 )
 
+// FetchWaiting is Fetch for a receipt just printed (issued: what its link
+// says): while the tax office does not have it yet it asks again every few
+// seconds, as long as ctx leaves time for one more answer. Shops report a
+// receipt within about a minute, so someone scanning at the till would
+// otherwise always get "not yet" first.
+func FetchWaiting(ctx context.Context, p Provider, hc *http.Client, u *url.URL, issued time.Time) (*Receipt, []byte, error) {
+	for {
+		rec, raw, err := p.Fetch(ctx, hc, u)
+		if !errors.Is(err, ErrNotYet) || issued.IsZero() || time.Since(issued) > 5*time.Minute {
+			return rec, raw, err
+		}
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < 5*time.Second {
+			return rec, raw, err
+		}
+		select {
+		case <-ctx.Done():
+			return rec, raw, err
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
 // Info describes a provider for the UI.
 type Info struct {
 	ID       string `json:"id"`

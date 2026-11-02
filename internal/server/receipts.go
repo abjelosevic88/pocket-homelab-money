@@ -92,8 +92,12 @@ func (s *Server) processScan(ctx context.Context, scan *store.ReceiptScan, p fis
 		return s.alreadyHave(ctx, scan, have)
 	}
 	scan.Attempts++
+	var issued time.Time
+	if decoded != nil {
+		issued = decoded.IssuedAt
+	}
 	fctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	rec, raw, ferr := p.Fetch(fctx, s.receiptHTTP(), u)
+	rec, raw, ferr := fiscal.FetchWaiting(fctx, p, s.receiptHTTP(), u, issued)
 	cancel()
 	if len(raw) > 0 {
 		scan.Raw = string(raw)

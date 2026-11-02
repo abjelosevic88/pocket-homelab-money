@@ -88,6 +88,10 @@ func (p sufProvider) Fetch(ctx context.Context, hc *http.Client, u *url.URL) (*R
 		return nil, nil, err
 	}
 	switch {
+	case res.StatusCode == http.StatusNotFound && p.recent(u):
+		// "Invoice could not be verified": a shop's fiscal device sends a receipt
+		// to the tax office some 30-60 s after printing it, later when offline
+		return nil, raw, ErrNotYet
 	case res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusNotFound:
 		return nil, raw, ErrInvalid
 	case res.StatusCode != http.StatusOK:
@@ -95,6 +99,13 @@ func (p sufProvider) Fetch(ctx context.Context, hc *http.Client, u *url.URL) (*R
 	}
 	rec, err := p.Parse(u, raw)
 	return rec, raw, err
+}
+
+// recent: the link says the receipt was printed in the last two days, so the
+// tax office may simply not have it yet.
+func (p sufProvider) recent(u *url.URL) bool {
+	r, err := p.Decode(u)
+	return err == nil && r != nil && time.Since(r.IssuedAt) < 48*time.Hour
 }
 
 type sufResponse struct {

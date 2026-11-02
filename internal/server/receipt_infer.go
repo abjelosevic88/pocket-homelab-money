@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -734,8 +735,13 @@ func (s *Server) handlePeekReceipt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
-	fctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	rec, _, ferr := p.Fetch(fctx, s.receiptHTTP(), u)
+	var issued time.Time
+	if decoded != nil {
+		issued = decoded.IssuedAt
+	}
+	// the app waits 30 s for this answer
+	fctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	rec, _, ferr := fiscal.FetchWaiting(fctx, p, s.receiptHTTP(), u, issued)
 	cancel()
 	if ferr == nil && existing(rec.Key) {
 		writeJSON(w, http.StatusOK, out)
@@ -744,6 +750,9 @@ func (s *Server) handlePeekReceipt(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case ferr == nil:
 		out.Complete = true
+	case decoded != nil && decoded.Total > 0 && errors.Is(ferr, fiscal.ErrNotYet):
+		rec = decoded
+		out.Message = "The tax office does not have this receipt yet; shops send it within a minute or so. Check again in a moment, or book now with the total and time from the QR code and the shop and items follow later."
 	case decoded != nil && decoded.Total > 0:
 		rec = decoded
 		out.Message = "The tax office did not answer (" + ferr.Error() + "). Booking now takes the total and time from the QR code; the shop and items follow later."
