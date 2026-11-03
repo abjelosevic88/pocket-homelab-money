@@ -30,14 +30,15 @@ interface Peek {
   items: { name: string; quantity: number; unit: string; total: number; category?: string }[]
   account_name: string; category_id: number | null; category: string; reason: string; description: string
   existing?: { receipt_id: number; transaction_id: number | null; description: string; date: string; scanned_at: string }
+  not_yet?: boolean; waiting_since?: string
 }
 
 type Step = 'idle' | 'scanning' | 'reading' | 'preview' | 'booking' | 'done'
 
-const STATUS_ICON: Record<ScanResult['status'], string> = { booked: '✅', linked: '🔗', duplicate: '♻️', partial: '⏳', pending: '⏳', invalid: '⛔', skipped: '➖', unsupported: '❓', failed: '⚠️' }
+const STATUS_ICON: Record<ScanResult['status'], string> = { booked: '✅', linked: '🔗', duplicate: '♻️', partial: '⏳', pending: '⏳', waiting: '⏳', missing: '⏳', rejected: '🗑️', invalid: '⛔', skipped: '➖', unsupported: '❓', failed: '⚠️' }
 const STATUS_TITLE: Record<ScanResult['status'], string> = {
   booked: 'Booked', linked: 'Linked to your transaction', duplicate: 'Already scanned', partial: 'Booked from the QR code',
-  pending: 'Waiting for the tax office', invalid: 'Not a valid receipt', skipped: 'Nothing to book', unsupported: 'Not a receipt link', failed: 'Something went wrong',
+  pending: 'Waiting for the tax office', waiting: 'Saved · waiting for the tax office', missing: 'Still not at the tax office', rejected: 'Rejected', invalid: 'Not a valid receipt', skipped: 'Nothing to book', unsupported: 'Not a receipt link', failed: 'Something went wrong',
 }
 const METHOD: Record<string, string> = { cash: '💵 cash', card: '💳 card', transfer: '🏦 transfer', voucher: '🎟 voucher', check: 'cheque', other: '' }
 
@@ -78,11 +79,12 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
     } catch (e) { setError(errMsg(e)); setStep('idle') }
   }
 
-  const book = async () => {
+  /** mode: later saves a receipt the tax office does not have yet, now books it from the QR code. */
+  const book = async (mode?: 'later' | 'now') => {
     if (!found) return
     setStep('booking'); setError('')
     try {
-      const r = await api.post<ScanResult>(`${V1}/receipts/scan`, { url: found.url, source: found.source, account_id: account ? Number(account) : 0 })
+      const r = await api.post<ScanResult>(`${V1}/receipts/scan`, { url: found.url, source: found.source, account_id: account ? Number(account) : 0, mode })
       setResult(r); setStep('done')
       if (r.transaction) { reloadAccounts().catch(() => {}); onBooked?.(r) }
     } catch (e) {
@@ -198,9 +200,9 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
             ) : (
               <>
                 <div className="scan-result-head">
-                  <span className="big">{p.existing ? '♻️' : '🧾'}</span>
+                  <span className="big">{p.existing ? '♻️' : p.not_yet ? '⏳' : '🧾'}</span>
                   <div>
-                    <b>{p.existing ? 'You scanned this one already' : 'Receipt recognised'}</b>
+                    <b>{p.existing ? 'You scanned this one already' : p.not_yet ? 'Not at the tax office yet' : 'Receipt recognised'}</b>
                     <div className="muted small">{p.existing ? `On ${fmtDate(p.existing.scanned_at)}${p.existing.description ? `, booked as “${p.existing.description}”` : ''}.` : p.message || 'Check it and book it.'}</div>
                   </div>
                 </div>
@@ -228,7 +230,11 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
             )}
             {error && <div className="bad small">{error}</div>}
             <div className="row wrap" style={{ gap: 8 }}>
-              {p.supported && !p.existing && <button type="button" className="btn primary" disabled={step === 'booking'} onClick={book}>{step === 'booking' ? <><Spinner /> Booking…</> : <><Icon name="check" size={15} />Book it</>}</button>}
+              {p.supported && !p.existing && !p.not_yet && <button type="button" className="btn primary" disabled={step === 'booking'} onClick={() => book()}>{step === 'booking' ? <><Spinner /> Booking…</> : <><Icon name="check" size={15} />Book it</>}</button>}
+              {p.supported && !p.existing && p.not_yet && <>
+                <button type="button" className="btn primary" disabled={step === 'booking'} onClick={() => book('later')}>{step === 'booking' ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} />{p.waiting_since ? 'OK, keep waiting' : 'OK, book it when it’s there'}</>}</button>
+                <button type="button" className="btn" disabled={step === 'booking'} onClick={() => book('now')} title="Books the total and time from the QR code now; shop and items follow when the tax office has them">Book now from the QR</button>
+              </>}
               {p.existing?.transaction_id && <Link className="btn primary" to={`/transactions/${p.existing.transaction_id}`} onClick={close}>Open it</Link>}
               <button type="button" className="btn" disabled={step === 'booking'} onClick={start}><Icon name="camera" size={15} />Scan again</button>
               <span className="spacer" />
@@ -250,6 +256,7 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
             <div className="row wrap" style={{ gap: 8 }}>
               <button type="button" className="btn primary" onClick={start}><Icon name="camera" size={15} />Scan the next one</button>
               {t && <Link className="btn" to={`/transactions/${t.id}`} onClick={close}>Open the transaction</Link>}
+              {result.status === 'waiting' && <Link className="btn" to="/receipts" onClick={close}>See waiting receipts</Link>}
               <span className="spacer" />
               <button type="button" className="btn ghost" onClick={close}>Done</button>
             </div>

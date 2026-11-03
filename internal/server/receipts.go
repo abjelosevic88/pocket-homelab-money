@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-money/internal/fiscal"
+	"github.com/abjelosevic88/pocket-homelab-money/internal/notify"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
 
@@ -22,10 +23,14 @@ import (
 // hand-typed one it duplicates). When the tax office cannot be reached, what
 // the QR code itself carries (total, time, receipt number) is booked right
 // away and the scan is retried in the background to fill in shop and items.
+// A receipt the tax office does not have yet (shops report late, sometimes
+// hours late) is not booked at all: the scan waits, is asked about again
+// through the day and booked once it is there, or the person books it from
+// the QR code or rejects it.
 
 // scanResult is what a scan became.
 type scanResult struct {
-	Status      string             `json:"status"` // booked | linked | duplicate | partial | pending | invalid | skipped | unsupported | failed
+	Status      string             `json:"status"` // booked | linked | duplicate | partial | pending | waiting | missing | rejected | invalid | skipped | unsupported | failed
 	Message     string             `json:"message"`
 	Scan        *store.ReceiptScan `json:"scan"`
 	Receipt     *store.Receipt     `json:"receipt,omitempty"`
@@ -35,6 +40,7 @@ type scanResult struct {
 type scanOptions struct {
 	Source    string
 	AccountID int64
+	Mode      string // "" asks the tax office; later: it said "not yet" a moment ago, just wait; now: book from the QR even when it does not have it yet
 }
 
 // receiptTransport replaces the network in tests.
@@ -46,6 +52,10 @@ func (s *Server) receiptHTTP() *http.Client {
 
 // retry back-off after the nth failed attempt; give up after the last
 var scanBackoff = []time.Duration{10 * time.Minute, 30 * time.Minute, 2 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 24 * time.Hour, 24 * time.Hour}
+
+// when to ask again about a receipt the tax office does not have yet: often
+// during the first hours, then daily; missing after the last (about 3 days)
+var waitBackoff = []time.Duration{10 * time.Minute, 20 * time.Minute, 30 * time.Minute, time.Hour, time.Hour, 2 * time.Hour, 2 * time.Hour, 4 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 24 * time.Hour}
 
 func (s *Server) scanReceipt(ctx context.Context, text string, opt scanOptions) (*scanResult, error) {
 	uid := actorID(ctx)
@@ -66,14 +76,26 @@ func (s *Server) scanReceipt(ctx context.Context, text string, opt scanOptions) 
 	}
 	scan.Provider, scan.Country = p.ID(), p.Country()
 	scan.URL = u.String()
+	// scanned again while it waits for the tax office: that same scan, asked again
+	if d, err := p.Decode(u); err == nil && d != nil && d.Key != "" {
+		if open, err := s.store.OpenScanByKey(ctx, uid, p.ID(), d.Key); err == nil {
+			if opt.AccountID > 0 {
+				open.AccountID = &opt.AccountID
+			}
+			if opt.Mode == "" || opt.Mode == "later" {
+				open.Attempts-- // not one of the background tries
+			}
+			return s.processScan(ctx, open, p, opt.Mode)
+		}
+	}
 	if err := s.store.CreateScan(ctx, scan); err != nil {
 		return nil, err
 	}
-	return s.processScan(ctx, scan, p)
+	return s.processScan(ctx, scan, p, opt.Mode)
 }
 
-// processScan runs (or re-runs) a logged scan.
-func (s *Server) processScan(ctx context.Context, scan *store.ReceiptScan, p fiscal.Provider) (*scanResult, error) {
+// processScan runs (or re-runs) a logged scan. mode: see scanOptions.
+func (s *Server) processScan(ctx context.Context, scan *store.ReceiptScan, p fiscal.Provider, mode string) (*scanResult, error) {
 	_, u, err := fiscal.Find(scan.URL)
 	if err != nil {
 		return nil, err
@@ -96,11 +118,25 @@ func (s *Server) processScan(ctx context.Context, scan *store.ReceiptScan, p fis
 	if decoded != nil {
 		issued = decoded.IssuedAt
 	}
-	fctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	rec, raw, ferr := fiscal.FetchWaiting(fctx, p, s.receiptHTTP(), u, issued)
-	cancel()
-	if len(raw) > 0 {
-		scan.Raw = string(raw)
+	var rec *fiscal.Receipt
+	ferr := fiscal.ErrNotYet
+	if mode != "later" || have != nil || decoded == nil || decoded.Total <= 0 {
+		var raw []byte
+		fctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		rec, raw, ferr = fiscal.FetchWaiting(fctx, p, s.receiptHTTP(), u, issued)
+		cancel()
+		if len(raw) > 0 {
+			scan.Raw = string(raw)
+		}
+	}
+	// a waiting scan's receipt older than two days gets "invalid" for a 404: still not there
+	notYet := errors.Is(ferr, fiscal.ErrNotYet) || (errors.Is(ferr, fiscal.ErrInvalid) && waitingScan(scan))
+	if notYet && have == nil && mode != "now" && decoded != nil && decoded.Total > 0 {
+		return s.waitForReceipt(ctx, scan, decoded)
+	}
+	if notYet && waitingScan(scan) {
+		// booked from the QR code on request: shop and items are asked for as after an offline scan
+		ferr, scan.Attempts = fiscal.ErrNotYet, 1
 	}
 	switch {
 	case ferr == nil:
@@ -149,6 +185,42 @@ func (s *Server) processScan(ctx context.Context, scan *store.ReceiptScan, p fis
 		scan.Status = "pending"
 	}
 	return s.finishScan(ctx, scan, nil, nil)
+}
+
+// waitingScan: a scan the tax office did not have yet, nothing booked.
+func waitingScan(scan *store.ReceiptScan) bool {
+	return scan.Status == "waiting" || scan.Status == "missing"
+}
+
+// waitForReceipt keeps a scan of a receipt the tax office does not have yet,
+// booking nothing, and says when it is asked about again; after the last
+// try it is missing, and the person books it from the QR code or rejects it.
+func (s *Server) waitForReceipt(ctx context.Context, scan *store.ReceiptScan, decoded *fiscal.Receipt) (*scanResult, error) {
+	scan.ReceiptKey = decoded.Key
+	withQR(scan, decoded)
+	if scan.Attempts > len(waitBackoff) {
+		scan.Status, scan.NextTryAt = "missing", ""
+		scan.Message = "The tax office still does not have this receipt after " + strconv.Itoa(scan.Attempts) + " tries. Book it from the QR code, or reject it."
+		return s.finishScan(ctx, scan, nil, nil)
+	}
+	if scan.Attempts < 1 {
+		scan.Attempts = 1
+	}
+	next := time.Now().Add(waitBackoff[scan.Attempts-1])
+	scan.Status, scan.NextTryAt = "waiting", next.UTC().Format(time.RFC3339)
+	scan.Message = "Not at the tax office yet (shops often send receipts late). Pocket Money asks again at " + next.In(decoded.IssuedAt.Location()).Format("15:04") + " and books it once it is there."
+	return s.finishScan(ctx, scan, nil, nil)
+}
+
+// withQR fills what a scan with no stored receipt shows from its QR code.
+func withQR(scan *store.ReceiptScan, d *fiscal.Receipt) {
+	if d == nil || scan.ReceiptID != nil {
+		return
+	}
+	scan.Total, scan.Currency = d.Total, d.Currency
+	if !d.IssuedAt.IsZero() {
+		scan.IssuedAt = d.IssuedAt.Format(time.RFC3339)
+	}
 }
 
 func (s *Server) existingReceipt(ctx context.Context, uid int64, provider, key string) *store.Receipt {
@@ -747,12 +819,38 @@ func (s *Server) retryReceiptScans(ctx context.Context) {
 			continue
 		}
 		uctx := context.WithValue(ctx, userKey, u)
-		res, err := s.processScan(uctx, scan, p)
+		was := scan.Status
+		res, err := s.processScan(uctx, scan, p, "")
 		if err != nil {
 			s.log.Warn("receipt retry", "scan", scan.ID, "err", err)
 			continue
 		}
 		s.log.Info("receipt retry", "scan", scan.ID, "status", res.Status)
+		if was == "waiting" && res.Status != "waiting" {
+			s.notifyWaited(uctx, res)
+		}
+	}
+}
+
+// notifyWaited tells the person what became of a receipt that waited for
+// the tax office: booked once it got there, or still missing.
+func (s *Server) notifyWaited(ctx context.Context, res *scanResult) {
+	c := s.clients(ctx)
+	if !c.notify.Configured() {
+		return
+	}
+	base := strings.TrimRight(s.cfg.BaseURL, "/")
+	m := notify.Message{Title: "🧾 Receipt booked", Body: scanText(res), Priority: "info", Tags: []string{"receipt"}, Link: base + "/receipts"}
+	switch {
+	case res.Transaction != nil:
+		m.Link = base + "/transactions/" + strconv.FormatInt(res.Transaction.ID, 10)
+	case res.Status == "missing":
+		m.Title, m.Body = "🧾 Receipt still not at the tax office", scanText(res)+"\nBook it from the QR code or reject it."
+	case res.Status == "invalid" || res.Status == "failed":
+		m.Title = "🧾 Receipt not booked"
+	}
+	if err := c.notify.Send(ctx, m); err != nil {
+		s.log.Warn("receipt notify", "err", err)
 	}
 }
 
@@ -768,6 +866,7 @@ func (s *Server) handleScanReceipt(w http.ResponseWriter, r *http.Request) {
 		Text      string `json:"text"`
 		AccountID int64  `json:"account_id"`
 		Source    string `json:"source"`
+		Mode      string `json:"mode"` // later | now, for a receipt the tax office does not have yet
 	}
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		if err := decode(r, &in); err != nil {
@@ -776,7 +875,7 @@ func (s *Server) handleScanReceipt(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// a form, urlencoded or multipart (iPhone Shortcuts sends multipart)
-		in.URL, in.Source = r.FormValue("url"), r.FormValue("source")
+		in.URL, in.Source, in.Mode = r.FormValue("url"), r.FormValue("source"), r.FormValue("mode")
 		in.AccountID, _ = strconv.ParseInt(r.FormValue("account_id"), 10, 64)
 	}
 	if in.URL == "" {
@@ -789,15 +888,24 @@ func (s *Server) handleScanReceipt(w http.ResponseWriter, r *http.Request) {
 	if in.Source == "" {
 		in.Source = "api"
 	}
-	res, err := s.scanReceipt(r.Context(), in.URL, scanOptions{Source: in.Source, AccountID: in.AccountID})
+	if in.Mode != "later" && in.Mode != "now" {
+		in.Mode = ""
+	}
+	res, err := s.scanReceipt(r.Context(), in.URL, scanOptions{Source: in.Source, AccountID: in.AccountID, Mode: in.Mode})
 	if err != nil {
 		s.fail(w, err, "scan receipt")
 		return
 	}
+	writeScan(w, r, res)
+}
+
+func writeScan(w http.ResponseWriter, r *http.Request, res *scanResult) {
 	code := http.StatusOK
 	switch res.Status {
 	case "booked", "linked", "partial":
 		code = http.StatusCreated
+	case "waiting":
+		code = http.StatusAccepted
 	case "unsupported", "invalid":
 		code = http.StatusUnprocessableEntity
 	}
@@ -818,6 +926,8 @@ func scanText(res *scanResult) string {
 		if p := payeeFor(r); p != "" {
 			what = p + " · " + what
 		}
+	} else if sc := res.Scan; sc != nil && sc.Total > 0 {
+		what = majorString(sc.Total, sc.Currency)
 	}
 	switch res.Status {
 	case "booked":
@@ -834,6 +944,10 @@ func scanText(res *scanResult) string {
 		return "✓ " + what + " booked · shop and items follow when the tax office answers"
 	case "pending":
 		return "Saved · the tax office is not answering, Pocket Money will retry"
+	case "waiting":
+		return "✓ " + what + " saved · not at the tax office yet, booked once it is there"
+	case "missing":
+		return "Not at the tax office yet: " + what
 	}
 	return res.Message
 }
@@ -999,6 +1113,14 @@ func (s *Server) handleListScans(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err, "scans")
 		return
 	}
+	for i := range items {
+		if sc := &items[i]; sc.ReceiptID == nil && sc.Provider != "" {
+			if p, u, err := fiscal.Find(sc.URL); err == nil {
+				d, _ := p.Decode(u)
+				withQR(sc, d)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
@@ -1014,12 +1136,68 @@ func (s *Server) handleRetryScan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fiscal.ErrUnsupported.Error())
 		return
 	}
-	if scan.Status == "failed" || scan.Status == "invalid" {
+	switch scan.Status {
+	case "failed", "invalid":
 		scan.Attempts = 0
+	case "waiting":
+		scan.Attempts-- // asked by hand, not one of the background tries
+	case "rejected":
+		writeErr(w, http.StatusConflict, "you rejected this receipt")
+		return
 	}
-	res, err := s.processScan(ctx, scan, p)
+	res, err := s.processScan(ctx, scan, p, "")
 	if err != nil {
 		s.fail(w, err, "retry scan")
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// waitingScanFor is the person's scan from the URL that still waits for the
+// tax office; it answers the request itself when there is none.
+func (s *Server) waitingScanFor(w http.ResponseWriter, r *http.Request) (*store.ReceiptScan, fiscal.Provider) {
+	scan, err := s.store.GetScan(r.Context(), actorID(r.Context()), idParam(r, "id"))
+	if err != nil {
+		s.fail(w, err, "scan")
+		return nil, nil
+	}
+	if !waitingScan(scan) {
+		writeErr(w, http.StatusConflict, "this scan is not waiting for the tax office")
+		return nil, nil
+	}
+	p := fiscal.ByID(scan.Provider)
+	if p == nil {
+		writeErr(w, http.StatusBadRequest, fiscal.ErrUnsupported.Error())
+		return nil, nil
+	}
+	return scan, p
+}
+
+// handleBookWaitingScan books a waiting receipt from its QR code (total,
+// time); shop and items follow if the tax office ever has it.
+func (s *Server) handleBookWaitingScan(w http.ResponseWriter, r *http.Request) {
+	scan, p := s.waitingScanFor(w, r)
+	if scan == nil {
+		return
+	}
+	res, err := s.processScan(r.Context(), scan, p, "now")
+	if err != nil {
+		s.fail(w, err, "book scan")
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleRejectScan stops waiting for a receipt; nothing gets booked.
+func (s *Server) handleRejectScan(w http.ResponseWriter, r *http.Request) {
+	scan, _ := s.waitingScanFor(w, r)
+	if scan == nil {
+		return
+	}
+	scan.Status, scan.NextTryAt, scan.Message = "rejected", "", "Rejected by you: nothing booked."
+	res, err := s.finishScan(r.Context(), scan, nil, nil)
+	if err != nil {
+		s.fail(w, err, "reject scan")
 		return
 	}
 	writeJSON(w, http.StatusOK, res)

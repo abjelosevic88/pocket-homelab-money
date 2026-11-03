@@ -564,3 +564,15 @@ a.insight:hover { text-decoration: none; background: var(--accent-soft); }
   .review-tx { grid-template-columns: 40px 1fr auto; }
   .review-tx > :nth-child(3) { display: none; }
 }
+
+/* receipts the tax office does not have yet */
+.waiting-card { margin-bottom: 14px; }
+.waiting-row { grid-template-columns: auto minmax(0, 1fr) auto auto; cursor: default; }
+.waiting-row:hover { background: none; }
+.waiting-row .t { white-space: normal; flex-wrap: wrap; }
+.waiting-row .s { white-space: normal; }
+.waiting-list .waiting-row + .waiting-row { border-top: 1px solid var(--border); border-radius: 0; }
+@media (max-width: 767px) {
+  .waiting-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .waiting-row .waiting-actions { grid-column: 1 / -1; flex-wrap: wrap; }
+}

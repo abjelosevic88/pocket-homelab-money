@@ -4,7 +4,7 @@ import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, decimalsOf, fmtDate, fmtMoney } from '../lib/format'
 import type { Merchant, Receipt, ReceiptProvider, ReceiptScan, ReceiptSettings, ScanStatus, ShopRule } from '../lib/types'
-import { Card, CopyField, Empty, Field, Loading, MenuButton, Modal, PageHeader, Segmented, SettingRow, Switch, Tabs, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
+import { Card, CopyField, Empty, Field, Loading, MenuButton, Modal, PageHeader, Segmented, SettingRow, Spinner, Switch, Tabs, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
 import { AccountSelect, CategorySelect } from '../components/pickers'
 import { Select } from '../components/Select'
 import { ReceiptCard } from '../components/ReceiptCard'
@@ -43,6 +43,7 @@ function ReceiptList() {
   const { data, reload } = useAsync(() => api.get<{ items: Receipt[]; total: number }>(`${V1}/receipts?limit=200&q=${encodeURIComponent(dq)}`), [dq])
   return (
     <>
+      <Waiting onBooked={reload} />
       <div className="toolbar">
         <div className="search"><Icon name="search" size={15} /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Search shop, item (mlijeko, kafa…) or receipt number" /></div>
       </div>
@@ -100,7 +101,54 @@ function ReceiptModal({ id, onClose, onChanged }: { id: number; onClose: () => v
   )
 }
 
+/** Receipts the tax office did not have yet when scanned: nothing booked;
+ *  the server asks again through the day and books them once they are there. */
+function Waiting({ onBooked }: { onBooked: () => void }) {
+  const { currencies, reloadAccounts } = useApp()
+  const { toast } = useToast()
+  const [busy, setBusy] = useState(0)
+  const { data, reload } = useAsync(() => api.get<{ items: ReceiptScan[]; total: number }>(`${V1}/receipts/scans?status=waiting,missing&limit=100`), [])
+  if (!data || data.items.length === 0) return null
+  const act = async (s: ReceiptScan, what: 'retry' | 'book' | 'reject') => {
+    if (what === 'reject' && !confirm('Reject this receipt? Nothing gets booked and Pocket Money stops asking about it.')) return
+    setBusy(s.id)
+    try {
+      const r = await api.post<{ status: string; message: string }>(`${V1}/receipts/scans/${s.id}/${what}`)
+      toast(what === 'reject' ? 'Rejected' : r.status === 'waiting' ? 'Still not there, Pocket Money keeps asking' : r.message || r.status)
+      if (r.status !== 'waiting' && r.status !== 'missing') { onBooked(); reloadAccounts().catch(() => {}); window.dispatchEvent(new CustomEvent('pm:receipts')) }
+      reload()
+    } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(0) }
+  }
+  return (
+    <Card title={`Waiting for the tax office · ${data.total}`} className="waiting-card">
+      <p className="muted small" style={{ marginTop: 0 }}>Scanned before the shop sent them to the tax office. Nothing is booked yet: Pocket Money asks again through the day and books each one with its shop and items once it is there.</p>
+      <div className="waiting-list">
+        {data.items.map(s => {
+          const when = s.issued_at ? new Date(s.issued_at) : null
+          const hm = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          return (
+            <div key={s.id} className="tx-row waiting-row">
+              <span className="pick"><span className="cat-ico">{s.status === 'missing' ? '⚠️' : '⏳'}</span></span>
+              <span className="tx-main">
+                <span className="t">{when ? `${fmtDate(s.issued_at!.slice(0, 10))} ${hm(when)}` : s.receipt_key}{s.status === 'missing' && <span className="badge danger">still missing</span>}</span>
+                <span className="s">{s.status === 'missing' ? s.message : <>scanned {ago(s.created_at)}{s.next_try_at && <> · next check at {hm(new Date(s.next_try_at))}</>}</>}</span>
+              </span>
+              {s.total > 0 && <b className="amt">−{fmtMoney(s.total, s.currency, decimalsOf(s.currency, currencies))}</b>}
+              <span className="row waiting-actions" style={{ gap: 6 }}>
+                <button type="button" className="btn sm" disabled={busy === s.id} onClick={() => act(s, 'retry')} title="Ask the tax office now">{busy === s.id ? <Spinner /> : <Icon name="refresh" size={14} />}Check now</button>
+                <button type="button" className="btn sm" disabled={busy === s.id} onClick={() => act(s, 'book')} title="Book the total and time from the QR code now; shop and items follow if the tax office ever has it">Book from QR</button>
+                <button type="button" className="btn sm danger-ghost" disabled={busy === s.id} onClick={() => act(s, 'reject')} title="Stop waiting, book nothing"><Icon name="x" size={14} />Reject</button>
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </Card>
+  )
+}
+
 const SCAN_BADGE: Record<ScanStatus, [string, string]> = {
+  waiting: ['warn', 'not at tax office yet'], missing: ['danger', 'still missing'], rejected: ['', 'rejected'],
   done: ['ok', 'booked'], partial: ['warn', 'waiting'], pending: ['warn', 'pending'], duplicate: ['', 'duplicate'], invalid: ['danger', 'invalid'],
   skipped: ['', 'skipped'], unsupported: ['danger', 'not a receipt'], failed: ['danger', 'failed'],
 }
@@ -119,7 +167,7 @@ function ScanLog() {
   return (
     <>
       <div className="filters">
-        {[['', 'All'], ['done', 'Booked'], ['partial', 'Waiting'], ['duplicate', 'Duplicates'], ['failed', 'Failed'], ['unsupported', 'Not receipts']].map(([v, l]) => (
+        {[['', 'All'], ['done', 'Booked'], ['waiting,missing', 'Not at tax office'], ['partial', 'Waiting'], ['duplicate', 'Duplicates'], ['failed', 'Failed'], ['unsupported', 'Not receipts']].map(([v, l]) => (
           <button key={v} type="button" className={`chip ${status === v ? 'active' : ''}`} onClick={() => setStatus(v)}>{l}</button>
         ))}
         {data && <span className="muted small">{data.total.toLocaleString()} scans</span>}

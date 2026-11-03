@@ -423,6 +423,8 @@ func (s *Server) Router() http.Handler {
 			r.Post("/receipts/peek", s.handlePeekReceipt)
 			r.Get("/receipts/scans", s.handleListScans)
 			r.Post("/receipts/scans/{id}/retry", s.handleRetryScan)
+			r.Post("/receipts/scans/{id}/book", s.handleBookWaitingScan)
+			r.Post("/receipts/scans/{id}/reject", s.handleRejectScan)
 			r.Get("/receipts/scans/{id}/raw", s.handleScanRaw)
 			r.Get("/receipts/settings", s.handleGetReceiptSettings)
 			r.Put("/receipts/settings", s.handlePutReceiptSettings)

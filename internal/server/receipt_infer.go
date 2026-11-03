@@ -679,6 +679,8 @@ type peekOut struct {
 	CategoryIcon string     `json:"category_icon,omitempty"`
 	Reason       string     `json:"reason"`
 	Description  string     `json:"description"`
+	NotYet       bool       `json:"not_yet,omitempty"`       // the tax office does not have it yet: wait for it, or book from the QR code
+	WaitingSince string     `json:"waiting_since,omitempty"` // saved before and waiting already
 	Existing     *struct {
 		ReceiptID     int64  `json:"receipt_id"`
 		TransactionID *int64 `json:"transaction_id"`
@@ -752,7 +754,12 @@ func (s *Server) handlePeekReceipt(w http.ResponseWriter, r *http.Request) {
 		out.Complete = true
 	case decoded != nil && decoded.Total > 0 && errors.Is(ferr, fiscal.ErrNotYet):
 		rec = decoded
-		out.Message = "The tax office does not have this receipt yet; shops send it within a minute or so. Check again in a moment, or book now with the total and time from the QR code and the shop and items follow later."
+		out.NotYet = true
+		out.Message = "The tax office does not have this receipt yet: shops often send them late. Save it and Pocket Money keeps asking through the day and books it once it is there."
+		if open, err := s.store.OpenScanByKey(ctx, uid, p.ID(), decoded.Key); err == nil {
+			out.WaitingSince = open.CreatedAt
+			out.Message = "Saved already, still waiting for the tax office. Pocket Money keeps asking and books it once it is there."
+		}
 	case decoded != nil && decoded.Total > 0:
 		rec = decoded
 		out.Message = "The tax office did not answer (" + ferr.Error() + "). Booking now takes the total and time from the QR code; the shop and items follow later."

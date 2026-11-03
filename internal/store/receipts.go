@@ -36,6 +36,7 @@ type ReceiptScan struct {
 	MerchantName  string `json:"merchant_name"`
 	Total         int64  `json:"total"`
 	Currency      string `json:"currency"`
+	IssuedAt      string `json:"issued_at,omitempty"` // from the QR code, for scans with no receipt stored yet
 }
 
 // Merchant is a shop receipts came from.
@@ -222,8 +223,12 @@ func (s *Store) ListScans(ctx context.Context, userID int64, status string, limi
 	where := ` WHERE s.user_id = ?`
 	args := []any{userID}
 	if status != "" {
-		where += ` AND s.status = ?`
-		args = append(args, status)
+		// one status or several: "waiting,missing"
+		sts := strings.Split(status, ",")
+		where += ` AND s.status IN (?` + strings.Repeat(",?", len(sts)-1) + `)`
+		for _, st := range sts {
+			args = append(args, strings.TrimSpace(st))
+		}
 	}
 	var total int
 	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM receipt_scans s`+where, args...).Scan(&total); err != nil {
@@ -256,9 +261,15 @@ func (s *Store) ListScans(ctx context.Context, userID int64, status string, limi
 	return out, total, rows.Err()
 }
 
+// OpenScanByKey is the person's scan of this receipt that still waits for
+// the tax office to have it (waiting, or missing after giving up).
+func (s *Store) OpenScanByKey(ctx context.Context, userID int64, provider, key string) (*ReceiptScan, error) {
+	return scanScan(s.DB.QueryRowContext(ctx, `SELECT `+scanCols+` FROM receipt_scans s WHERE s.user_id = ? AND s.provider = ? AND s.receipt_key = ? AND s.status IN ('waiting','missing') ORDER BY s.id DESC LIMIT 1`, userID, provider, key))
+}
+
 // DueScans are scans waiting for the tax office whose retry time has come.
 func (s *Store) DueScans(ctx context.Context, now string, limit int) ([]ReceiptScan, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+scanCols+` FROM receipt_scans s WHERE s.status IN ('pending','partial') AND s.next_try_at != '' AND s.next_try_at <= ? ORDER BY s.next_try_at LIMIT ?`, now, limit)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+scanCols+` FROM receipt_scans s WHERE s.status IN ('pending','partial','waiting') AND s.next_try_at != '' AND s.next_try_at <= ? ORDER BY s.next_try_at LIMIT ?`, now, limit)
 	if err != nil {
 		return nil, err
 	}

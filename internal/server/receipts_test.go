@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -19,6 +20,7 @@ import (
 // by their counter; offline=true makes it unreachable.
 type fakeSUF struct {
 	offline  atomic.Bool
+	late     atomic.Bool // receipts it does not know are "not yet" (404), not bad requests
 	geocoded atomic.Int32
 	receipts map[uint32]string
 }
@@ -36,6 +38,9 @@ func (f *fakeSUF) RoundTrip(r *http.Request) (*http.Response, error) {
 	code := 200
 	if !ok || r.Header.Get("Accept") != "application/json" {
 		code, body = 400, ""
+		if f.late.Load() {
+			code = 404
+		}
 	}
 	return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}, Request: r}, nil
 }
@@ -43,6 +48,10 @@ func (f *fakeSUF) RoundTrip(r *http.Request) (*http.Response, error) {
 var receiptAt = time.Date(2026, 10, 20, 8, 24, 16, 0, time.UTC) // 10:24 in Banja Luka (summer time)
 
 func sufTestLink(counter uint32, total float64) string {
+	return sufLinkAt(counter, total, receiptAt)
+}
+
+func sufLinkAt(counter uint32, total float64, at time.Time) string {
 	b := make([]byte, 60)
 	b[0] = 3
 	copy(b[1:9], "TEST0001")
@@ -50,7 +59,7 @@ func sufTestLink(counter uint32, total float64) string {
 	binary.LittleEndian.PutUint32(b[17:21], counter)
 	binary.LittleEndian.PutUint32(b[21:25], counter)
 	binary.LittleEndian.PutUint64(b[25:33], uint64(total*10000+0.5))
-	binary.BigEndian.PutUint64(b[33:41], uint64(receiptAt.UnixMilli()))
+	binary.BigEndian.PutUint64(b[33:41], uint64(at.UnixMilli()))
 	return "https://suf.poreskaupravars.org/v/?vl=" + base64.StdEncoding.EncodeToString(b)
 }
 
@@ -254,5 +263,109 @@ func TestReceiptScanning(t *testing.T) {
 	fake.receipts[5] = sufTestJSON(5, 2, [3]any{"Kesa/KO", 1.0, 0.1})
 	if c.do("POST", "/api/v1/quick", map[string]any{"text": sufTestLink(5, 0.10)}, &quick) != 201 || len(quick) != 1 || quick[0].Amount != 10 {
 		t.Fatalf("quick: %+v", quick)
+	}
+}
+
+// A receipt the tax office does not have yet waits, booking nothing, until
+// a later check finds it; or the person books it from the QR code or rejects it.
+func TestReceiptWaitsForTaxOffice(t *testing.T) {
+	fake := &fakeSUF{receipts: map[uint32]string{}}
+	fake.late.Store(true)
+	receiptTransport = fake
+	defer func() { receiptTransport = nil }()
+
+	c := newTestServer(t)
+	var bank store.Account
+	c.do("POST", "/api/v1/accounts", map[string]any{"name": "UniCredit", "currency": "BAM"}, &bank)
+	at := time.Now().Add(-30 * time.Minute) // past the few minutes a scan waits for it on the spot
+	link := sufLinkAt(21, 7.40, at)
+
+	var peek peekOut
+	c.do("POST", "/api/v1/receipts/peek", map[string]any{"url": link}, &peek)
+	if !peek.Supported || !peek.NotYet || peek.Total != 740 || peek.WaitingSince != "" {
+		t.Fatalf("peek %+v", peek)
+	}
+	var res scanOut
+	if code := c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": link, "mode": "later"}, &res); code != 202 || res.Status != "waiting" || res.Transaction != nil || res.Scan.Total != 740 || res.Scan.NextTryAt == "" {
+		t.Fatalf("save for later: %d %+v", code, res)
+	}
+	id := res.Scan.ID
+	c.do("POST", "/api/v1/receipts/peek", map[string]any{"url": link}, &peek)
+	if !peek.NotYet || peek.WaitingSince == "" {
+		t.Fatalf("peek of a waiting receipt %+v", peek)
+	}
+	// scanned again: the same scan, not a second one
+	var again scanOut
+	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": link}, &again)
+	if again.Status != "waiting" || again.Scan.ID != id || again.Scan.Attempts != 1 {
+		t.Fatalf("scanned again: %+v", again)
+	}
+	var list struct {
+		Items []store.ReceiptScan `json:"items"`
+		Total int                 `json:"total"`
+	}
+	c.do("GET", "/api/v1/receipts/scans?status=waiting,missing", nil, &list)
+	if list.Total != 1 || list.Items[0].Total != 740 || list.Items[0].IssuedAt == "" {
+		t.Fatalf("waiting list %+v", list)
+	}
+	var txs struct {
+		Items []store.Transaction `json:"items"`
+	}
+	c.do("GET", "/api/v1/transactions", nil, &txs)
+	if len(txs.Items) != 0 {
+		t.Fatalf("a waiting receipt was booked: %+v", txs.Items)
+	}
+
+	// the shop reports it; the background check books it with shop and items
+	fake.receipts[21] = sufTestJSON(21, 2, [3]any{"Hljeb bijeli/KO", 2.0, 3.7})
+	c.srv.retryReceiptScans(context.Background()) // not due yet
+	if sc, _ := c.srv.store.GetScan(context.Background(), res.Scan.UserID, id); sc.Status != "waiting" {
+		t.Fatalf("checked before it was due: %s", sc.Status)
+	}
+	if _, err := c.srv.store.DB.Exec(`UPDATE receipt_scans SET next_try_at = '2000-01-01T00:00:00Z' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	c.srv.retryReceiptScans(context.Background())
+	sc, _ := c.srv.store.GetScan(context.Background(), res.Scan.UserID, id)
+	if sc.Status != "done" || sc.ReceiptID == nil || sc.NextTryAt != "" {
+		t.Fatalf("after the tax office has it: %+v", sc)
+	}
+	c.do("GET", "/api/v1/transactions", nil, &txs)
+	if len(txs.Items) != 1 || txs.Items[0].Amount != 740 || txs.Items[0].Payee != "Primjer Market" {
+		t.Fatalf("booked %+v", txs.Items)
+	}
+
+	// rejected: nothing booked, never asked about again
+	var rej scanOut
+	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufLinkAt(22, 3.00, at)}, &rej)
+	if rej.Status != "waiting" {
+		t.Fatalf("second receipt: %+v", rej)
+	}
+	if code := c.do("POST", fmt.Sprintf("/api/v1/receipts/scans/%d/reject", rej.Scan.ID), nil, &rej); code != 200 || rej.Status != "rejected" {
+		t.Fatalf("reject: %d %+v", code, rej)
+	}
+	if due, _ := c.srv.store.DueScans(context.Background(), "9999", 10); len(due) != 0 {
+		t.Fatalf("a rejected scan is still retried: %+v", due)
+	}
+	if code := c.do("POST", fmt.Sprintf("/api/v1/receipts/scans/%d/book", rej.Scan.ID), nil, nil); code != 409 {
+		t.Fatalf("booked a rejected scan: %d", code)
+	}
+
+	// booked from the QR code: total and time now, shop and items later
+	var wait, now scanOut
+	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufLinkAt(23, 12.50, at)}, &wait)
+	if code := c.do("POST", fmt.Sprintf("/api/v1/receipts/scans/%d/book", wait.Scan.ID), nil, &now); code != 200 || now.Status != "partial" || now.Transaction == nil || now.Transaction.Amount != 1250 || now.Scan.NextTryAt == "" {
+		t.Fatalf("book from the QR: %d %+v", code, now)
+	}
+
+	// gives up after the last try: missing, still offered to book or reject
+	var gone scanOut
+	c.do("POST", "/api/v1/receipts/scan", map[string]any{"url": sufLinkAt(24, 1.00, at)}, &gone)
+	if _, err := c.srv.store.DB.Exec(`UPDATE receipt_scans SET attempts = ?, next_try_at = '2000-01-01T00:00:00Z' WHERE id = ?`, len(waitBackoff), gone.Scan.ID); err != nil {
+		t.Fatal(err)
+	}
+	c.srv.retryReceiptScans(context.Background())
+	if sc, _ := c.srv.store.GetScan(context.Background(), gone.Scan.UserID, gone.Scan.ID); sc.Status != "missing" || sc.NextTryAt != "" {
+		t.Fatalf("after the last try: %+v", sc)
 	}
 }

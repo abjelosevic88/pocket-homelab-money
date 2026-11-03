@@ -174,14 +174,15 @@ export interface Receipt {
   /** what the receipt says today (after items were sorted) */
   guess?: { category_id: number | null; reason: string; description: string }
 }
-export type ScanStatus = 'pending' | 'done' | 'partial' | 'duplicate' | 'invalid' | 'skipped' | 'unsupported' | 'failed'
+export type ScanStatus = 'pending' | 'waiting' | 'missing' | 'rejected' | 'done' | 'partial' | 'duplicate' | 'invalid' | 'skipped' | 'unsupported' | 'failed'
 export interface ReceiptScan {
   id: number; provider: string; country: string; url: string; receipt_key: string; status: ScanStatus; message: string; attempts: number; next_try_at: string
   receipt_id: number | null; source: string; account_id: number | null; created_at: string; updated_at: string
   has_raw: boolean; transaction_id: number | null; merchant_name: string; total: number; currency: string
+  issued_at?: string // from the QR code, while no receipt is stored
 }
 export interface ScanResult {
-  status: 'booked' | 'linked' | 'duplicate' | 'partial' | 'pending' | 'invalid' | 'skipped' | 'unsupported' | 'failed'
+  status: 'booked' | 'linked' | 'duplicate' | 'partial' | 'pending' | 'waiting' | 'missing' | 'rejected' | 'invalid' | 'skipped' | 'unsupported' | 'failed'
   message: string; scan: ReceiptScan; receipt?: Receipt; transaction?: Transaction
 }
 export interface ShopRule { keywords: string; category_id: number }

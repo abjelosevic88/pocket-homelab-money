@@ -68,7 +68,8 @@ export function QuickAdd({ onAdded, autoFocus = false, placeholder }: { onAdded:
     if (isReceipt) {
       try {
         const r = await api.post<ScanResult>(`${V1}/receipts/scan`, { url: text.trim(), source: 'quick' })
-        toast(r.message, r.transaction ? undefined : 'err')
+        toast(r.message, r.transaction || r.status === 'waiting' ? undefined : 'err')
+        if (r.status === 'waiting') window.dispatchEvent(new CustomEvent('pm:receipts'))
         setText('')
         if (r.transaction) { reloadAccounts(); onAdded([r.transaction]) }
       } catch (e) { toast((e as Error).message, 'err') } finally { setBusy(false) }
