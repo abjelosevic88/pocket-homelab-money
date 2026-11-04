@@ -635,7 +635,9 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 		s.fail(w, err, "transactions")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "totals": tot, "has_more": f.Offset+len(items) < tot.Count})
+	// the totals are in the person's home currency (Pocket Wealth averages them for its plan)
+	st, _ := s.store.GetSettings(r.Context(), actorID(r.Context()))
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "totals": tot, "currency": st.HomeCurrency, "has_more": f.Offset+len(items) < tot.Count})
 }
 
 // loadTx returns a transaction the user may see; write=true also requires write access.
