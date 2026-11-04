@@ -20,7 +20,7 @@ var linkOffers = []core.Offer{
 	{Scope: "transactions:write", Name: "Book transactions", Description: "Create transactions on accounts you can book on, and change or delete only the ones that app created."},
 	{Scope: "jobs:read", Name: "See scheduled jobs", Description: "List the jobs this app runs on a schedule (background round, reminders, product check, day review), when they ran, how it went and when they run next."},
 	{Scope: "jobs:run", Name: "Run jobs now", Description: "Start one of those jobs right away."},
-	{Scope: "transactions:read", Name: "See your transactions", Description: "Read your transactions, tags, accounts and categories (including through the Firefly-compatible API) and where you paid, for trip costs, your journal and your map. Nothing can be changed with it."},
+	{Scope: "transactions:read", Name: "See your transactions", Description: "Read your transactions, subscriptions, tags, accounts and categories (including through the Firefly-compatible API) and where you paid, for trip costs, your journal and your map. Nothing can be changed with it."},
 }
 
 type linkRoute struct {
@@ -47,6 +47,8 @@ var linkRoutes = []linkRoute{
 	// <money>/firefly). GET only: no write route, native or Firefly, is open.
 	{"GET", regexp.MustCompile(`^/api/v1/transactions$`), "transactions:read"},
 	{"GET", regexp.MustCompile(`^/api/v1/transactions/\d+$`), "transactions:read"},
+	// recurring payments and their next date (Pocket Renewals tracks yearly subscriptions)
+	{"GET", regexp.MustCompile(`^/api/v1/subscriptions(/\d+)?$`), "transactions:read"},
 	{"GET", regexp.MustCompile(`^/api/v1/tags$`), "transactions:read"},
 	{"GET", regexp.MustCompile(`^/api/v1/accounts$`), "transactions:read"},
 	{"GET", regexp.MustCompile(`^/api/v1/categories$`), "transactions:read"},
