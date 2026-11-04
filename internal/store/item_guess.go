@@ -13,11 +13,23 @@ import (
 // hand-typed expense (no shop, no tax office).
 const AIProvider = "ai"
 
-// GuessSources are the transaction sources that count as typed by the
-// person: the web app, quick add, templates, the phone app and Firefly/Pico
-// (where the older ones were typed). Receipts, subscriptions, imports and
-// other Pocket apps' bookings are left alone.
-var GuessSources = []string{"", "manual", "web", "quick", "template", "api", "firefly_api", "firefly"}
+// NotGuessSources are the transaction sources the AI writes no items for: a
+// scanned receipt has the real ones, a CSV import is a bank statement, and a
+// balance adjustment or interest is not a purchase. Everything else counts:
+// what the person typed anywhere (web, quick add, templates, the phone app,
+// Firefly/Pico) and what other Pocket apps book for them (Garage's fuel and
+// repairs, Travel's costs).
+var NotGuessSources = []string{"receipt", "csv", "adjustment", "interest"}
+
+// GuessSource says whether expenses from this source get items from the AI.
+func GuessSource(source string) bool {
+	for _, s := range NotGuessSources {
+		if source == s {
+			return false
+		}
+	}
+	return true
+}
 
 // ItemGuess is what the AI was asked about one transaction.
 type ItemGuess struct {
@@ -43,8 +55,8 @@ func dropStaleGuess(ctx context.Context, tx *sql.Tx, t *Transaction) error {
 // that have no scanned receipt and were not asked about with their current
 // amount and description (asking failed: asked again).
 func (s *Store) ItemGuessCandidates(ctx context.Context, userID int64, from, to string, limit int) ([]int64, error) {
-	src, args := inStrings(GuessSources)
-	q := `SELECT t.id FROM transactions t WHERE t.user_id = ? AND t.kind = 'expense' AND t.date BETWEEN ? AND ? AND t.source IN ` + src + `
+	src, args := inStrings(NotGuessSources)
+	q := `SELECT t.id FROM transactions t WHERE t.user_id = ? AND t.kind = 'expense' AND t.date BETWEEN ? AND ? AND t.source NOT IN ` + src + `
 		AND trim(t.description) != '' AND t.amount > 0
 		AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.transaction_id = t.id AND r.provider != '` + AIProvider + `')
 		AND NOT EXISTS (SELECT 1 FROM item_guesses g WHERE g.transaction_id = t.id AND g.amount = t.amount AND g.description = t.description AND g.status != 'error')

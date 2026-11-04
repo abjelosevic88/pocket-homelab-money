@@ -18,7 +18,8 @@ import (
 // ---- items for hand-typed expenses ----
 //
 // Right after an expense is typed (created or edited, wherever: the web app,
-// quick add, templates, the phone app) the AI reads it in the background
+// quick add, templates, the phone app) or booked by another Pocket app
+// (Garage's fuel and repairs) the AI reads it in the background
 // and, when the description names what was bought ("pica i krofna", 8 KM), writes receipt
 // lines for it (Pica 5.00, Krofna 3.00) that add up to the amount. They are
 // stored as a receipt of provider "ai" on the transaction, so products,
@@ -32,9 +33,10 @@ const itemGuessPrompt = `You turn one person's hand-typed expenses into the line
 
 For every expense decide whether its description (or note) names the concrete things that were bought, e.g. "pica i krofna", "2 kafe i sok", "pita", "sendvic", "cvijece".
 - If it does: one line per thing, with a quantity and a unit price, so that the lines add up to the expense's total exactly. "2 kafe" is quantity 2. Spread the total by what such things usually cost there; when the person bought the same product before, use its name exactly as listed and stay close to its last price. Otherwise name it the way a receipt would, short, in the person's language with proper letters ("Krofna", "Pica", "Sendvič", "Cvijeće"). Never invent brands, sizes or flavours that are not in the description.
-- If it does not, answer "items": [] for it: a shop or place ("Pekara", "Konzum", "Restoran"), a vague word ("Nabavka za kuci", "hrana", "ručak", "sitnice"), money given to someone ("dao baki", "prebacio Mariji"), bills, rent, services, fuel, fees, subscriptions.
+- Fuel for a vehicle ("gorivo", "dizel", "benzin", "Skoda Fabia fuel", a fill-up booked by Pocket Garage) is one line named for the fuel: "Dizel", "Benzin", "Autoplin", or "Gorivo" when the kind is not said. When the description or note gives the litres ("37.67 l"), quantity is the litres, unit "l" and unit_price the total divided by them; otherwise quantity 1. Other things on the same expense ("gorivo i cokoladice") get their own lines.
+- If it does not, answer "items": [] for it: a shop or place ("Pekara", "Konzum", "Restoran"), a vague word ("Nabavka za kuci", "hrana", "ručak", "sitnice"), money given to someone ("dao baki", "prebacio Mariji"), bills, rent, services, fees, subscriptions.
 
-Answer only JSON: {"expenses":[{"id":<expense id>,"items":[{"name":"<product>","quantity":<number>,"unit_price":<number in the expense's currency>}],"note":"<under 10 words, English>"}]}.`
+Answer only JSON: {"expenses":[{"id":<expense id>,"items":[{"name":"<product>","quantity":<number>,"unit":"<l, kg, or empty for pieces>","unit_price":<number in the expense's currency>}],"note":"<under 10 words, English>"}]}.`
 
 var externalIDNote = regexp.MustCompile(`\[external_id:[^\]]*\]`)
 
@@ -55,6 +57,7 @@ var guessMu sync.Mutex // one run at a time: the daily one, "Run now" and the ed
 type guessLine struct {
 	Name      string  `json:"name"`
 	Quantity  float64 `json:"quantity"`
+	Unit      string  `json:"unit"`
 	UnitPrice float64 `json:"unit_price"`
 }
 
@@ -160,6 +163,9 @@ func (s *Server) guessItems(ctx context.Context, ids []int64, trigger string) (*
 			}
 			answered[t.ID] = true
 			g := store.ItemGuess{TransactionID: t.ID, UserID: uid, Amount: t.Amount, Description: t.Description, Status: "none", Note: clip(strings.TrimSpace(a.Note), 160)}
+			if fresh, err := s.store.GetTransaction(ctx, t.ID); err != nil || fresh.ReceiptID != nil && !fresh.ReceiptAI {
+				continue // deleted, or a scanned receipt came while the AI was thinking: it has the real items
+			}
 			total, cur := guessBasis(t)
 			if items := receiptLines(a.Items, total); len(items) > 0 {
 				rec, err := s.store.SaveGuessedItems(ctx, t, cur, total, items)
@@ -230,6 +236,7 @@ func receiptLines(lines []guessLine, total int64) []fiscal.Item {
 	type part struct {
 		name string
 		q    float64
+		unit string
 		raw  float64
 	}
 	var parts []part
@@ -248,7 +255,7 @@ func receiptLines(lines []guessLine, total int64) []fiscal.Item {
 		if raw < 0 || math.IsNaN(raw) || math.IsInf(raw, 0) {
 			raw = 0
 		}
-		parts = append(parts, part{name, q, raw})
+		parts = append(parts, part{name, q, guessUnit(l.Unit), raw})
 		sum += raw
 		if len(parts) == 20 {
 			break
@@ -270,7 +277,7 @@ func receiptLines(lines []guessLine, total int64) []fiscal.Item {
 		if t <= 0 {
 			continue
 		}
-		items = append(items, fiscal.Item{Name: p.name, Quantity: p.q, Total: t})
+		items = append(items, fiscal.Item{Name: p.name, Quantity: p.q, Unit: p.unit, Total: t})
 		got += t
 	}
 	if len(items) == 0 {
@@ -292,18 +299,30 @@ func receiptLines(lines []guessLine, total int64) []fiscal.Item {
 	return items
 }
 
+// guessUnit keeps a unit the way receipts print it (l, kg, g, m), nothing for pieces.
+func guessUnit(u string) string {
+	switch u = strings.ToLower(strings.TrimSpace(u)); u {
+	case "l", "lit", "lt", "litre", "liter", "litar":
+		return "l"
+	case "kg", "g", "m":
+		return u
+	}
+	return ""
+}
+
 // guessWindow is how far back the retry looks.
 const guessWindow = 3
 
-// onEntrySources are the typed sources asked about the moment they are
-// saved; Firefly rows only come in by import, which must not set off
-// hundreds of AI calls.
-var onEntrySources = map[string]bool{"": true, "manual": true, "web": true, "quick": true, "template": true, "api": true, "firefly_api": true}
+// onEntry says whether an expense from this source is asked about the moment
+// it is saved: every source the AI writes items for, except Firefly rows,
+// which only come in by import and must not set off hundreds of AI calls
+// (the hourly retry picks up the recent ones).
+func onEntry(source string) bool { return source != "firefly" && store.GuessSource(source) }
 
 // guessOnEntry asks about a typed expense that was just created or changed,
 // in the background, when the person has it on and an AI is ready.
 func (s *Server) guessOnEntry(ctx context.Context, t *store.Transaction) {
-	if t == nil || t.Kind != "expense" || !onEntrySources[t.Source] || strings.TrimSpace(t.Description) == "" || t.Amount <= 0 {
+	if t == nil || t.Kind != "expense" || !onEntry(t.Source) || strings.TrimSpace(t.Description) == "" || t.Amount <= 0 {
 		return
 	}
 	if t.ReceiptID != nil && !t.ReceiptAI || t.UserID != actorID(ctx) {

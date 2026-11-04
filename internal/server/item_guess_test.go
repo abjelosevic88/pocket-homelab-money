@@ -29,6 +29,24 @@ func TestReceiptLines(t *testing.T) {
 	if receiptLines(nil, 500) != nil || receiptLines([]guessLine{{Name: "  "}}, 500) != nil {
 		t.Fatal("nothing named: no items")
 	}
+	// fuel by the litre keeps its unit; an unknown unit is a piece
+	items = receiptLines([]guessLine{{Name: "Gorivo", Quantity: 37.67, Unit: "Lit", UnitPrice: 3.85}, {Name: "Kafa", Quantity: 1, Unit: "kom", UnitPrice: 2}}, 14703)
+	if items[0].Unit != "l" || items[0].Quantity != 37.67 || items[0].Total != 14503 || items[1].Unit != "" {
+		t.Fatalf("fuel %+v", items)
+	}
+}
+
+func TestGuessSources(t *testing.T) {
+	for src, want := range map[string]bool{"": true, "manual": true, "web": true, "quick": true, "template": true, "api": true,
+		"firefly_api": true, "garage": true, "travel": true, "subscription": true,
+		"firefly": false, "receipt": false, "csv": false, "adjustment": false, "interest": false} {
+		if got := onEntry(src); got != want {
+			t.Errorf("on entry %q: %v, want %v", src, got, want)
+		}
+	}
+	if !store.GuessSource("firefly") || !store.GuessSource("garage") || store.GuessSource("receipt") {
+		t.Error("the retry covers Firefly rows and other apps' bookings, never receipts")
+	}
 }
 
 func TestItemGuessOnEntry(t *testing.T) {

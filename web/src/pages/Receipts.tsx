@@ -273,8 +273,8 @@ function GuessItems({ st, save }: { st: ReceiptSettings; save: (p: Partial<Recei
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
   return (
-    <Card title="Items for what I type" sub="An expense typed by hand that names what you bought (“pica i krofna”, 8 KM) gets receipt lines like a scanned one (Pica 6.00, Krofna 2.00), so products and their statistics include it. A shop or a vague word (“Pekara”, “Nabavka za kuci”) gets none.">
-      <SettingRow title="Guess items when I save an expense" help={<>A few seconds after you save it (web, quick add, templates, the phone app), the AI reads the description and splits the amount by what such things usually cost, using your products' last prices. Editing the amount or description guesses again; a scanned receipt for the same purchase replaces the guess. {st.ai_ready ? <b>{st.ai_detail}.</b> : <span className="bad">{st.ai_detail}</span>}</>}>
+    <Card title="Items for what I type" sub="An expense without a receipt that names what you bought (“pica i krofna”, 8 KM) gets receipt lines like a scanned one (Pica 6.00, Krofna 2.00), so products and their statistics include it. A fill-up from Pocket Garage gets its fuel by the litre. A shop or a vague word (“Pekara”, “Nabavka za kuci”) gets none.">
+      <SettingRow title="Guess items when I save an expense" help={<>A few seconds after it is saved (web, quick add, templates, the phone app, or another Pocket app such as Garage), the AI reads the description and splits the amount by what such things usually cost, using your products' last prices. Editing the amount or description guesses again; a scanned receipt for the same purchase replaces the guess. {st.ai_ready ? <b>{st.ai_detail}.</b> : <span className="bad">{st.ai_detail}</span>}</>}>
         <Switch checked={st.guess_items && st.ai_ready} disabled={!st.ai_ready} onChange={v => save({ guess_items: v })} />
       </SettingRow>
       {st.guess_items && st.ai_ready && (
