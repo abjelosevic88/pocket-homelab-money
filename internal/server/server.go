@@ -709,7 +709,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Description: "Personal finance for a homelab: accounts in any currency, quick entry, subscriptions, budgets, savings goals, a forecast and reports.",
 		Icon:        "/favicon.svg", Version: Version,
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "MONEY",
-		Publishes: []string{"money.transaction_created", "money.transaction_deleted", "money.subscription_paid"},
+		Publishes: []string{"money.transaction_created", "money.transaction_deleted", "money.subscription_paid", "money.subscription_saved"},
 		Offers:    linkOffers,
 		Uses:      append(append([]core.Use{}, linkUses...), core.InferenceUse()),
 	}

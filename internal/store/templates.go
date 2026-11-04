@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 )
@@ -215,9 +216,40 @@ func (s *Store) GetSubscription(ctx context.Context, id int64) (*Subscription, e
 	return scanSub(s.DB.QueryRowContext(ctx, `SELECT `+subCols+subFrom+` WHERE s.id = ?`, id))
 }
 
-// CreateSubscription inserts one.
-func (s *Store) CreateSubscription(ctx context.Context, x *Subscription) error {
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO subscriptions (owner_id, name, kind, amount, amount_max, currency, account_id, to_account_id, category_id, tags, payee, description,
+// execer is the DB or one of its transactions.
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+// inTx runs write, then every after (an event to queue, say), in one
+// transaction; with no after it writes directly.
+func (s *Store) inTx(ctx context.Context, write func(execer) error, after []func(*sql.Tx) error) error {
+	if len(after) == 0 {
+		return write(s.DB)
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := write(tx); err != nil {
+		return err
+	}
+	for _, f := range after {
+		if err := f(tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// CreateSubscription inserts one; after runs inside the same transaction.
+func (s *Store) CreateSubscription(ctx context.Context, x *Subscription, after ...func(*sql.Tx) error) error {
+	return s.inTx(ctx, func(db execer) error { return createSubscription(ctx, db, x) }, after)
+}
+
+func createSubscription(ctx context.Context, db execer, x *Subscription) error {
+	res, err := db.ExecContext(ctx, `INSERT INTO subscriptions (owner_id, name, kind, amount, amount_max, currency, account_id, to_account_id, category_id, tags, payee, description,
 		freq, every, start_date, next_date, end_date, mode, notify_days, match_text, url, icon, notes, active, external_id, weekend, nth, month_day, weekday, max_count, done_count)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		x.OwnerID, x.Name, x.Kind, x.Amount, x.AmountMax, x.Currency, nullI(x.AccountID), nullI(x.ToAccountID), nullI(x.CategoryID), jsonList(x.Tags), x.Payee, x.Description,
@@ -230,9 +262,13 @@ func (s *Store) CreateSubscription(ctx context.Context, x *Subscription) error {
 	return nil
 }
 
-// UpdateSubscription saves one.
-func (s *Store) UpdateSubscription(ctx context.Context, x *Subscription) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE subscriptions SET name = ?, kind = ?, amount = ?, amount_max = ?, currency = ?, account_id = ?, to_account_id = ?, category_id = ?, tags = ?,
+// UpdateSubscription saves one; after runs inside the same transaction.
+func (s *Store) UpdateSubscription(ctx context.Context, x *Subscription, after ...func(*sql.Tx) error) error {
+	return s.inTx(ctx, func(db execer) error { return updateSubscription(ctx, db, x) }, after)
+}
+
+func updateSubscription(ctx context.Context, db execer, x *Subscription) error {
+	_, err := db.ExecContext(ctx, `UPDATE subscriptions SET name = ?, kind = ?, amount = ?, amount_max = ?, currency = ?, account_id = ?, to_account_id = ?, category_id = ?, tags = ?,
 		payee = ?, description = ?, freq = ?, every = ?, start_date = ?, next_date = ?, end_date = ?, mode = ?, notify_days = ?, match_text = ?, url = ?, icon = ?, notes = ?,
 		active = ?, notified_for = ?, external_id = ?, weekend = ?, nth = ?, month_day = ?, weekday = ?, max_count = ?, done_count = ?, updated_at = ? WHERE id = ?`,
 		x.Name, x.Kind, x.Amount, x.AmountMax, x.Currency, nullI(x.AccountID), nullI(x.ToAccountID), nullI(x.CategoryID), jsonList(x.Tags),

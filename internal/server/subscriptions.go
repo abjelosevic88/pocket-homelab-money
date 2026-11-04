@@ -716,7 +716,7 @@ func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request
 	if x.CategoryID == nil {
 		x.CategoryID = s.store.LearnedCategory(ctx, x.OwnerID, x.Name)
 	}
-	if err := s.store.CreateSubscription(ctx, x); err != nil {
+	if err := s.store.CreateSubscription(ctx, x, s.subSaved(ctx, x)); err != nil {
 		s.fail(w, err, "create subscription")
 		return
 	}
@@ -753,6 +753,20 @@ func (s *Server) relinkSubscription(ctx context.Context, id int64) int {
 	return n
 }
 
+// subSaved queues money.subscription_saved inside the transaction that saves
+// x (created or changed), so Pocket Renewals sees it the moment it is saved.
+// The payload is built before the transaction starts; a new subscription's id
+// is filled in once it has one.
+func (s *Server) subSaved(ctx context.Context, x *store.Subscription) func(*sql.Tx) error {
+	ev := s.subEvent(ctx, x)
+	return func(tx *sql.Tx) error {
+		ev["subscription_id"] = x.ID
+		ev["amount"], ev["freq"], ev["every"] = x.Amount, x.Freq, x.Every
+		ev["next_date"], ev["end_date"], ev["active"] = x.NextDate, x.EndDate, x.Active
+		return s.queueEvent(ctx, tx, "money.subscription_saved", fmt.Sprintf("subscription:%d", x.ID), ev)
+	}
+}
+
 func (s *Server) handleUpdateSubscription(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	x := s.ownSub(w, r)
@@ -772,7 +786,7 @@ func (s *Server) handleUpdateSubscription(w http.ResponseWriter, r *http.Request
 	if x.NextDate != oldNext {
 		x.NotifiedFor = ""
 	}
-	if err := s.store.UpdateSubscription(ctx, x); err != nil {
+	if err := s.store.UpdateSubscription(ctx, x, s.subSaved(ctx, x)); err != nil {
 		s.fail(w, err, "update subscription")
 		return
 	}
@@ -822,12 +836,20 @@ func (s *Server) handlePaySubscription(w http.ResponseWriter, r *http.Request) {
 }
 
 // subPaidEvent is the small payload a Pocket Core event carries about a paid subscription.
-func (s *Server) subPaidEvent(ctx context.Context, x *store.Subscription, t *store.Transaction, auto bool) map[string]any {
+// subEvent is what every money.subscription_* event carries, including whose
+// subscription it is (user_id / user_email) so a subscriber files it under
+// that person only.
+func (s *Server) subEvent(ctx context.Context, x *store.Subscription) map[string]any {
 	email := ""
 	if u, err := s.store.GetUser(ctx, x.OwnerID); err == nil {
 		email = u.Email
 	}
-	ev := map[string]any{"user_id": x.OwnerID, "user_email": email, "subscription_id": x.ID, "subscription": x.Name, "currency": x.Currency, "auto": auto}
+	return map[string]any{"user_id": x.OwnerID, "user_email": email, "subscription_id": x.ID, "subscription": x.Name, "currency": x.Currency}
+}
+
+func (s *Server) subPaidEvent(ctx context.Context, x *store.Subscription, t *store.Transaction, auto bool) map[string]any {
+	ev := s.subEvent(ctx, x)
+	ev["auto"] = auto
 	if t != nil {
 		ev["transaction_id"], ev["date"], ev["amount"] = t.ID, t.Date, t.Amount
 	}

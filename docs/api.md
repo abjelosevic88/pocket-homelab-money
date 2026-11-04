@@ -122,6 +122,8 @@ Grammar: `[template or words] amount[currency] [currency word] [date] [@account]
 | `GET /subscriptions/detect` | repeating payments that are not tracked yet |
 | `GET /cal/subscriptions.ics?token=` | every payment for a year, for calendar apps |
 
+With Pocket Core, Money publishes `money.subscription_paid` when a payment is booked and `money.subscription_saved` whenever a subscription is created or changed (the app, the API, the Firefly import), in the same transaction as the save. Subject `subscription:<id>`; payload `{"user_id", "user_email", "subscription_id", "subscription" (name), "amount" (minor units), "currency", "freq", "every", "next_date", "end_date", "active"}`. Pocket Renewals listens for it to pick subscriptions up at once.
+
 ## Webhooks
 
 | | |

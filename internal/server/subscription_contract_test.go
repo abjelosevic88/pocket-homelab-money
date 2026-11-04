@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 	"sync"
 	"testing"
@@ -62,8 +64,69 @@ func TestSubscriptionOccurrenceCommitsPaymentRecurrenceAndEvents(t *testing.T) {
 	if fresh.NextDate != "2026-11-01" || fresh.DoneCount != x.DoneCount+1 {
 		t.Fatal("recurrence", fresh.NextDate, fresh.DoneCount)
 	}
-	s.store.DB.QueryRow(`SELECT COUNT(*) FROM pocket_outbox WHERE topic='money.subscription_paid'`).Scan(&count)
+	s.store.DB.QueryRow(`SELECT COUNT(*) FROM pocket_outbox WHERE json_extract(body,'$.topic')='money.subscription_paid'`).Scan(&count)
 	if count != 1 {
 		t.Fatal("duplicate paid event", count)
+	}
+}
+
+func TestSubscriptionSavedEventOnCreateAndUpdate(t *testing.T) {
+	fc := &fakeCore{}
+	s, _, owner := newLinkServer(t, fc.handler(t), nil)
+	saved := func() []map[string]any {
+		t.Helper()
+		rows, err := s.store.DB.Query(`SELECT body FROM pocket_outbox WHERE json_extract(body,'$.topic')='money.subscription_saved' ORDER BY rowid`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []map[string]any
+		for rows.Next() {
+			var body string
+			rows.Scan(&body)
+			var ev map[string]any
+			if err := json.Unmarshal([]byte(body), &ev); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, ev)
+		}
+		return out
+	}
+	var x store.Subscription
+	code, raw := owner.call("POST", "/api/v1/subscriptions", map[string]any{"name": "Netflix", "amount": 1299, "currency": "EUR", "freq": "monthly", "every": 1, "next_date": "2026-12-01"}, &x)
+	if code != 201 {
+		t.Fatal(code, string(raw))
+	}
+	evs := saved()
+	if len(evs) != 1 {
+		t.Fatal("events after create", len(evs))
+	}
+	if evs[0]["subject"] != fmt.Sprintf("subscription:%d", x.ID) {
+		t.Fatal("subject", evs[0]["subject"])
+	}
+	p := evs[0]["payload"].(map[string]any)
+	if p["subscription_id"] != float64(x.ID) || p["subscription"] != "Netflix" || p["amount"] != float64(1299) || p["currency"] != "EUR" ||
+		p["freq"] != "monthly" || p["every"] != float64(1) || p["next_date"] != "2026-12-01" || p["end_date"] != "" || p["active"] != true || p["user_email"] != "owner@example.com" {
+		t.Fatal("create payload", p)
+	}
+	code, raw = owner.call("PUT", fmt.Sprintf("/api/v1/subscriptions/%d", x.ID), map[string]any{"amount": 1499, "end_date": "2027-06-01", "active": false}, nil)
+	if code != 200 {
+		t.Fatal(code, string(raw))
+	}
+	evs = saved()
+	if len(evs) != 2 {
+		t.Fatal("events after update", len(evs))
+	}
+	p = evs[1]["payload"].(map[string]any)
+	if p["amount"] != float64(1499) || p["end_date"] != "2027-06-01" || p["active"] != false || p["next_date"] != "2026-12-01" {
+		t.Fatal("update payload", p)
+	}
+	// a rejected save publishes nothing
+	code, _ = owner.call("PUT", fmt.Sprintf("/api/v1/subscriptions/%d", x.ID), map[string]any{"freq": "hourly"}, nil)
+	if code != 400 {
+		t.Fatal("bad freq", code)
+	}
+	if len(saved()) != 2 {
+		t.Fatal("event for a rejected save")
 	}
 }

@@ -723,7 +723,7 @@ func (s *Server) importSubscriptions(ctx context.Context, ff *firefly.Client, ow
 		if found {
 			continue
 		}
-		if err := s.store.CreateSubscription(ctx, x); err != nil {
+		if err := s.store.CreateSubscription(ctx, x, s.subSaved(ctx, x)); err != nil {
 			res.Warnings = append(res.Warnings, "subscription "+x.Name+": "+err.Error())
 			continue
 		}
