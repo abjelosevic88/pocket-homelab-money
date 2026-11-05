@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/abjelosevic88/pocket-homelab-money/internal/store"
 )
@@ -50,12 +51,14 @@ func TestGuessSources(t *testing.T) {
 }
 
 func TestItemGuessOnEntry(t *testing.T) {
+	// today: the hourly retry only looks at the last guessWindow days
+	day := time.Now().Format("2006-01-02")
 	c := newTestServer(t)
 	var bank store.Account
 	c.do("POST", "/api/v1/accounts", map[string]any{"name": "UniCredit", "currency": "BAM"}, &bank)
 	add := func(desc string, amount int64) store.Transaction {
 		var tx store.Transaction
-		c.do("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": bank.ID, "amount": amount, "description": desc, "date": "2026-11-01", "time": "16:45"}, &tx)
+		c.do("POST", "/api/v1/transactions", map[string]any{"kind": "expense", "account_id": bank.ID, "amount": amount, "description": desc, "date": day, "time": "16:45"}, &tx)
 		return tx
 	}
 	// no AI: nothing happens, nothing is remembered
@@ -168,7 +171,7 @@ func TestItemGuessOnEntry(t *testing.T) {
 	if err := c.srv.store.DeleteGuessedItems(ctx, early.ID); err != nil {
 		t.Fatal(err)
 	}
-	if id, err := c.srv.store.UnreceiptedMatch(ctx, []int64{bank.ID}, "2026-11-01", 200, "BAM", "expense"); err != nil || id != early.ID {
+	if id, err := c.srv.store.UnreceiptedMatch(ctx, []int64{bank.ID}, day, 200, "BAM", "expense"); err != nil || id != early.ID {
 		t.Fatalf("match %d %v", id, err)
 	}
 
