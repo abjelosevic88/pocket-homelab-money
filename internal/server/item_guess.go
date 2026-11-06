@@ -23,18 +23,19 @@ import (
 // and, when the description names what was bought ("pica i krofna", 8 KM), writes receipt
 // lines for it (Pica 5.00, Krofna 3.00) that add up to the amount. They are
 // stored as a receipt of provider "ai" on the transaction, so products,
-// groups and their statistics count them like scanned ones. Descriptions
-// that name a place or nothing in particular ("Pekara", "Nabavka za kuci")
-// get no items. Each transaction is asked about once per amount and
+// groups and their statistics count them like scanned ones. Every expense
+// gets at least one line: a bill, fee, service or a vague note ("Racun za
+// telefon", "Nabavka za kuci") is one line named for what was paid for
+// (Telefon, Namirnice). Each transaction is asked about once per amount and
 // description; editing either drops the items and asks again. A scanned
 // receipt for the same purchase replaces them.
 
 const itemGuessPrompt = `You turn one person's hand-typed expenses into the lines a shop's fiscal receipt would print. They live in Bosnia and Herzegovina and type short notes in Serbian/Bosnian (Latin script, often without č, ć, š, ž, đ).
 
-For every expense decide whether its description (or note) names the concrete things that were bought, e.g. "pica i krofna", "2 kafe i sok", "pita", "sendvic", "cvijece".
+Every expense gets at least one line, so each one lands on a product. First decide whether its description (or note) names the concrete things that were bought, e.g. "pica i krofna", "2 kafe i sok", "pita", "sendvic", "cvijece".
 - If it does: one line per thing, with a quantity and a unit price, so that the lines add up to the expense's total exactly. "2 kafe" is quantity 2. Spread the total by what such things usually cost there; when the person bought the same product before, use its name exactly as listed and stay close to its last price. Otherwise name it the way a receipt would, short, in the person's language with proper letters ("Krofna", "Pica", "Sendvič", "Cvijeće"). Never invent brands, sizes or flavours that are not in the description.
 - Fuel for a vehicle ("gorivo", "dizel", "benzin", "Skoda Fabia fuel", a fill-up booked by Pocket Garage) is one line named for the fuel: "Dizel", "Benzin", "Autoplin", or "Gorivo" when the kind is not said. When the description or note gives the litres ("37.67 l"), quantity is the litres, unit "l" and unit_price the total divided by them; otherwise quantity 1. Other things on the same expense ("gorivo i cokoladice") get their own lines.
-- If it does not, answer "items": [] for it: a shop or place ("Pekara", "Konzum", "Restoran"), a vague word ("Nabavka za kuci", "hrana", "ručak", "sitnice"), money given to someone ("dao baki", "prebacio Mariji"), bills, rent, services, fees, subscriptions.
+- If it does not, one line, quantity 1, named for what the money paid for, short and general, in the person's language with proper letters; never invent concrete items, brands or sizes. A bill is the service without "Račun za" ("Racun za telefon" → "Telefon", "Racun za TV i internet" → "TV i internet", "struja" → "Struja"); a fee is the fee ("Naknada za vođenje računa", "Održavanje kartice"); a subscription or app is its name ("Netflix", "Aplikacija"); rent is "Kirija"; a shop or place is what it sells ("Pekara" → "Pekarski proizvodi", "Konzum" → "Namirnice", "Restoran" → "Obrok u restoranu"); a vague word is that thing ("Nabavka za kuci" → "Namirnice", "Dorucak" → "Doručak", "sitnice" → "Sitnice"); money given to someone is "Novac za <person>" ("dao baki" → "Novac za baku"). When the person bought such a thing before, use its name exactly as listed.
 
 Answer only JSON: {"expenses":[{"id":<expense id>,"items":[{"name":"<product>","quantity":<number>,"unit":"<l, kg, or empty for pieces>","unit_price":<number in the expense's currency>}],"note":"<under 10 words, English>"}]}.`
 
@@ -167,7 +168,11 @@ func (s *Server) guessItems(ctx context.Context, ids []int64, trigger string) (*
 				continue // deleted, or a scanned receipt came while the AI was thinking: it has the real items
 			}
 			total, cur := guessBasis(t)
-			if items := receiptLines(a.Items, total); len(items) > 0 {
+			lines := a.Items
+			if len(receiptLines(lines, total)) == 0 {
+				lines = []guessLine{{Name: t.Description, Quantity: 1}} // every expense lands on a product
+			}
+			if items := receiptLines(lines, total); len(items) > 0 {
 				rec, err := s.store.SaveGuessedItems(ctx, t, cur, total, items)
 				if err != nil {
 					s.log.Warn("item guess: save", "tx", t.ID, "err", err)

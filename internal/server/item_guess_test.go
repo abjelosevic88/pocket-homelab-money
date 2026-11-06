@@ -115,9 +115,10 @@ func TestItemGuessOnEntry(t *testing.T) {
 	if rec.Provider != store.AIProvider || rec.Total != 800 || len(rec.Items) != 2 || rec.Items[0].Total != 600 || rec.Items[1].Total != 200 || rec.Guess != nil {
 		t.Fatalf("receipt %+v", rec)
 	}
-	c.do("GET", fmt.Sprintf("/api/v1/transactions/%d", pekara.ID), nil, &got)
-	if got.ReceiptID != nil {
-		t.Fatal("a place gets no items")
+	// the AI named nothing: one line named for the description, so it still lands on a product
+	c.do("GET", fmt.Sprintf("/api/v1/transactions/%d/receipt", pekara.ID), nil, &rec)
+	if len(rec.Items) != 1 || rec.Items[0].Name != "Pekara" || rec.Items[0].Total != 560 || rec.Items[0].ProductID == nil {
+		t.Fatalf("every expense gets a line: %+v", rec)
 	}
 	// guessed items are not scanned receipts
 	var list struct {
