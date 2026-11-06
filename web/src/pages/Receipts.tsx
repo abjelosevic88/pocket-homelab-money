@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
 import { ago, decimalsOf, fmtDate, fmtMoney } from '../lib/format'
-import type { Merchant, Receipt, ReceiptProvider, ReceiptScan, ReceiptSettings, ScanStatus, ShopRule } from '../lib/types'
+import type { GuessRun, Merchant, Receipt, ReceiptProvider, ReceiptScan, ReceiptSettings, ScanStatus, ShopRule } from '../lib/types'
 import { Card, CopyField, Empty, Field, Loading, MenuButton, Modal, PageHeader, Segmented, SettingRow, Spinner, Switch, Tabs, clickRow, errMsg, useAsync, useDebounce, useToast } from '../components/ui'
 import { AccountSelect, CategorySelect } from '../components/pickers'
 import { Select } from '../components/Select'
@@ -264,12 +264,35 @@ function ShopForm({ m, onClose, onSaved }: { m: Merchant; onClose: () => void; o
 function GuessItems({ st, save }: { st: ReceiptSettings; save: (p: Partial<ReceiptSettings>) => void }) {
   const { toast } = useToast()
   const [busy, setBusy] = useState(false)
-  const last = st.guess_last
+  const [last, setLast] = useState(st.guess_last)
+  const [pending, setPending] = useState(st.guess_pending)
+  const [running, setRunning] = useState(st.guess_running)
+  const [follow, setFollow] = useState(!!st.guess_running)
+  // while a run is under way: its progress every 2 s, then the result
+  useEffect(() => {
+    if (!follow) return
+    let stop = false
+    const tick = async () => {
+      try {
+        const r = await api.get<{ running: GuessRun | null; last: GuessRun | null; pending: number }>(`${V1}/receipts/guess-items`)
+        if (stop) return
+        setRunning(r.running); setLast(r.last); setPending(r.pending)
+        if (!r.running) {
+          setFollow(false)
+          if (r.last) toast(r.last.error ? `Guessing stopped: ${r.last.error}` : `Done: ${r.last.itemized} of ${r.last.checked} expenses got items`, r.last.error ? 'err' : undefined)
+        }
+      } catch { /* next tick */ }
+    }
+    const id = setInterval(tick, 2000)
+    void tick()
+    return () => { stop = true; clearInterval(id) }
+  }, [follow, toast])
   const runNow = async () => {
     setBusy(true)
     try {
       const r = await api.post<{ started: boolean; expenses: number }>(`${V1}/receipts/guess-items`, { days: 30 })
-      toast(r.started ? `Guessing items for ${r.expenses} expenses in the background` : 'Nothing left to guess')
+      if (r.started) setFollow(true)
+      else toast('Nothing left to guess')
     } catch (e) { toast(errMsg(e), 'err') } finally { setBusy(false) }
   }
   return (
@@ -277,13 +300,30 @@ function GuessItems({ st, save }: { st: ReceiptSettings; save: (p: Partial<Recei
       <SettingRow title="Guess items when I save an expense" help={<>A few seconds after it is saved (web, quick add, templates, the phone app, or another Pocket app such as Garage), the AI reads the description and splits the amount by what such things usually cost, using your products' last prices. Editing the amount or description guesses again; a scanned receipt for the same purchase replaces the guess. {st.ai_ready ? <b>{st.ai_detail}.</b> : <span className="bad">{st.ai_detail}</span>}</>}>
         <Switch checked={st.guess_items && st.ai_ready} disabled={!st.ai_ready} onChange={v => save({ guess_items: v })} />
       </SettingRow>
-      {st.guess_items && st.ai_ready && (
-        <SettingRow title={st.guess_pending > 0 ? `${st.guess_pending} typed expenses of the last 30 days not looked at` : 'Every typed expense of the last 30 days has been looked at'}
+      {st.guess_items && st.ai_ready && (running ? <GuessProgress run={running} /> : (
+        <SettingRow title={pending > 0 ? `${pending} typed expenses of the last 30 days not looked at` : 'Every typed expense of the last 30 days has been looked at'}
           help={last ? `Last run: ${last.checked} looked at · ${last.itemized} got items · ${last.none} without${last.failed ? ` · ${last.failed} failed` : ''}.` : 'Expenses saved before this was on are guessed here.'}>
-          {st.guess_pending > 0 && <button type="button" className="btn sm" disabled={busy} onClick={runNow}><Icon name="sparkles" size={14} />{busy ? 'Starting…' : 'Guess them now'}</button>}
+          {pending > 0 && <button type="button" className="btn sm" disabled={busy || follow} onClick={runNow}><Icon name="sparkles" size={14} />{busy || follow ? 'Starting…' : 'Guess them now'}</button>}
         </SettingRow>
-      )}
+      ))}
     </Card>
+  )
+}
+
+const guessTriggers: Record<string, string> = { manual: 'Guess them now', retry: 'hourly retry', entry: 'a saved expense' }
+
+/** The guessing run under way: how far it got and what came of it so far. */
+function GuessProgress({ run }: { run: GuessRun }) {
+  const total = Math.max(run.checked, 1)
+  const asking = run.next > run.done ? `asking the AI about ${run.done + 1}–${run.next}` : 'waiting for its turn'
+  return (
+    <SettingRow title={<><Spinner /> Guessing items: {run.done} of {run.checked} done</>}
+      help={<>
+        <div className="bar mt-sm" style={{ maxWidth: 420 }}><span className="fill" style={{ width: `${Math.round(run.done / total * 100)}%` }} /></div>
+        {`Started by ${guessTriggers[run.trigger] || run.trigger} ${ago(run.start)}, ${asking} · ${run.itemized} got items · ${run.none} without${run.failed ? ` · ${run.failed} failed` : ''}.`}
+      </>}>
+      <span />
+    </SettingRow>
   )
 }
 

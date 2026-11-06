@@ -416,6 +416,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/transactions/{id}/receipt", s.handleTransactionReceipt)
 			r.Post("/transactions/{id}/items/guess", s.handleGuessTxItems)
 			r.Post("/receipts/guess-items", s.handleRunItemGuess)
+			r.Get("/receipts/guess-items", s.handleItemGuessStatus)
 			r.Get("/places", s.handlePlaces)
 
 			r.Get("/receipts/providers", s.handleReceiptProviders)

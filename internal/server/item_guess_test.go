@@ -164,6 +164,14 @@ func TestItemGuessOnEntry(t *testing.T) {
 	if !got.ReceiptAI {
 		t.Fatal("retry did not guess the early entry")
 	}
+	var status struct {
+		Running *guessRun `json:"running"`
+		Last    *guessRun `json:"last"`
+	}
+	c.do("GET", "/api/v1/receipts/guess-items", nil, &status)
+	if status.Running != nil || status.Last == nil || status.Last.Trigger != "retry" || status.Last.Done != status.Last.Checked {
+		t.Fatalf("status after the retry %+v %+v", status.Running, status.Last)
+	}
 	if p, _ := prompt.Load().(string); !strings.Contains(p, "Krofna · 2.00 BAM") {
 		t.Errorf("known products missing from prompt:\n%s", p)
 	}
@@ -183,5 +191,25 @@ func TestItemGuessOnEntry(t *testing.T) {
 	c.settle()
 	if calls.Load() != before {
 		t.Fatal("asked while switched off")
+	}
+}
+
+func TestLiveGuess(t *testing.T) {
+	const uid = 987654
+	waiting := &guessRun{Trigger: "manual", Checked: 99}
+	setLiveGuess(uid, waiting)
+	run := &guessRun{Trigger: "manual", Checked: 99, Done: 20, Next: 40}
+	setLiveGuess(uid, run)
+	run.Done = 40 // the snapshot is a copy: no change until published
+	if got := runningGuess(uid); got == nil || !got.Running || got.Done != 20 || got.Next != 40 {
+		t.Fatalf("live %+v", got)
+	}
+	endLiveGuess(uid, waiting) // an earlier owner ending does not hide the run
+	if runningGuess(uid) == nil {
+		t.Fatal("hidden by another run")
+	}
+	endLiveGuess(uid, run)
+	if got := runningGuess(uid); got != nil {
+		t.Fatalf("still live %+v", got)
 	}
 }

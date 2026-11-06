@@ -41,7 +41,9 @@ Answer only JSON: {"expenses":[{"id":<expense id>,"items":[{"name":"<product>","
 
 var externalIDNote = regexp.MustCompile(`\[external_id:[^\]]*\]`)
 
-// guessRun is one run's tally, kept for the jobs page.
+// guessRun is one run's tally, kept for the jobs page. While it runs, Done
+// is how many expenses were answered and Next how far the AI call under way
+// reaches.
 type guessRun struct {
 	Trigger  string `json:"trigger"`
 	Start    string `json:"start"`
@@ -51,9 +53,49 @@ type guessRun struct {
 	None     int    `json:"none"`
 	Failed   int    `json:"failed"`
 	Error    string `json:"error,omitempty"`
+	Done     int    `json:"done"`
+	Next     int    `json:"next"`
+	Running  bool   `json:"running,omitempty"`
 }
 
 var guessMu sync.Mutex // one run at a time: the daily one, "Run now" and the editor's button
+
+// The run under way per person, for the settings page to follow. Each entry
+// is a copy owned by one run; only that run takes it down, so a run that
+// ends while "Guess them now" waits for its turn does not hide it.
+var (
+	liveMu     sync.Mutex
+	liveGuess  = map[int64]guessRun{}
+	liveOwners = map[int64]*guessRun{}
+)
+
+func setLiveGuess(uid int64, run *guessRun) {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	snap := *run
+	snap.Running = true
+	liveGuess[uid], liveOwners[uid] = snap, run
+}
+
+func endLiveGuess(uid int64, run *guessRun) {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	if liveOwners[uid] == run {
+		delete(liveGuess, uid)
+		delete(liveOwners, uid)
+	}
+}
+
+// runningGuess is the run under way for the person, nil when there is none.
+func runningGuess(uid int64) *guessRun {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	run, ok := liveGuess[uid]
+	if !ok {
+		return nil
+	}
+	return &run
+}
 
 type guessLine struct {
 	Name      string  `json:"name"`
@@ -99,6 +141,8 @@ func (s *Server) guessItems(ctx context.Context, ids []int64, trigger string) (*
 		txs = append(txs, t)
 	}
 	run.Checked = len(txs)
+	setLiveGuess(uid, run)
+	defer endLiveGuess(uid, run)
 	known, _ := s.store.KnownProducts(ctx, uid, 150)
 	var kb strings.Builder
 	if len(known) > 0 {
@@ -114,6 +158,8 @@ func (s *Server) guessItems(ctx context.Context, ids []int64, trigger string) (*
 	var productIDs []int64
 	for start := 0; start < len(txs); start += 20 {
 		batch := txs[start:min(start+20, len(txs))]
+		run.Done, run.Next = start, start+len(batch)
+		setLiveGuess(uid, run)
 		byID := map[int64]*store.Transaction{}
 		var list strings.Builder
 		for _, t := range batch {
@@ -154,6 +200,8 @@ func (s *Server) guessItems(ctx context.Context, ids []int64, trigger string) (*
 				result[t.ID] = g
 				run.Failed++
 			}
+			run.Done = run.Next
+			setLiveGuess(uid, run)
 			continue
 		}
 		answered := map[int64]bool{}
@@ -202,6 +250,8 @@ func (s *Server) guessItems(ctx context.Context, ids []int64, trigger string) (*
 				run.None++
 			}
 		}
+		run.Done = run.Next
+		setLiveGuess(uid, run)
 	}
 	s.placeGuessedProducts(ctx, productIDs)
 	run.End = store.Now()
@@ -459,6 +509,10 @@ func (s *Server) handleRunItemGuess(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "AI is not available: "+detail)
 		return
 	}
+	if run := runningGuess(actorID(ctx)); run != nil && run.Trigger == "manual" {
+		writeErr(w, http.StatusConflict, fmt.Sprintf("already guessing: %d of %d done", run.Done, run.Checked))
+		return
+	}
 	now := time.Now()
 	ids, err := s.store.ItemGuessCandidates(ctx, actorID(ctx), now.AddDate(0, 0, -in.Days).Format("2006-01-02"), now.Format("2006-01-02"), 2000)
 	if err != nil {
@@ -466,14 +520,25 @@ func (s *Server) handleRunItemGuess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(ids) > 0 {
+		// shown at once, also while an hourly or on-save run finishes first
+		uid, waiting := actorID(ctx), &guessRun{Trigger: "manual", Start: store.Now(), Checked: len(ids)}
+		setLiveGuess(uid, waiting)
 		bg := context.WithoutCancel(ctx)
 		s.receiptWork.Add(1)
 		go func() {
 			defer s.receiptWork.Done()
+			defer endLiveGuess(uid, waiting)
 			if _, _, err := s.guessItems(bg, ids, "manual"); err != nil {
 				s.log.Warn("item guess by hand", "err", err)
 			}
 		}()
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"started": len(ids) > 0, "expenses": len(ids)})
+}
+
+// handleItemGuessStatus is what the settings page follows while a run is
+// under way: the run (nil when none), the last finished one and what is left.
+func (s *Server) handleItemGuessStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	writeJSON(w, http.StatusOK, map[string]any{"running": runningGuess(actorID(ctx)), "last": s.lastGuessRun(ctx), "pending": s.guessPending(ctx, 30)})
 }

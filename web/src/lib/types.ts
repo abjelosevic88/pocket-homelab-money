@@ -192,7 +192,12 @@ export interface ReceiptSettings {
   ai_ready: boolean; ai_detail: string; unsorted_products: number
   group_job: 'off' | 'keywords' | 'ai'; group_job_hour: number; group_job_notify: boolean; group_on_scan: boolean; ai_review: boolean
   group_auto_create: boolean; guess_items: boolean; guess_pending: number
-  guess_last: { trigger: string; start: string; end: string; checked: number; itemized: number; none: number; failed: number; error?: string } | null
+  guess_last: GuessRun | null; guess_running: GuessRun | null
+}
+/** One run of the AI guessing items for typed expenses; done/next count while it runs. */
+export interface GuessRun {
+  trigger: string; start: string; end: string; checked: number; itemized: number; none: number; failed: number; error?: string
+  done: number; next: number; running?: boolean
 }
 export interface ItemStats {
   key: number; name: string; icon: string; group_id?: number | null; purchases: number; lines: number; quantity: number; unit: string
