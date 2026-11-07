@@ -1,23 +1,40 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useApp } from '../lib/app-context'
 import { fmtDate, fmtMoney } from '../lib/format'
 import { SERIES } from '../lib/types'
 
 function useColor() { const { theme } = useApp(); return (k: string) => (SERIES[k] || SERIES.a)[theme] }
 
+/** The element's real width, so a chart draws 1:1 and its text, dots and corners keep their shape. */
+function useWidth(fallback: number) {
+  const [w, setW] = useState(fallback)
+  const ro = useRef<ResizeObserver | null>(null)
+  const ref = useCallback((el: Element | null) => {
+    ro.current?.disconnect()
+    ro.current = null
+    if (!el) return
+    const measure = () => { const cw = Math.round(el.getBoundingClientRect().width); if (cw > 0) setW(cw) }
+    measure()
+    ro.current = new ResizeObserver(measure)
+    ro.current.observe(el)
+  }, [])
+  return [ref, w] as const
+}
+
 /** Income vs expense per period: two thin bars side by side, net as a dot. */
 export function FlowBars({ data, currency, decimals = 2, height = 190, onPick }: { data: { label: string; income: number; expense: number; net: number }[]; currency: string; decimals?: number; height?: number; onPick?: (i: number) => void }) {
   const color = useColor()
   const [hover, setHover] = useState<number | null>(null)
+  const [ref, W] = useWidth(600)
   if (data.length === 0) return <p className="muted small">Nothing yet.</p>
   const max = Math.max(1, ...data.map(d => Math.max(d.income, d.expense)))
-  const W = 100, H = height, padT = 6, padB = 2
-  const n = data.length, slot = W / n, bw = Math.min(slot * 0.32, 4.2)
+  const H = height, padT = 6, padB = 2
+  const n = data.length, slot = W / n, bw = Math.min(slot * 0.32, 24)
   const y = (v: number) => padT + (H - padT - padB) * (1 - v / max)
   const h = hover == null ? null : data[hover]
   return (
     <div className="chart">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="chart-svg" style={{ height }} role="img" aria-label="Income and expenses per month">
+      <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="chart-svg" role="img" aria-label="Income and expenses per month">
         {[0.5, 1].map(f => <line key={f} x1="0" x2={W} y1={y(max * f)} y2={y(max * f)} className="grid-line" />)}
         {data.map((d, i) => {
           const x = i * slot + slot / 2
@@ -25,8 +42,8 @@ export function FlowBars({ data, currency, decimals = 2, height = 190, onPick }:
           return (
             <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} onTouchStart={() => setHover(i)} onClick={() => onPick?.(i)} style={{ cursor: onPick ? 'pointer' : undefined }}>
               <rect x={i * slot} y={0} width={slot} height={H} fill="transparent" />
-              <rect x={x - bw - 0.3} y={y(d.income)} width={bw} height={Math.max(0, H - padB - y(d.income))} fill={color('income')} opacity={dim} rx={0.8} />
-              <rect x={x + 0.3} y={y(d.expense)} width={bw} height={Math.max(0, H - padB - y(d.expense))} fill={color('expense')} opacity={dim} rx={0.8} />
+              <rect x={x - bw - 1} y={y(d.income)} width={bw} height={Math.max(0, H - padB - y(d.income))} fill={color('income')} opacity={dim} rx={Math.min(2, bw / 4)} />
+              <rect x={x + 1} y={y(d.expense)} width={bw} height={Math.max(0, H - padB - y(d.expense))} fill={color('expense')} opacity={dim} rx={Math.min(2, bw / 4)} />
             </g>
           )
         })}
@@ -43,8 +60,9 @@ export interface Pt { x: string; y: number; label?: string }
 export function Line({ points, fmt, height = 160, color, area = false, zero = false, xFmt = (x: string) => fmtDate(x) }: { points: Pt[]; fmt: (y: number) => string; height?: number; color?: string; area?: boolean; zero?: boolean; xFmt?: (x: string) => string }) {
   const c = useColor()(color || 'net')
   const [hover, setHover] = useState<number | null>(null)
+  const [ref, W] = useWidth(600)
   if (points.length < 2) return <p className="muted small">Not enough data yet.</p>
-  const W = 100, H = height, padT = 8, padB = 4, padX = 1
+  const H = height, padT = 8, padB = 4, padX = 6
   const ys = points.map(p => p.y)
   let lo = Math.min(...ys), hi = Math.max(...ys)
   if (zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0) }
@@ -63,13 +81,13 @@ export function Line({ points, fmt, height = 160, color, area = false, zero = fa
   }
   return (
     <div className="chart">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="chart-svg" style={{ height }} onMouseMove={onMove} onTouchMove={onMove} onMouseLeave={() => setHover(null)} role="img">
+      <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="chart-svg" onMouseMove={onMove} onTouchMove={onMove} onMouseLeave={() => setHover(null)} role="img">
         {lo < 0 && hi > 0 && <line x1="0" x2={W} y1={y(0)} y2={y(0)} className="grid-line dashed" />}
         {area && <path d={`${d} L${x(points.length - 1)},${H - padB} L${x(0)},${H - padB} Z`} fill={c} opacity={0.12} />}
         <path d={d} fill="none" stroke={c} strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
         {hover != null && <>
           <line x1={x(hover)} x2={x(hover)} y1={padT} y2={H - padB} className="grid-line" />
-          <circle cx={x(hover)} cy={y(points[hover].y)} r="1.6" fill={c} className="pt-ring" vectorEffect="non-scaling-stroke" />
+          <circle cx={x(hover)} cy={y(points[hover].y)} r="4" fill={c} className="pt-ring" />
         </>}
       </svg>
       <div className="chart-axis two"><span>{xFmt(points[0].x)}</span><span>{xFmt(points[points.length - 1].x)}</span></div>
