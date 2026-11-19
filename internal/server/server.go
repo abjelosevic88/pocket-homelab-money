@@ -534,6 +534,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/import/csv", s.handleCSVImport)
 			r.Get("/export/transactions.csv", s.handleExportCSV)
 			r.Get("/export/money.json", s.handleExportJSON)
+			r.Post("/import/money.json", s.handleImportMoneyJSON)
+			r.Post("/import/bank.csv", s.handleImportBankCSV)
+			r.Get(strings.TrimPrefix(core.PortablePath, "/api/v1"), portable.Handler())
 
 			r.Get("/webhooks", s.handleListWebhooks)
 			r.Post("/webhooks", s.handleCreateWebhook)
@@ -713,6 +716,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		Publishes: []string{"money.transaction_created", "money.transaction_deleted", "money.subscription_paid", "money.subscription_saved"},
 		Offers:    linkOffers,
 		Uses:      append(append([]core.Use{}, linkUses...), core.InferenceUse()),
+		Portable:  portable,
 	}
 	if s.cfg.BaseURL != "" {
 		// ask Core for a relying-party client so "Sign in with Pocket Core" needs no configuration

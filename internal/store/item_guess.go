@@ -15,11 +15,12 @@ const AIProvider = "ai"
 
 // NotGuessSources are the transaction sources the AI writes no items for: a
 // scanned receipt has the real ones, a CSV import is a bank statement, and a
-// balance adjustment or interest is not a purchase. Everything else counts:
+// balance adjustment or interest is not a purchase, and a restored
+// money.json ("import") brings its own history. Everything else counts:
 // what the person typed anywhere (web, quick add, templates, the phone app,
 // Firefly/Pico) and what other Pocket apps book for them (Garage's fuel and
 // repairs, Travel's costs).
-var NotGuessSources = []string{"receipt", "csv", "adjustment", "interest"}
+var NotGuessSources = []string{"receipt", "csv", "adjustment", "interest", "import"}
 
 // GuessSource says whether expenses from this source get items from the AI.
 func GuessSource(source string) bool {

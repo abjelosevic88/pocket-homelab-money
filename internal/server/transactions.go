@@ -230,6 +230,10 @@ type txIn struct {
 	TemplateID      int64      `json:"template_id"`
 	SkipRules       bool       `json:"skip_rules"`
 	Splits          *[]splitIn `json:"splits"`
+
+	// keepSource: an import (CSV, a restored money.json) keeps its own
+	// Source even when it comes in through a linked app (Pocket Move).
+	keepSource bool
 }
 
 func idOrNil(p *int64) *int64 {
@@ -448,7 +452,7 @@ func (s *Server) createTx(ctx context.Context, in *txIn, after ...func(*sql.Tx, 
 		t.Source = in.Source
 	}
 	t.ExternalID = strings.TrimSpace(in.ExternalID)
-	if app := linkApp(principalFrom(ctx)); app != "" {
+	if app := linkApp(principalFrom(ctx)); app != "" && !in.keepSource {
 		// a linked app's transactions carry its name, which is what lets it
 		// change them later (and nothing else)
 		t.Source = app
@@ -489,7 +493,7 @@ func (s *Server) createTx(ctx context.Context, in *txIn, after ...func(*sql.Tx, 
 	if !in.SkipRules {
 		s.applyRules(ctx, t, uid)
 	}
-	if t.Kind == "expense" && t.Source != "firefly" {
+	if t.Kind == "expense" && t.Source != "firefly" && t.Source != "import" {
 		s.addTripTag(ctx, t)
 	}
 	// The financial write and its Core publication are one local commit.

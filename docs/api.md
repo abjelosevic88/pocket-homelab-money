@@ -155,6 +155,8 @@ Events: `transaction.created`, `transaction.updated`, `transaction.deleted` (fro
 
 `POST /import/firefly {mode: all|transactions, since?, wait?}` · `GET /import/firefly/status` · `POST /import/csv/preview` (multipart `file`) · `POST /import/csv` (multipart `file, mapping, account_id, dry_run`) · `GET /export/transactions.csv` (same filters as the list) · `GET /export/money.json` · `GET /backup`.
 
+Moving in (Pocket Move, also on a `pcx_` link with `move:import`; both only add and skip what is there): `POST /import/money.json` (multipart `file` = a `money.json` export) brings back accounts and categories (matched by name), transactions, subscriptions and budgets → `{imported, skipped, errors, accounts_created, categories_created, transactions_created, subscriptions_created, budgets_created, skipped_kinds, problems}` (goals, templates, rules, receipts, merchants and product groups stay behind and are named in `skipped_kinds`). `POST /import/bank.csv` (multipart `file`, optional `account` = account name, default "Moved in", opened if missing) guesses the columns like the preview and answers `422 {"error", "needs_mapping": true}` when it is not sure; else `{imported, skipped, errors, account, account_id, account_created, mapping, problems}`. `GET /pocket/portable` describes both and the two exports (`move:export`).
+
 ## Dashboard (Homepage widget)
 
 `GET /api/v1/dashboard` with a bearer token returns a flat object:

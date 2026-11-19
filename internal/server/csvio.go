@@ -242,50 +242,50 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "map at least the date and an amount column")
 		return
 	}
+	res := s.importCSVRows(ctx, recs, m, acct, dry)
+	writeJSON(w, http.StatusOK, map[string]any{"created": res.created, "duplicates": res.dupes, "errors": res.bad, "rows": res.rows})
+}
+
+// csvRow is one row's outcome in a CSV import.
+type csvRow struct {
+	Row    int    `json:"row"`
+	Status string `json:"status"` // created | duplicate | error | ready
+	Reason string `json:"reason,omitempty"`
+	Date   string `json:"date"`
+	Amount int64  `json:"amount"`
+	Kind   string `json:"kind"`
+	Text   string `json:"text"`
+}
+
+type csvResult struct {
+	created, dupes, bad int
+	rows                []csvRow
+}
+
+// importCSVRows books the rows (header already dropped) on acct with the
+// mapping; dry only says what would happen.
+func (s *Server) importCSVRows(ctx context.Context, recs [][]string, m CSVMapping, acct *store.Account, dry bool) csvResult {
+	accountID := acct.ID
 	cats, _ := s.store.ListCategories(ctx, actorID(ctx))
 	catByName := map[string]int64{}
 	for _, c := range cats {
 		catByName[fold(c.Name)] = c.ID
 	}
-	type rowResult struct {
-		Row    int    `json:"row"`
-		Status string `json:"status"` // created | duplicate | error | ready
-		Reason string `json:"reason,omitempty"`
-		Date   string `json:"date"`
-		Amount int64  `json:"amount"`
-		Kind   string `json:"kind"`
-		Text   string `json:"text"`
-	}
-	out := []rowResult{}
-	created, dupes, bad := 0, 0, 0
+	res := csvResult{rows: []csvRow{}}
 	for i, rec := range recs {
-		rr := rowResult{Row: i + 1}
+		rr := csvRow{Row: i + 1}
 		date, ok := parseCSVDate(cell(rec, m.Date), m.DateFormat)
 		if !ok {
 			rr.Status, rr.Reason = "error", "date "+cell(rec, m.Date)
-			bad++
-			out = append(out, rr)
+			res.bad++
+			res.rows = append(res.rows, rr)
 			continue
 		}
-		var amt float64
-		var have bool
-		if m.Amount >= 0 {
-			amt, have = parseAmount(cell(rec, m.Amount), m.Decimal)
-		}
-		if !have && m.Debit >= 0 {
-			if v, ok := parseAmount(cell(rec, m.Debit), m.Decimal); ok && v != 0 {
-				amt, have = -math.Abs(v), true
-			}
-		}
-		if !have && m.Credit >= 0 {
-			if v, ok := parseAmount(cell(rec, m.Credit), m.Decimal); ok && v != 0 {
-				amt, have = math.Abs(v), true
-			}
-		}
+		amt, have := rowAmount(rec, m)
 		if !have || amt == 0 {
 			rr.Status, rr.Reason = "error", "no amount"
-			bad++
-			out = append(out, rr)
+			res.bad++
+			res.rows = append(res.rows, rr)
 			continue
 		}
 		if m.Invert {
@@ -311,16 +311,16 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		// same-day same-amount same-text = already there (or imported before)
 		if _, err := s.store.TransactionByExternalID(ctx, acct.OwnerID, ext); err == nil || s.looksDuplicate(ctx, accountID, date, kind, minor, cur, desc) {
 			rr.Status = "duplicate"
-			dupes++
-			out = append(out, rr)
+			res.dupes++
+			res.rows = append(res.rows, rr)
 			continue
 		}
 		if dry {
 			rr.Status = "ready"
-			out = append(out, rr)
+			res.rows = append(res.rows, rr)
 			continue
 		}
-		in := txIn{Kind: &kind, Date: &date, AccountID: &accountID, Amount: &minor, Currency: &cur, Description: &desc, Payee: &payee, Source: "csv"}
+		in := txIn{Kind: &kind, Date: &date, AccountID: &accountID, Amount: &minor, Currency: &cur, Description: &desc, Payee: &payee, Source: "csv", keepSource: true}
 		empty := ""
 		in.Time = &empty
 		if n := cell(rec, m.Notes); n != "" {
@@ -337,21 +337,42 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		t, msg, err := s.createTx(withAuditQuiet(ctx), &in)
 		if msg != "" || err != nil {
 			rr.Status, rr.Reason = "error", firstNonEmpty(msg, fmt.Sprint(err))
-			bad++
-			out = append(out, rr)
+			res.bad++
+			res.rows = append(res.rows, rr)
 			continue
 		}
 		t.ExternalID = ext
 		_ = s.store.UpdateTransaction(ctx, actorID(ctx), t)
 		rr.Status = "created"
-		created++
-		out = append(out, rr)
+		res.created++
+		res.rows = append(res.rows, rr)
 	}
-	if !dry && created > 0 {
-		s.store.LogActivity(ctx, actorID(ctx), "import.csv", fmt.Sprintf("%d transactions into %s", created, acct.Name))
-		s.auditImports(withAuditSource(ctx, "import"), "CSV import", map[int64]*importCounts{accountID: {added: created}})
+	if !dry && res.created > 0 {
+		s.store.LogActivity(ctx, actorID(ctx), "import.csv", fmt.Sprintf("%d transactions into %s", res.created, acct.Name))
+		s.auditImports(withAuditSource(ctx, "import"), "CSV import", map[int64]*importCounts{accountID: {added: res.created}})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"created": created, "duplicates": dupes, "errors": bad, "rows": out})
+	return res
+}
+
+// rowAmount reads a row's signed amount: the amount column, else debit
+// (money out) or credit (money in).
+func rowAmount(rec []string, m CSVMapping) (float64, bool) {
+	if m.Amount >= 0 {
+		if v, ok := parseAmount(cell(rec, m.Amount), m.Decimal); ok {
+			return v, true
+		}
+	}
+	if m.Debit >= 0 {
+		if v, ok := parseAmount(cell(rec, m.Debit), m.Decimal); ok && v != 0 {
+			return -math.Abs(v), true
+		}
+	}
+	if m.Credit >= 0 {
+		if v, ok := parseAmount(cell(rec, m.Credit), m.Decimal); ok && v != 0 {
+			return math.Abs(v), true
+		}
+	}
+	return 0, false
 }
 
 func (s *Server) looksDuplicate(ctx context.Context, accountID int64, date, kind string, amount int64, cur, desc string) bool {

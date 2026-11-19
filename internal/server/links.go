@@ -23,6 +23,19 @@ var linkOffers = []core.Offer{
 	{Scope: "transactions:read", Name: "See your transactions", Description: "Read your transactions, subscriptions, tags, accounts and categories (including through the Firefly-compatible API) and where you paid, for trip costs, your journal and your map. Nothing can be changed with it."},
 }
 
+// portable is what Pocket Move may copy out and bring in (docs/move.md in
+// pocket-homelab-core). Imports add; a second run of the same file adds nothing.
+var portable = &core.Portable{
+	Exports: []core.PortableExport{
+		{Path: "/api/v1/export/money.json", File: "money.json", Kind: core.KindPocket, Title: "Accounts, categories, transactions, subscriptions, budgets, goals and receipts as one JSON file"},
+		{Path: "/api/v1/export/transactions.csv", File: "transactions.csv", Kind: core.KindCSV, Title: "Every transaction as a table"},
+	},
+	Imports: []core.PortableImport{
+		{Path: "/api/v1/import/money.json", Kind: core.KindPocket, Form: "file", Title: "Adds the accounts, categories, transactions, subscriptions and budgets from another box; what is here already is left alone"},
+		{Path: "/api/v1/import/bank.csv", Kind: core.KindBankCSV, Form: "file", Title: "Books a bank statement on the account named in the form field \"account\" (default \"Moved in\", opened if missing); rows already there are skipped"},
+	},
+}
+
 type linkRoute struct {
 	methods string
 	path    *regexp.Regexp
@@ -64,6 +77,9 @@ var errLinkScope = errors.New("outside the link's scope")
 
 // linkAllows reports whether a link token may make this request.
 func linkAllows(p *principal, r *http.Request) bool {
+	if p != nil && portable.LinkAllows(p.Scopes, r) {
+		return true
+	}
 	for _, lr := range linkRoutes {
 		if !strings.Contains(" "+lr.methods+" ", " "+r.Method+" ") || !lr.path.MatchString(r.URL.Path) {
 			continue
