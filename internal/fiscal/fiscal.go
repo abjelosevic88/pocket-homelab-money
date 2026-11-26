@@ -103,6 +103,25 @@ var (
 	ErrNotYet = errors.New("the tax office does not have this receipt yet")
 )
 
+// Brief says why the tax office could not be asked, without the request's
+// link: Go's client errors quote it in full, and it fills a phone screen.
+func Brief(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "no answer in time"
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		if ue.Timeout() {
+			return "no answer in time"
+		}
+		return ue.Err.Error()
+	}
+	return err.Error()
+}
+
 // FetchWaiting is Fetch for a receipt just printed (issued: what its link
 // says): while the tax office does not have it yet it asks again every few
 // seconds, as long as ctx leaves time for one more answer. Shops report a

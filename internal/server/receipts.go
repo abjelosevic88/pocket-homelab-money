@@ -54,8 +54,9 @@ func (s *Server) receiptHTTP() *http.Client {
 var scanBackoff = []time.Duration{10 * time.Minute, 30 * time.Minute, 2 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 24 * time.Hour, 24 * time.Hour}
 
 // when to ask again about a receipt the tax office does not have yet: often
-// during the first hours, then daily; missing after the last (about 3 days)
-var waitBackoff = []time.Duration{10 * time.Minute, 20 * time.Minute, 30 * time.Minute, time.Hour, time.Hour, 2 * time.Hour, 2 * time.Hour, 4 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 24 * time.Hour}
+// during the first hours, then daily; missing after the last (about 3 days).
+// The first comes soon: a tax office that did not answer is often back in a minute.
+var waitBackoff = []time.Duration{5 * time.Minute, 20 * time.Minute, 30 * time.Minute, time.Hour, time.Hour, 2 * time.Hour, 2 * time.Hour, 4 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 24 * time.Hour}
 
 func (s *Server) scanReceipt(ctx context.Context, text string, opt scanOptions) (*scanResult, error) {
 	uid := actorID(ctx)
@@ -129,8 +130,9 @@ func (s *Server) processScan(ctx context.Context, scan *store.ReceiptScan, p fis
 			scan.Raw = string(raw)
 		}
 	}
-	// a waiting scan's receipt older than two days gets "invalid" for a 404: still not there
-	notYet := errors.Is(ferr, fiscal.ErrNotYet) || (errors.Is(ferr, fiscal.ErrInvalid) && waitingScan(scan))
+	// a scan saved to wait keeps waiting whatever went wrong: the tax office not
+	// answering (timeouts, HTTP 500) or, for a receipt older than two days, a 404
+	notYet := errors.Is(ferr, fiscal.ErrNotYet) || (ferr != nil && waitingScan(scan))
 	if notYet && have == nil && mode != "now" && decoded != nil && decoded.Total > 0 {
 		return s.waitForReceipt(ctx, scan, decoded)
 	}
@@ -162,7 +164,7 @@ func (s *Server) processScan(ctx context.Context, scan *store.ReceiptScan, p fis
 		return s.finishScan(ctx, scan, nil, nil)
 	}
 	// the tax office is unreachable or does not have it yet: book what the code says
-	scan.Message = ferr.Error()
+	scan.Message = fiscal.Brief(ferr)
 	scan.Status = "partial"
 	if scan.Attempts > len(scanBackoff) {
 		scan.Status, scan.NextTryAt = "failed", ""
@@ -208,7 +210,7 @@ func (s *Server) waitForReceipt(ctx context.Context, scan *store.ReceiptScan, de
 	}
 	next := time.Now().Add(waitBackoff[scan.Attempts-1])
 	scan.Status, scan.NextTryAt = "waiting", next.UTC().Format(time.RFC3339)
-	scan.Message = "Not at the tax office yet (shops often send receipts late). Pocket Money asks again at " + next.In(decoded.IssuedAt.Location()).Format("15:04") + " and books it once it is there."
+	scan.Message = "Saved. Pocket Money asks the tax office again at " + next.In(decoded.IssuedAt.Location()).Format("15:04") + " and books it with the shop and items once it answers."
 	return s.finishScan(ctx, scan, nil, nil)
 }
 

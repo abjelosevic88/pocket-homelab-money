@@ -30,7 +30,7 @@ interface Peek {
   items: { name: string; quantity: number; unit: string; total: number; category?: string }[]
   account_name: string; category_id: number | null; category: string; reason: string; description: string
   existing?: { receipt_id: number; transaction_id: number | null; description: string; date: string; scanned_at: string }
-  not_yet?: boolean; waiting_since?: string
+  not_yet?: boolean; waiting_since?: string; unreachable?: boolean
 }
 
 type Step = 'idle' | 'scanning' | 'reading' | 'preview' | 'booking' | 'done'
@@ -202,7 +202,7 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
                 <div className="scan-result-head">
                   <span className="big">{p.existing ? '♻️' : p.not_yet ? '⏳' : '🧾'}</span>
                   <div>
-                    <b>{p.existing ? 'You scanned this one already' : p.not_yet ? 'Not at the tax office yet' : 'Receipt recognised'}</b>
+                    <b>{p.existing ? 'You scanned this one already' : p.not_yet ? (p.unreachable ? 'The tax office is not answering' : 'Not at the tax office yet') : 'Receipt recognised'}</b>
                     <div className="muted small">{p.existing ? `On ${fmtDate(p.existing.scanned_at)}${p.existing.description ? `, booked as “${p.existing.description}”` : ''}.` : p.message || 'Check it and book it.'}</div>
                   </div>
                 </div>
@@ -232,7 +232,7 @@ export function ReceiptScanner({ onClose, onBooked }: { onClose: () => void; onB
             <div className="row wrap" style={{ gap: 8 }}>
               {p.supported && !p.existing && !p.not_yet && <button type="button" className="btn primary" disabled={step === 'booking'} onClick={() => book()}>{step === 'booking' ? <><Spinner /> Booking…</> : <><Icon name="check" size={15} />Book it</>}</button>}
               {p.supported && !p.existing && p.not_yet && <>
-                <button type="button" className="btn primary" disabled={step === 'booking'} onClick={() => book('later')}>{step === 'booking' ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} />{p.waiting_since ? 'OK, keep waiting' : 'OK, book it when it’s there'}</>}</button>
+                <button type="button" className="btn primary" disabled={step === 'booking'} onClick={() => book('later')}>{step === 'booking' ? <><Spinner /> Saving…</> : <><Icon name="check" size={15} />{p.waiting_since ? 'OK, keep waiting' : p.unreachable ? 'OK, save it and try again' : 'OK, book it when it’s there'}</>}</button>
                 <button type="button" className="btn" disabled={step === 'booking'} onClick={() => book('now')} title="Books the total and time from the QR code now; shop and items follow when the tax office has them">Book now from the QR</button>
               </>}
               {p.existing?.transaction_id && <Link className="btn primary" to={`/transactions/${p.existing.transaction_id}`} onClick={close}>Open it</Link>}
