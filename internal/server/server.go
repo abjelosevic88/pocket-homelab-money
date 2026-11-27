@@ -538,6 +538,12 @@ func (s *Server) Router() http.Handler {
 			r.Post("/import/bank.csv", s.handleImportBankCSV)
 			r.Get(strings.TrimPrefix(core.PortablePath, "/api/v1"), portable.Handler())
 
+			// what Pocket Search, Pocket Day and Pocket Hub ask (capabilities.go)
+			r.Get("/pocket/search", core.SearchHandler(s.pocketSearch))
+			r.Get("/pocket/day/{date}", core.DayHandler(s.pocketDay))
+			r.Get("/pocket/widget", core.WidgetHandler(s.pocketWidget))
+			r.Post("/pocket/capture", capabilities.Capture.CaptureHandler(s.pocketCapture))
+
 			r.Get("/webhooks", s.handleListWebhooks)
 			r.Post("/webhooks", s.handleCreateWebhook)
 			r.Put("/webhooks/{id}", s.handleUpdateWebhook)
@@ -711,12 +717,12 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 	m := core.Manifest{
 		Slug: "money", Name: "Pocket Money",
 		Description: "Personal finance for a homelab: accounts in any currency, quick entry, subscriptions, budgets, savings goals, a forecast and reports.",
-		Icon:        "/favicon.svg", Version: Version,
+		Icon:        "/favicon.svg", Version: Version, Category: "Money",
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "MONEY",
 		Publishes: []string{"money.transaction_created", "money.transaction_deleted", "money.subscription_paid", "money.subscription_saved"},
 		Offers:    linkOffers,
 		Uses:      append(append([]core.Use{}, linkUses...), core.InferenceUse()),
-		Portable:  portable,
+		Portable:  portable, Capabilities: capabilities,
 	}
 	if s.cfg.BaseURL != "" {
 		// ask Core for a relying-party client so "Sign in with Pocket Core" needs no configuration

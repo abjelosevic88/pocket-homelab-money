@@ -36,6 +36,19 @@ var portable = &core.Portable{
 	},
 }
 
+// capabilities is what Pocket Search, Pocket Day and Pocket Hub may ask of
+// Money (docs/capabilities.md in pocket-homelab-core): one fixed route each,
+// answered in capabilities.go. Each pocket:* scope opens only its own route.
+var capabilities = core.Capabilities{
+	Search: &core.Searchable{What: "Your transactions by description, payee, notes, category, tag and receipt items, and your accounts and categories by name",
+		Kinds: []string{"transaction", "account", "category"}, Bangs: []string{"money", "spend"}},
+	Day:    &core.DayFeed{Label: "Money", One: "payment", Many: "payments", Unit: "amount", What: "What you paid, received and moved between your accounts that day"},
+	Widget: &core.Widget{Title: "This month", What: "What you spent and received this month so far, what is left of your budgets and the next bills"},
+	Capture: &core.QuickCapture{Kinds: []core.CaptureKind{
+		{Kind: "expense", Label: "Expense", What: "A new expense on your usual account, from a line like \"12.50 lunch\"", Fields: []string{"date"}},
+	}},
+}
+
 type linkRoute struct {
 	methods string
 	path    *regexp.Regexp
@@ -77,7 +90,7 @@ var errLinkScope = errors.New("outside the link's scope")
 
 // linkAllows reports whether a link token may make this request.
 func linkAllows(p *principal, r *http.Request) bool {
-	if p != nil && portable.LinkAllows(p.Scopes, r) {
+	if p != nil && (portable.LinkAllows(p.Scopes, r) || capabilities.LinkAllows(p.Scopes, r)) {
 		return true
 	}
 	for _, lr := range linkRoutes {
